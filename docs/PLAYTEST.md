@@ -68,7 +68,14 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   in this fork: this is defensive hardening, not a confirmed purchase/exit fix.
   Normal bench and menu/controller checks remain user-led; see
   `docs/MENU_WIDGET_SAFETY.md`.
-- Death-screen selection and the Mesa shader fix remain unresolved. Other reported terminals
+- `fix/death-menu-input` / fork PR #12: consult native player liveness before
+  gameplay capture, release stale capture before routing clicks, explicitly show
+  the mouse cursor for UI and discard queued gameplay actions while dead. The
+  retained suffocation diagnostic showed zero health and usable Yes/No buttons
+  while gameplay capture remained active. Synthetic capture-policy tests pass;
+  Continue/Exit behaviour and mouse look after Continue need user verification.
+  No death animations, oxygen damage, native button actions or saves are changed.
+- The Mesa shader fix remains unresolved. Other reported terminals
   and the original asset set still need validation.
 
 `.github/workflows/playtest-boundary.yml` fails if a PR from `playtest` targets

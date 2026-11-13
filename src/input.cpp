@@ -30,6 +30,7 @@
 #include "elf_loader.h"
 #include "floor_snap_policy.h"
 #include "guest_util.h"
+#include "input_policy.h"
 #include "hle/timing.h"
 #include "jni/jni.h"
 #include "log.h"
@@ -59,7 +60,7 @@ std::atomic<bool> g_aiming{false}, g_paused{true};
 std::atomic<int> g_state{0};
 
 // game functions / vtables
-u32 fn_player_event, fn_hud_event, fn_is_paused, fn_in_rig, fn_in_pause_menu;
+u32 fn_player_event, fn_hud_event, fn_is_paused, fn_in_rig, fn_in_pause_menu, fn_is_alive;
 u32 fn_change_weapon, fn_can_change_weapon;
 u32 vt_vector2, vt_action;
 
@@ -427,6 +428,10 @@ int grab_state(u32 player) {
     return 0;
 }
 
+bool player_is_alive(u32 player) {
+    return player && fn_is_alive && (cpu::call(fn_is_alive, {player}) & 0xff);
+}
+
 movement::FloorSnapRecovery g_floor_snap_recovery;
 
 // A floor ray can keep pinning the body to the lower ramp face while its leading edge
@@ -505,6 +510,15 @@ void on_player_update(cpu::Ctx& c) {
         jobs.swap(g_jobs);
     }
     for (auto& j : jobs) j(player);
+    // Death animations can keep updating the player even while the restart UI
+    // is open. Discard queued gameplay input, but still allow diagnostic jobs.
+    if (!player_is_alive(player)) {
+        g_free_moving = false;
+        g_free_yaw = 0;
+        g_free_turning = false;
+        g_floor_snap_recovery.reset();
+        return;
+    }
     for (auto& e : q) {
         switch (e.kind) {
         case EV_MOVE:
@@ -612,6 +626,8 @@ void on_player_destroyed(cpu::Ctx& c) {
     g_free_yaw = 0;
     g_free_turning = false;
     g_frames_without_player = 1000;
+    std::lock_guard lk(g_lock);
+    g_queue.clear();  // actions queued for the old player must not reach a respawn
 }
 
 // GameObjectPlayable::revertPitch(rate, target) eases the camera pitch back to level. Walking or
@@ -675,7 +691,30 @@ void back_key() {
 bool cinematic_playing() { return g_frames_without_cine < 10; }
 
 bool gameplay_active() {
-    return g_frames_without_player < 10 && !g_paused && g_player != 0 && !cinematic_playing() && !dialog_open();
+    u32 player = g_player;
+    bool current = player && g_frames_without_player < 10;
+    // Read the game's live result, not a health snapshot from the previous
+    // update: oxygen damage can become fatal later in that same update.
+    return gameplay_input_allowed(current, current && player_is_alive(player), g_paused, cinematic_playing(), dialog_open());
+}
+
+void set_gameplay_capture(bool want) {
+    if (want == g_mouse_captured) return;
+    if (!g_test) SDL_SetRelativeMouseMode(want ? SDL_TRUE : SDL_FALSE);
+    LOGI("input: gameplay controls %s", want ? "active (mouse captured)" : "released");
+    g_mouse_captured = want;
+    SDL_ShowCursor(want || g_pad_active ? SDL_DISABLE : SDL_ENABLE);
+    g_look_dx = g_look_dy = 0;
+    std::memset(g_smooth_x, 0, sizeof g_smooth_x);
+    std::memset(g_smooth_y, 0, sizeof g_smooth_y);
+    if (!want && g_moving) {
+        push({EV_MOVE});
+        g_moving = false;
+    }
+    if (!want) {
+        g_rmb = g_lmb = false;
+        g_pending_fire = 0;
+    }
 }
 
 float mouse_scale() { return std::max(1, settings::get_int("mouse_sensitivity", 100)) / 100.0f; }
@@ -795,12 +834,13 @@ void install() {
     fn_is_paused = elf::find("_ZNK3Hud8isPausedEv");
     fn_in_rig = elf::find("_ZNK3Hud7isInRigEv");
     fn_in_pause_menu = elf::find("_ZNK3Hud13isInPauseMenuEv");
+    fn_is_alive = elf::find("_ZNK18GameObjectPlayable7isAliveEv");
     fn_change_weapon = elf::find("_ZN18GameObjectPlayable12changeWeaponENS_11WeaponIndexE");
     fn_can_change_weapon = elf::find("_ZNK18GameObjectPlayable15canChangeWeaponEv");
     fn_cine_transition = elf::find("_ZN19GameObjectCinematic15stateTransitionENS_5StateE");
     vt_vector2 = elf::find("_ZTV12Vector2Event") + 8;
     vt_action = elf::find("_ZTV11ActionEvent") + 8;
-    if (!fn_player_event || !fn_hud_event || !fn_is_paused || !fn_in_rig || !fn_in_pause_menu || vt_vector2 == 8 ||
+    if (!fn_player_event || !fn_hud_event || !fn_is_paused || !fn_in_rig || !fn_in_pause_menu || !fn_is_alive || vt_vector2 == 8 ||
         vt_action == 8) {
         LOGE("input: game functions not found; keyboard/mouse gameplay controls disabled");
         return;
@@ -1081,6 +1121,10 @@ bool pad_event(const SDL_Event& e) {
 }
 
 bool event(const SDL_Event& e, SDL_Window* win) {
+    // Events are polled before frame(). Hand ownership back immediately when a
+    // death/menu transition occurred in the preceding guest frame, so its first
+    // click is not swallowed as fire/look input by stale capture state.
+    if (g_mouse_captured && !gameplay_active()) set_gameplay_capture(false);
     if (pad_event(e)) return true;
     // keyboard or mouse in use again: prompts go back to keys
     if ((e.type == SDL_KEYDOWN && e.key.keysym.unused != kSynth) || e.type == SDL_MOUSEBUTTONDOWN ||
@@ -1235,20 +1279,9 @@ bool frame(SDL_Window* win) {
     }
     const bool* ks = g_keys;
     // holding Left Alt frees the cursor so it can be used as a touch pointer
-    bool want = gameplay_active() && !ks[SDL_SCANCODE_LALT] && (g_test || (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS));
-    if (want != g_mouse_captured) {
-        if (!g_test) SDL_SetRelativeMouseMode(want ? SDL_TRUE : SDL_FALSE);
-        LOGI("input: gameplay controls %s", want ? "active (mouse captured)" : "released");
-        g_mouse_captured = want;
-        g_look_dx = g_look_dy = 0;
-        std::memset(g_smooth_x, 0, sizeof g_smooth_x);
-        std::memset(g_smooth_y, 0, sizeof g_smooth_y);
-        if (!want && g_moving) {
-            push({EV_MOVE});
-            g_moving = false;
-        }
-        if (!want) g_rmb = g_lmb = false;
-    }
+    bool want = should_capture_gameplay(gameplay_active(), ks[SDL_SCANCODE_LALT],
+                                       (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) != 0, g_test);
+    set_gameplay_capture(want);
     // Cursor visibility: always hidden during gameplay; in menus hidden when a controller is active,
     // visible only when the mouse was last used (SDL_ShowCursor is called from event() on mouse input).
     if (g_mouse_captured) {
