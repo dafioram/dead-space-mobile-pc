@@ -1,6 +1,6 @@
 # Playtest integration branch — never merge into main
 
-`playtest` is a disposable integration destination for playing with all completed
+`playtest` is a persistent integration destination for playing with all completed
 fixes together. **Never merge this branch into `main`, and never open a release
 PR from it.** Its integration-only files are not production changes.
 
@@ -20,6 +20,15 @@ PR from it.** Its integration-only files are not production changes.
 The initial baseline is `08f849e`, which already includes the asset guardrails,
 asset-free test harness and Windows/Linux CI via their individual PRs. The Mesa
 shader and terminal-interaction fixes are not part of this initial baseline.
+
+## Integrated fixes after the initial baseline
+
+- `fix/terminal-interactions` / PR #7: keep controls on large objects selectable
+  when their bounds are nearby but their origin is distant. E activation of the
+  reported gondola was verified locally with the fixed asset set and a disposable
+  copy of the supplied save.
+- The Mesa shader fix has not been implemented yet. Other reported terminals
+  and the original asset set still need validation.
 
 `.github/workflows/playtest-boundary.yml` fails if a PR from `playtest` targets
 `main`. This is an additional warning, not a substitute for repository branch

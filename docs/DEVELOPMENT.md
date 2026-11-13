@@ -63,6 +63,10 @@ parsing/persistence, and the same file-opening helper used by JNI AssetManager.
 Directory rejection is the regression check for upstream issue #5/PR #9. Python
 tests also check the asset policy and gameplay smoke-test exit status.
 
+Native tests also cover interaction-zone distance checks, including large objects
+with distant origins, exact search boundaries, three-dimensional distance and
+invalid bounds. Their geometry is synthetic and is not copied from game assets.
+
 This is a baseline regression suite, not a claim that the importer handles every
 malformed archive safely. CRC verification and comprehensive importer hardening
 remain separate work. Tests do not launch the JIT, render, or validate gameplay.

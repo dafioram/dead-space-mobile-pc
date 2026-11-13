@@ -1,4 +1,5 @@
 #include "interact.h"
+#include "interaction_geometry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -165,10 +166,6 @@ std::vector<Cand> gather(const View& v, u32 world, bool report) {
     std::vector<Cand> out;
     for (u32 o : objs::world_objects(world)) {
         if (!objs::is_interactive_class(o)) continue;
-        Vec3 p = objs::pos(o);
-        float dx = p.x - v.p.x, dy = p.y - v.p.y, dz = p.z - v.p.z;
-        float d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 > (kKinesisRange + 4) * (kKinesisRange + 4)) continue;
         Cand c{o, objs::class_name(o), {}, {}, false, false, false, 0};
         const ClassRule* rule = rule_for(c.cls);
         u32 fl = objs::flags(o);
@@ -180,6 +177,7 @@ std::vector<Cand> gather(const View& v, u32 world, bool report) {
         if (!(c.zone.hi.x >= c.zone.lo.x && c.zone.hi.y >= c.zone.lo.y && c.zone.hi.z >= c.zone.lo.z) ||
             std::fabs(c.zone.lo.x) > 1e6f || std::fabs(c.zone.lo.y) > 1e6f || std::fabs(c.zone.lo.z) > 1e6f)
             continue;
+        if (!zone_within_radius(c.zone, v.p, kKinesisRange + 4)) continue;
         c.lz = local_box(v, c.zone);
         c.overlap = c.lz.hi.x > -kHalfWidth && c.lz.lo.x < kHalfWidth && c.lz.hi.y > kBottom && c.lz.lo.y < kTop &&
                     c.lz.hi.z > -kBack && c.lz.lo.z < kReach;
@@ -272,8 +270,7 @@ void draw_debug(u32 player, u32 world, float look_yaw) {
     const Cand* best = pick(cands, v, kin);
     for (auto& c : cands) {
         if (!c.usable && !c.kinesis) continue;
-        float dx = (c.zone.lo.x + c.zone.hi.x) * 0.5f - v.p.x, dz = (c.zone.lo.z + c.zone.hi.z) * 0.5f - v.p.z;
-        if (dx * dx + dz * dz > 100) continue;
+        if (!zone_within_radius(c.zone, v.p, 10)) continue;
         Vec3 corners[8];
         box_corners(c.zone, corners);
         unsigned col = &c == best ? 0x30ff30ffu : c.usable ? 0xffffffb0u : 0xffc030b0u;

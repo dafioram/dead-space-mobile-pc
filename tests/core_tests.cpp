@@ -4,10 +4,12 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
 #include "asset_file.h"
+#include "interaction_geometry.h"
 #include "settings.h"
 
 namespace fs = std::filesystem;
@@ -71,6 +73,27 @@ void test_settings(const fs::path& root) {
     require(contents.find("title = persisted") != std::string::npos, "string write persists immediately");
 }
 
+void test_interaction_geometry() {
+    // Synthetic dimensions: no fixture or coordinate comes from a game asset.
+    objs::Box platform{{-1, -2, -4}, {41, 3, 4}};
+    require(interact::zone_within_radius(platform, {0, 0, 0}, 13),
+            "near edge of large object must remain searchable despite its distant pivot");
+    require(interact::zone_within_radius(platform, {-3, 0, 0}, 2), "include a zone exactly at the search radius");
+    require(!interact::zone_within_radius(platform, {-3.1f, 0, 0}, 2), "exclude zones outside the search radius");
+    require(!interact::zone_within_radius(platform, {0, 20, 0}, 13), "search distance must include height");
+    objs::Box corner{{3, 4, 0}, {4, 5, 1}};
+    require(interact::zone_within_radius(corner, {0, 0, 0}, 5), "measure nearest corner using Euclidean distance");
+    require(!interact::zone_within_radius(corner, {0, 0, 0}, 4.9f), "do not use independent per-axis radii");
+    objs::Box point{{1, 2, 3}, {1, 2, 3}};
+    require(interact::zone_within_radius(point, {1, 2, 3}, 0), "support point-sized zones");
+    require(!interact::zone_within_radius(platform, {0, 0, 0}, -1), "reject negative search radii");
+    require(!interact::zone_within_radius({{2, 0, 0}, {1, 1, 1}}, {0, 0, 0}, 13), "reject inverted bounds");
+    float nan = std::numeric_limits<float>::quiet_NaN();
+    float infinity = std::numeric_limits<float>::infinity();
+    require(!interact::zone_within_radius(platform, {nan, 0, 0}, 13), "reject invalid player positions");
+    require(!interact::zone_within_radius({{0, 0, 0}, {infinity, 1, 1}}, {0, 0, 0}, 13), "reject infinite bounds");
+}
+
 }  // namespace
 
 int main() {
@@ -78,7 +101,8 @@ int main() {
         TempDirectory temp;
         test_asset_files(temp.path);
         test_settings(temp.path);
-        std::cout << "Asset-file and settings checks passed.\n";
+        test_interaction_geometry();
+        std::cout << "Asset-file, settings and interaction-geometry checks passed.\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
