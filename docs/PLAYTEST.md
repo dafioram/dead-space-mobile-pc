@@ -49,6 +49,12 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   can still snag, as it also does with an equivalent pre-fix approach. See
   `docs/ZERO_G_TRAVERSAL.md` for scope and limits. Further gameplay testing is
   user-led; automated checks cover builds and the synthetic recovery policy.
+- `fix/main-menu-quit` / PR #10: real mouse clicks reach the same Quit handler
+  as keyboard/controller taps, opening the existing Escape/back confirmation.
+  Quit moves from the top right into the bottom bar between Options and Extras,
+  using the existing bottom-button artwork and font. Narrow layouts compact the
+  row horizontally. Synthetic tests cover layout and click geometry; visual
+  appearance and confirmation/cancellation are left to user playtesting.
 - Death-screen selection and the Mesa shader fix remain unresolved. Other reported terminals
   and the original asset set still need validation.
 
