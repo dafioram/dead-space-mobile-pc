@@ -2,6 +2,7 @@
 
 #include <zlib.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -76,7 +77,8 @@ bool extract(std::ifstream& f, const Entry& e, std::vector<uint8_t>& data) {
         return true;
     }
     if (e.method != 8) return false;
-    data.resize(e.usize);
+    // zlib still needs an output buffer for a valid empty DEFLATE stream.
+    data.resize(std::max<uint32_t>(e.usize, 1));
     z_stream z{};
     if (inflateInit2(&z, -MAX_WBITS) != Z_OK) return false;
     z.next_in = comp.data();
@@ -85,7 +87,9 @@ bool extract(std::ifstream& f, const Entry& e, std::vector<uint8_t>& data) {
     z.avail_out = uInt(data.size());
     int r = inflate(&z, Z_FINISH);
     inflateEnd(&z);
-    return r == Z_STREAM_END;
+    bool ok = r == Z_STREAM_END && z.total_out == e.usize;
+    data.resize(e.usize);
+    return ok;
 }
 
 bool is_arm32_elf(const std::vector<uint8_t>& d) {
