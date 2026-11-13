@@ -14,18 +14,18 @@ struct MenuRect {
 };
 
 struct MainMenuBar {
-    // Play, Options, Quit, Extras, Info; y is anchored 52 units above the bottom.
+    // Play, Options, Info, Extras, Quit; y is anchored 52 units above the bottom.
     std::array<float, 5> x;
     float scale;
 
     MenuRect quit_rect(float layout_height) const {
         // The off-state artwork's position and dimensions, also used for mouse hits.
-        return {x[2] + 4 * scale, layout_height - 48, 109 * scale, 31};
+        return {x[4] + 4 * scale, layout_height - 48, 109 * scale, 31};
     }
 };
 
 inline MainMenuBar main_menu_bar(float layout_width) {
-    // Keep the original four positions when their middle gap can hold Quit.
+    // Keep the established positions when the middle gap can hold Info.
     if (layout_width >= 599)
         return {{{10, 118, (layout_width - 137) * 0.5f, layout_width - 255, layout_width - 146}}, 1};
     // At narrower aspect ratios that gap is too small. Fit five buttons as a row,
