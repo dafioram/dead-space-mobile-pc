@@ -39,6 +39,16 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   pose, lower panel, oxygen station and gondola were checked locally; the rotated
   boxes still need the user's normal-play visual confirmation. Wall/ceiling and
   rotated-box geometry also have synthetic regression coverage.
+- `fix/zero-g-slope-transitions` / PR #9: briefly use the game's existing
+  sphere-sweep floor snap after grounded zero-G walking stalls. Keeps the supplied
+  probe dimensions, collisions and orientation interpolation, and excludes jumping,
+  airborne floor acquisition, death and ordinary-gravity movement. The bounded
+  version crossed the first exterior exit on a disposable checkpoint with held W.
+  The second exit passed an earlier continuous-sweep prototype but still needs
+  user validation of the bounded version. Backing down toward the first airlock
+  can still snag, as it also does with an equivalent pre-fix approach. See
+  `docs/ZERO_G_TRAVERSAL.md` for scope and limits. Further gameplay testing is
+  user-led; automated checks cover builds and the synthetic recovery policy.
 - Death-screen selection and the Mesa shader fix remain unresolved. Other reported terminals
   and the original asset set still need validation.
 
