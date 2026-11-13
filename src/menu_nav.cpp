@@ -11,6 +11,7 @@
 #include "game_patches.h"
 #include "hle/gles.h"
 #include "log.h"
+#include "menu_geometry.h"
 
 namespace menu_nav {
 
@@ -206,14 +207,14 @@ std::vector<Button> usable() {
         if (cx < 0 || cy < 0 || cx > g_screen_w || cy > g_screen_h) continue;  // off screen
         out.push_back(b);
     }
-    // The main menu's Quit button (game_patches.cpp adds it to the layout: a top-bar button whose touch
-    // region is 14..106 x 14..45 inside an entity 120 units from the right edge, 23 from the top). It is
-    // there whenever the main menu's own four buttons are.
+    // Quit is port artwork, not a guest widget. Use the same bottom-bar geometry
+    // as its layout patch, and expose it only while the four main-menu buttons work.
     int main_buttons = 0;
     for (auto& b : out) main_buttons += b.name == "BTN_PLAY" || b.name == "BTN_OPTIONS" || b.name == "BTN_EXTRAS" || b.name == "BTN_INFO";
-    if (main_buttons == 4) {
+    if (main_buttons == 4 && patches::main_menu_quit_added()) {
         float k = std::min(g_screen_w / 480.0f, g_screen_h / 320.0f), w = g_screen_w / k;
-        Button q{1, "BTN_QUITGAME", int((w - 120 + 14) * k), int((23 + 14) * k), int(92 * k), int(31 * k), false};
+        auto r = main_menu_bar(w).quit_rect(g_screen_h / k);
+        Button q{1, "BTN_QUITGAME", int(r.x * k), int(r.y * k), int(r.w * k), int(r.h * k), false};
         q.virt = true;
         out.push_back(q);
     }
@@ -232,7 +233,7 @@ const Button* find(const std::vector<Button>& v, u32 obj) {
 }
 
 // The button nearest (fx, fy), or the top-left one (of the game's own buttons: the first highlight on
-// the main menu is Play, not the port's Quit button above it)
+// the main menu is Play, not the port's Quit button)
 const Button* nearest(const std::vector<Button>& v, float fx, float fy) {
     const Button* best = nullptr;
     float bd = 1e30f;
@@ -314,7 +315,7 @@ void set_tap(std::function<void(float, float)> tap) { g_tap = std::move(tap); }
 void set_quit(std::function<void()> ask_to_quit) { g_quit = std::move(ask_to_quit); }
 bool click(float x, float y) {
     for (auto& b : usable())
-        if (b.virt && x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h) {
+        if (b.virt && MenuRect{float(b.x), float(b.y), float(b.w), float(b.h)}.contains(x, y)) {
             if (g_quit) g_quit();
             return true;
         }

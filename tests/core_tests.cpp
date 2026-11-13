@@ -11,6 +11,7 @@
 #include "asset_file.h"
 #include "floor_snap_policy.h"
 #include "interaction_geometry.h"
+#include "menu_geometry.h"
 #include "settings.h"
 
 namespace fs = std::filesystem;
@@ -254,6 +255,35 @@ void test_floor_snap_recovery() {
     }
 }
 
+void test_main_menu_bar() {
+    for (float width : {480.0f, 512.0f, 568.8889f, 598.0f, 599.0f, 640.0f, 854.0f}) {
+        auto bar = menu_nav::main_menu_bar(width);
+        auto quit = bar.quit_rect(320);
+        require(bar.scale > 0 && bar.scale <= 1, "bottom-bar artwork must fit without enlarging it");
+        require(quit.x >= 0 && quit.x + quit.w <= width, "Quit must stay inside the screen");
+        require(quit.y == 272 && quit.h == 31, "Quit must share the bottom buttons' artwork baseline and height");
+        float options_right = bar.x[1] + 113 * bar.scale;
+        float extras_left = bar.x[3] + 4 * bar.scale;
+        require(quit.x >= options_right - 0.001f, "Quit must not overlap the Options artwork");
+        require(quit.x + quit.w <= extras_left + 0.001f, "Quit must not overlap the Extras artwork");
+        require(quit.contains(quit.x + quit.w * 0.5f, quit.y + quit.h * 0.5f), "Quit centre must accept a click");
+        require(!quit.contains(quit.x - 1, quit.y + 1), "space left of Quit must not activate it");
+        require(!quit.contains(quit.x + quit.w, quit.y + 1), "Quit's right boundary must not claim its neighbour");
+        require(!quit.contains(quit.x + 1, quit.y + quit.h), "below the bottom bar must not activate Quit");
+        for (float pixels_per_unit : {1.0f, 1.5f, 2.25f, 4.0f}) {
+            float x = (quit.x + quit.w * 0.5f) * pixels_per_unit;
+            float y = (quit.y + quit.h * 0.5f) * pixels_per_unit;
+            require(quit.contains(x / pixels_per_unit, y / pixels_per_unit),
+                    "scaled mouse coordinates and layout geometry must agree");
+        }
+    }
+    auto wide = menu_nav::main_menu_bar(640);
+    require(wide.x[0] == 10 && wide.x[1] == 118 && wide.x[3] == 385 && wide.x[4] == 494,
+            "wide layouts must keep the four original buttons in place");
+    auto narrow = menu_nav::main_menu_bar(480);
+    require(narrow.scale < 1, "4:3 must compact the bar rather than hide or overlap Quit");
+}
+
 }  // namespace
 
 int main() {
@@ -265,7 +295,8 @@ int main() {
         test_interaction_frames();
         test_oriented_zones();
         test_floor_snap_recovery();
-        std::cout << "Asset-file, settings, interaction-geometry and floor-snap policy checks passed.\n";
+        test_main_menu_bar();
+        std::cout << "Asset-file, settings, interaction/menu geometry and floor-snap policy checks passed.\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

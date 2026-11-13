@@ -25,6 +25,7 @@ bool loading_wait();  // the loading screen that waits for a tap is up
 bool options_wheel(int dy);  // scrolls a category page by rows (mouse wheel, keyboard); false if it did not move
 // A tap at game screen pixels: true (consumed) if it hit the page arrows in the options header.
 bool options_click(float x, float y);
+bool main_menu_quit_added();  // bottom-bar artwork was installed in the loaded layouts
 
 // Debug: load this level (map id, e.g. 01_gov_02) when gameplay starts.
 void set_level_override(const std::string& id);
