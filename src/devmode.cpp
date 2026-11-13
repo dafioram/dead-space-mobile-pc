@@ -158,7 +158,11 @@ void dump(u32 player, float radius, bool all) {
                                objs::class_name(o).c_str(), d, q.x, q.y, q.z, b.lo.x, b.lo.y, b.lo.z, b.hi.x, b.hi.y,
                                b.hi.z, objs::flags(o));
         if (ic)
-            for (auto& q : objs::region_points(o)) line += fmt(" region %.2f %.2f %.2f", q.x, q.y, q.z);
+            for (const auto& region : objs::regions(o)) {
+                auto q = region.p, r = region.right, u = region.up, f = region.forward;
+                line += fmt(" region %.2f %.2f %.2f axes R(%.2f %.2f %.2f) U(%.2f %.2f %.2f) F(%.2f %.2f %.2f)",
+                            q.x, q.y, q.z, r.x, r.y, r.z, u.x, u.y, u.z, f.x, f.y, f.z);
+            }
         if (ic)
             line += fmt(" int=%d plus=%d tk=%d use=%d reach=%.2f chk=%d%d%d", objs::interactive(o), objs::interactive_plus(o),
                         objs::telekinesisable(o), objs::use_enabled(o), objs::reach(o), mem::r8(o + 0x17c),

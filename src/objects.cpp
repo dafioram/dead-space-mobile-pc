@@ -72,10 +72,10 @@ Box bounds(u32 obj) {
 
 bool empty(const Box& b) { return !(b.hi.x > b.lo.x || b.hi.y > b.lo.y || b.hi.z > b.lo.z); }
 
-std::vector<Vec3> region_points(u32 obj) {
+std::vector<Region> regions(u32 obj) {
     // Model::getNodeTransform(out btTransform, node, relative-to node): origin at +0x30
     static u32 fn = elf::find("_ZN5Model16getNodeTransformERKN3m3g4NodeES3_");
-    std::vector<Vec3> v;
+    std::vector<Region> v;
     u32 b = mem::r32(obj + 0x190), e = mem::r32(obj + 0x194);
     if (!fn || e < b || e - b > 64 * 4) return v;
     // Match GameObjectInteractive::onUpdatePostCamera: the marker relative to the
@@ -88,7 +88,10 @@ std::vector<Vec3> region_points(u32 obj) {
         if (!node) continue;
         u32 t = scratch(3);
         cpu::call(fn, {t, node, root});
-        v.push_back({rf(t + 0x30), rf(t + 0x34), rf(t + 0x38)});
+        v.push_back({{rf(t + 0x30), rf(t + 0x34), rf(t + 0x38)},
+                     {rf(t), rf(t + 0x10), rf(t + 0x20)},
+                     {rf(t + 4), rf(t + 0x14), rf(t + 0x24)},
+                     {rf(t + 8), rf(t + 0x18), rf(t + 0x28)}});
     }
     return v;
 }
