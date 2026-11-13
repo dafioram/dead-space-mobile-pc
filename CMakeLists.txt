@@ -1,14 +1,25 @@
 cmake_minimum_required(VERSION 3.16)
 project(deadspace_port CXX C)
 
-if (WIN32)
-    enable_language(RC)
-endif()
-
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo)
+endif()
+
+option(DEADSPACE_BUILD_APP "Build the game port (requires SDL2, OpenGL and Dynarmic)" ON)
+include(CTest)
+
+if (BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
+
+if (NOT DEADSPACE_BUILD_APP)
+    return()
+endif()
+
+if (WIN32)
+    enable_language(RC)
 endif()
 
 # dynarmic: 32-bit ARM JIT (only the A32 frontend is needed)
@@ -27,6 +38,7 @@ add_executable(deadspace
     src/main.cpp
     src/log.cpp
     src/apk.cpp
+    src/asset_file.cpp
     src/settings.cpp
     src/crash.cpp
     src/sbin.cpp

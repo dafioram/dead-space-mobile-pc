@@ -35,3 +35,4 @@ for i in range(n):
         p.wait()
 shutil.rmtree(data, ignore_errors=True)
 print("%d of %d starts exited by themselves" % (bad, n))
+sys.exit(1 if bad else 0)

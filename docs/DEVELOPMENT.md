@@ -40,6 +40,33 @@ fixtures from the APK, even when testing a reported game-data bug. Gameplay
 checks requiring real assets or saves stay local and are reported separately
 from public, asset-free tests.
 
+## Asset-free tests
+
+The test-only build needs a C++20 compiler, CMake, Python 3.8+ and zlib development
+files. It does not need SDL2, OpenGL, Dynarmic, its submodules, or an APK:
+
+```sh
+cmake -S . -B build-tests -DDEADSPACE_BUILD_APP=OFF -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-tests --config Release
+ctest --test-dir build-tests -C Release --output-on-failure
+```
+
+On Windows, use an MSYS2 MinGW/UCRT shell with its compiler and zlib installed.
+The normal application build includes these tests by default; pass
+`-DBUILD_TESTING=OFF` to opt out. Tests keep checks enabled in release builds and
+generate all APK/ELF-like inputs in temporary directories. The generated ELF
+header is deliberately non-executable and contains no game code.
+
+Coverage includes the production APK importer (supported layouts and ZIP
+compression, texture-mode markers, missing/invalid/truncated inputs), settings
+parsing/persistence, and the same file-opening helper used by JNI AssetManager.
+Directory rejection is the regression check for upstream issue #5/PR #9. Python
+tests also check the asset policy and gameplay smoke-test exit status.
+
+This is a baseline regression suite, not a claim that the importer handles every
+malformed archive safely. CRC verification and comprehensive importer hardening
+remain separate work. Tests do not launch the JIT, render, or validate gameplay.
+
 ## Commit attribution
 
 Commits made for this fork should name David as author with
