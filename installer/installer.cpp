@@ -21,6 +21,7 @@
 #include <fstream>
 #include <string>
 #include <thread>
+#include <utility>
 
 #include "apk.h"
 #include "log.h"
@@ -28,7 +29,9 @@
 namespace fs = std::filesystem;
 
 #define APP_NAME L"Dead Space Mobile PC Port"
+#ifndef APP_VERSION
 #define APP_VERSION L"1.0.0"
+#endif
 #define UNINSTALL_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\DeadSpaceMobilePC"
 
 // ---- logging used by the APK importer: the last error line is kept for the message box
@@ -148,6 +151,17 @@ void install(std::wstring dir, std::wstring apk, bool desktop) {
             o.write(static_cast<const char*>(data), std::streamsize(size));
             if (!o) throw std::wstring(L"Cannot write deadspace.exe. Is the game running, or the folder read-only?");
         }
+        for (const auto& document : {std::pair{L"PAYLOAD_NOTICES", L"THIRD_PARTY_NOTICES.txt"},
+                                     std::pair{L"PAYLOAD_INFO", L"BUILD_INFO.txt"}}) {
+            HRSRC resource = FindResourceW(nullptr, document.first, RT_RCDATA);
+            HGLOBAL loaded = resource ? LoadResource(nullptr, resource) : nullptr;
+            const void* contents = loaded ? LockResource(loaded) : nullptr;
+            DWORD count = resource ? SizeofResource(nullptr, resource) : 0;
+            if (!contents || !count) throw std::wstring(L"This installer is damaged (missing notices/build information).");
+            std::ofstream out(fs::path(dir) / document.second, std::ios::binary | std::ios::trunc);
+            out.write(static_cast<const char*>(contents), std::streamsize(count));
+            if (!out) throw std::wstring(L"Cannot write installation notices/build information.");
+        }
 
         fs::create_directories(fs::path(dir) / L"mods" / L"textures", ec);
 
@@ -196,7 +210,8 @@ int uninstall_run(const std::wstring& dir, bool quiet = false) {
         return 1;
     }
     Sleep(600);  // (the uninstall.exe that started this copy is exiting)
-    for (const wchar_t* f : {L"deadspace.exe", L"uninstall.exe", L"deadspace.log", L"stderr.log", L"crash.dmp"}) fs::remove(d / f, ec);
+    for (const wchar_t* f : {L"deadspace.exe", L"uninstall.exe", L"deadspace.log", L"stderr.log", L"crash.dmp",
+                           L"THIRD_PARTY_NOTICES.txt", L"BUILD_INFO.txt"}) fs::remove(d / f, ec);
     fs::remove_all(d / L"gamedata", ec);
     if (saves) fs::remove_all(d / L"userdata", ec);
     // texture packs are the user's own files: the folder goes only if nothing but the game's note is in it
