@@ -67,6 +67,27 @@ This is a baseline regression suite, not a claim that the importer handles every
 malformed archive safely. CRC verification and comprehensive importer hardening
 remain separate work. Tests do not launch the JIT, render, or validate gameplay.
 
+## Continuous integration
+
+`.github/workflows/build.yml` checks pushes and pull requests, and supports manual
+runs. A private-data policy gate runs before recursive submodule checkout and
+builds. Ubuntu 24.04 and Windows Server 2022 (MSYS2 MINGW64) build the complete
+application and run CTest without any APK, game assets, graphical session or
+credentials for private data.
+
+Successful builds upload `deadspace-<platform>-<commit>` development artifacts,
+retained for 14 days. `tools/stage_build.py` creates a **new** staging directory
+from an explicit allowlist, includes dependency notices, generates build
+information and SHA-256 checksums, and checks the package before uploading.
+It never copies tests, saves, logs,
+game data or an entire build directory. Linux artifacts require the host
+libraries listed in the build instructions; they are not universal AppImages.
+
+Actions are pinned to commit IDs, job tokens have read-only contents permission,
+checkout credentials are not persisted, and no `pull_request_target` workflow
+executes untrusted code. No release is published and no installer is built here;
+tagged release packaging is intentionally a separate follow-up.
+
 ## Commit attribution
 
 Commits made for this fork should name David as author with

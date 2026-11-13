@@ -24,3 +24,7 @@ add_test(NAME asset_policy COMMAND "${Python3_EXECUTABLE}" -m unittest discover
 add_test(NAME starttest_exit_status COMMAND "${Python3_EXECUTABLE}" -m unittest discover
     -s "${CMAKE_CURRENT_SOURCE_DIR}" -p test_starttest.py -v)
 set_tests_properties(core apk_import asset_policy starttest_exit_status PROPERTIES TIMEOUT 60)
+
+add_test(NAME build_staging COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+    -s "${CMAKE_CURRENT_SOURCE_DIR}" -p test_staging.py -v)
+set_tests_properties(build_staging PROPERTIES TIMEOUT 60)
