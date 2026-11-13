@@ -393,6 +393,10 @@ around the spot where the game shows their tap icon. E uses the one object whose
 box nearest your line of sight, and nothing else. With nothing in reach, E grabs a kinesis target
 within ~9 m straight ahead. Plain shoot switches are not used with E (shoot them); covered ones are opened with E.
 
+The nearby-object search measures distance to the interaction zone, not the object's origin.
+Controls on large objects (such as a gondola) can therefore be used at the object's edge even when
+its origin is far away. The F10 interaction overlay uses the same zone-based distance check.
+
 ### Dev mode
 Dev command `perf 1` logs slow frames with where the renderer's own CPU time went (lamp search, lamp
 facing, shadow-map drawing, still-scene upload). The lamp search is capped at about 2.5 ms per frame and
