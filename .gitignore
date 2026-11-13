@@ -4,9 +4,16 @@
 *.apk
 *.so
 *.obb
+gamedata/
+assets/
+mods/textures/_dump/
+*.sbin
+*.m3g
+*.pvr
 
 # builds, debug binaries
 /build/
+/build-*/
 /symbols/
 *.exe
 *.dmp
@@ -21,6 +28,7 @@
 /freshdata/
 /nl_*/
 userdata/
+__pycache__/
 /notes/testlogs/
 /notes/survey/*.png
 

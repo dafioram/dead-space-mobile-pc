@@ -444,6 +444,9 @@ it (`start`, `send "cmd; cmd"`, `stop`). Commands are listed at the top of `src/
 
 ## Building
 
+See [development and private-data rules](docs/DEVELOPMENT.md) before contributing.
+APKs, extracted game assets and saves must never be committed or uploaded with builds.
+
 ### Windows (MSYS2 MINGW64)
 
 `external/dynarmic` is a clone of https://github.com/azahar-emu/dynarmic with its submodules
