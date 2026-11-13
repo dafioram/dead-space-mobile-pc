@@ -75,6 +75,12 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   while gameplay capture remained active. Synthetic capture-policy tests pass;
   Continue/Exit behaviour and mouse look after Continue need user verification.
   No death animations, oxygen damage, native button actions or saves are changed.
+- `ci/release-portable-assets` / fork PR #13: separate exact-tag portable-release
+  automation and a manual installer builder. Public release assets come from
+  main-ancestry tags, never a playtest-only commit. Existing `v1.1-rc1` was built
+  at unchanged `aa79eb5` and given portable Windows/Linux assets plus a verified
+  installer/checksums; it intentionally excludes later untagged fixes. See
+  `docs/RELEASING.md`. The automation requires PR #13 to be merged into main.
 - The Mesa shader fix remains unresolved. Other reported terminals
   and the original asset set still need validation.
 
