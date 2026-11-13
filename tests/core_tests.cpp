@@ -94,6 +94,37 @@ void test_interaction_geometry() {
     require(!interact::zone_within_radius({{0, 0, 0}, {infinity, 1, 1}}, {0, 0, 0}, 13), "reject infinite bounds");
 }
 
+void test_interaction_frames() {
+    auto near = [](objs::Vec3 a, objs::Vec3 b) {
+        return std::hypot(a.x - b.x, a.y - b.y, a.z - b.z) < 1e-5f;
+    };
+    constexpr float quarter_turn = 1.57079632679f;
+    for (auto frame : {
+             interact::interaction_view({10, 20, 30}, {0, 0, 1}, {0, 1, 0}, 0),
+             interact::interaction_view({10, 20, 30}, {0, 0, 1}, {1, 0, 0}, 0),
+             interact::interaction_view({10, 20, 30}, {0, 1, 0}, {1, 0, 0}, 0),
+             interact::interaction_view({10, 20, 30}, {0, 0, 1}, {0, -1, 0}, 0),
+             interact::interaction_view({10, 20, 30}, {0, 0.6f, 0.8f}, {0, 0.8f, -0.6f}, 0),
+             interact::interaction_view({10, 20, 30}, {0, 1, 0}, {1, 0, 0}, quarter_turn)}) {
+        require(near(interact::view_local(frame, frame.p), {}), "player is at the interaction-frame origin");
+        require(std::fabs(interact::dot(frame.f, frame.u)) < 1e-5f, "forward and up remain perpendicular");
+        require(near(interact::cross(frame.u, frame.f), frame.r), "right follows the surface orientation");
+        for (int i = 0; i < 8; ++i) {
+            objs::Vec3 corner{i & 1 ? 0.7f : -0.7f, i & 2 ? 1.3f : -1.05f, i & 4 ? 1.8f : -0.3f};
+            require(near(interact::view_local(frame, interact::view_world(frame, corner)), corner),
+                    "drawn hitbox corners must map back to the selection volume on every surface");
+        }
+    }
+    auto floor = interact::interaction_view({}, {0, 0, 1}, {0, 1, 0}, quarter_turn);
+    require(near(floor.f, {1, 0, 0}), "floor free-look yaw preserves the original direction");
+    auto wall = interact::interaction_view({}, {0, 1, 0}, {1, 0, 0}, quarter_turn);
+    require(near(wall.f, {0, 1, 0}) && near(wall.u, {0, 0, -1}),
+            "wall free look applies the camera orbit to the complete body basis");
+    auto ceiling = interact::interaction_view({}, {0, 0, 1}, {0, -1, 0}, 0);
+    require(near(interact::view_world(ceiling, {0, -1, 0}), {0, 1, 0}),
+            "interaction-volume bottom points toward the ceiling when upside down");
+}
+
 }  // namespace
 
 int main() {
@@ -102,6 +133,7 @@ int main() {
         test_asset_files(temp.path);
         test_settings(temp.path);
         test_interaction_geometry();
+        test_interaction_frames();
         std::cout << "Asset-file, settings and interaction-geometry checks passed.\n";
         return 0;
     } catch (const std::exception& error) {

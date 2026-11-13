@@ -78,23 +78,30 @@ std::vector<Vec3> region_points(u32 obj) {
     std::vector<Vec3> v;
     u32 b = mem::r32(obj + 0x190), e = mem::r32(obj + 0x194);
     if (!fn || e < b || e - b > 64 * 4) return v;
+    // Match GameObjectInteractive::onUpdatePostCamera: the marker relative to the
+    // world's scene root is already in the space worldToScreenSpace consumes.
+    u32 world = mem::r32(obj + 0x10);
+    u32 root = world ? mem::r32(world + 8) : 0;
+    if (!root) return v;
     for (u32 p = b; p < e; p += 4) {
         u32 node = mem::r32(p);
-        u32 root = node ? mem::r32(node + 0x128) : 0;  // scene root (what AABB(Node*) measures against)
-        if (!root) continue;
+        if (!node) continue;
         u32 t = scratch(3);
         cpu::call(fn, {t, node, root});
         v.push_back({rf(t + 0x30), rf(t + 0x34), rf(t + 0x38)});
     }
-    if (v.empty()) return v;
-    // model space -> world: local z is the object's facing, x its right, y up
-    Vec3 o = pos(obj), f = facing(obj), r{f.z, 0, -f.x};
-    for (auto& q : v) q = {o.x + r.x * q.x + f.x * q.z, o.y + q.y, o.z + r.z * q.x + f.z * q.z};
     return v;
 }
 
 Vec3 facing(u32 obj) {
     static u32 fn = elf::find("_ZNK10GameObject9getFacingEv");
+    u32 b = scratch(1);
+    cpu::call(fn, {b, obj});
+    return {rf(b), rf(b + 4), rf(b + 8)};
+}
+
+Vec3 up(u32 obj) {
+    static u32 fn = elf::find("_ZNK10GameObject5getUpEv");
     u32 b = scratch(1);
     cpu::call(fn, {b, obj});
     return {rf(b), rf(b + 4), rf(b + 8)};
