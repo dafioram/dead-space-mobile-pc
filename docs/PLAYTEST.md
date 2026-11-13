@@ -51,10 +51,13 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   user-led; automated checks cover builds and the synthetic recovery policy.
 - `fix/main-menu-quit` / PR #10: real mouse clicks reach the same Quit handler
   as keyboard/controller taps, opening the existing Escape/back confirmation.
-  Quit moves from the top right into the bottom bar between Options and Extras,
-  using the existing bottom-button artwork and font. Narrow layouts compact the
-  row horizontally. Synthetic tests cover layout and click geometry; visual
-  appearance and confirmation/cancellation are left to user playtesting.
+  Quit moves from the top right into the bottom bar using the existing artwork
+  and font. The user confirmed the first build's appearance. Follow-up `718839e`
+  swaps Info and Quit, giving Play / Options / Info / Extras / Quit, and registers
+  Quit with the same native fade animator as Play so transitions share their
+  timing. Narrow layouts compact the row horizontally. Synthetic tests cover
+  layout and click geometry; follow-up transition timing and confirmation are
+  left to user playtesting.
 - Death-screen selection and the Mesa shader fix remain unresolved. Other reported terminals
   and the original asset set still need validation.
 
