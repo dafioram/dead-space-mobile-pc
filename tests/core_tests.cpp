@@ -11,6 +11,7 @@
 #include "asset_file.h"
 #include "floor_snap_policy.h"
 #include "interaction_geometry.h"
+#include "input_policy.h"
 #include "menu_geometry.h"
 #include "settings.h"
 
@@ -296,6 +297,28 @@ void test_main_menu_bar() {
     require(narrow.scale < 1, "4:3 must compact the bar rather than hide or overlap Quit");
 }
 
+void test_death_input_ownership() {
+    // All player/pause/cinematic/dialog combinations, including a dead player
+    // that continues receiving updates throughout its animation/restart screen.
+    for (int bits = 0; bits < 32; bits++) {
+        bool current = (bits & 1) != 0, alive = (bits & 2) != 0, paused = (bits & 4) != 0,
+             cinematic = (bits & 8) != 0, dialog = (bits & 16) != 0;
+        bool gameplay = input::gameplay_input_allowed(current, alive, paused, cinematic, dialog);
+        require(gameplay == (bits == 3), "only a current living player outside menus/cinematics owns gameplay input");
+        for (int capture = 0; capture < 8; capture++) {
+            bool alt = (capture & 1) != 0, focused = (capture & 2) != 0, scripted = (capture & 4) != 0;
+            bool expected = bits == 3 && !alt && (focused || scripted);
+            require(input::should_capture_gameplay(gameplay, alt, focused, scripted) == expected,
+                    "focus, scripted input and Left Alt must not bypass death/menu input ownership");
+        }
+    }
+    require(input::gameplay_input_allowed(true, true, false, false, false), "ordinary living gameplay remains enabled");
+    require(!input::gameplay_input_allowed(true, false, false, false, false),
+            "death releases capture even before the HUD reports pause or a recognised dialog");
+    require(!input::gameplay_input_allowed(false, false, false, false, false), "a missing player cannot recapture the cursor");
+    require(input::gameplay_input_allowed(true, true, false, false, false), "a live respawn may recapture input normally");
+}
+
 }  // namespace
 
 int main() {
@@ -308,7 +331,8 @@ int main() {
         test_oriented_zones();
         test_floor_snap_recovery();
         test_main_menu_bar();
-        std::cout << "Asset-file, settings, interaction/menu geometry and floor-snap policy checks passed.\n";
+        test_death_input_ownership();
+        std::cout << "Asset-file, settings, geometry, input ownership and floor-snap policy checks passed.\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
