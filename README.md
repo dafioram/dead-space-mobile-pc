@@ -454,6 +454,7 @@ APKs, extracted game assets and saves must never be committed or uploaded with b
 
 ```
 pacman -S mingw-w64-x86_64-{gcc,cmake,ninja,SDL2,boost,zlib}
+git submodule update --init --recursive
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 ninja -C build
 ```
@@ -473,9 +474,22 @@ bash tools/mkinstaller.sh        # -> release/DeadSpaceMobilePCPort-Setup.exe
 
 ```
 sudo apt install build-essential cmake ninja-build libsdl2-dev libboost-dev zlib1g-dev libgl-dev
+git submodule update --init --recursive
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 ninja -C build
 ```
+
+### Automated builds and tests
+
+GitHub Actions builds Windows x64 and Linux x64 on pushes and pull requests,
+and runs the asset-free CTest suite. Successful runs offer development binaries
+under the run's **Artifacts** section (retained for 14 days), with dependency
+notices, build information and SHA-256 checksums. These are not tagged releases.
+Linux artifacts require the host libraries above; Windows builds are statically
+linked. Neither artifacts nor tests contain game data; supply your own APK.
+
+See [the test and CI instructions](docs/DEVELOPMENT.md) for a lightweight test-only
+build that does not require SDL2, OpenGL or Dynarmic.
 
 ## Layout
 
