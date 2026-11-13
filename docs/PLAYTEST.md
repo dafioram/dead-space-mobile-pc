@@ -53,11 +53,13 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   as keyboard/controller taps, opening the existing Escape/back confirmation.
   Quit moves from the top right into the bottom bar using the existing artwork
   and font. The user confirmed the first build's appearance. Follow-up `718839e`
-  swaps Info and Quit, giving Play / Options / Info / Extras / Quit, and registers
-  Quit with the same native fade animator as Play so transitions share their
-  timing. Narrow layouts compact the row horizontally. Synthetic tests cover
-  layout and click geometry; follow-up transition timing and confirmation are
-  left to user playtesting.
+  swaps Info and Quit, giving Play / Options / Info / Extras / Quit. Follow-up
+  `84aaf17` replaces the separate staggered fade entry with artwork nested under
+  Extras' animated layout, inheriting that button's exact fade phase without
+  changing the native sequence. It also adds the existing close/X icon and
+  standard left-aligned caption. Narrow layouts compact the row horizontally.
+  Synthetic tests cover layout, child/hit geometry and icon placement; follow-up
+  transition timing, icon appearance and confirmation are left to user playtesting.
 - Death-screen selection and the Mesa shader fix remain unresolved. Other reported terminals
   and the original asset set still need validation.
 
