@@ -264,8 +264,10 @@ void test_main_menu_bar() {
         require(quit.y == 272 && quit.h == 31, "Quit must share the bottom buttons' artwork baseline and height");
         float options_right = bar.x[1] + 113 * bar.scale;
         float extras_left = bar.x[3] + 4 * bar.scale;
-        require(quit.x >= options_right - 0.001f, "Quit must not overlap the Options artwork");
-        require(quit.x + quit.w <= extras_left + 0.001f, "Quit must not overlap the Extras artwork");
+        float info_left = bar.x[2] + 4 * bar.scale, info_right = bar.x[2] + 113 * bar.scale;
+        require(info_left >= options_right - 0.001f, "Info must fit after Options");
+        require(info_right <= extras_left + 0.001f, "Info must fit before Extras");
+        require(quit.x >= bar.x[3] + 113 * bar.scale - 0.001f, "Quit must fit after Extras at the far right");
         require(quit.contains(quit.x + quit.w * 0.5f, quit.y + quit.h * 0.5f), "Quit centre must accept a click");
         require(!quit.contains(quit.x - 1, quit.y + 1), "space left of Quit must not activate it");
         require(!quit.contains(quit.x + quit.w, quit.y + 1), "Quit's right boundary must not claim its neighbour");
@@ -279,7 +281,7 @@ void test_main_menu_bar() {
     }
     auto wide = menu_nav::main_menu_bar(640);
     require(wide.x[0] == 10 && wide.x[1] == 118 && wide.x[3] == 385 && wide.x[4] == 494,
-            "wide layouts must keep the four original buttons in place");
+            "wide layouts must preserve the established slot positions after swapping Info and Quit");
     auto narrow = menu_nav::main_menu_bar(480);
     require(narrow.scale < 1, "4:3 must compact the bar rather than hide or overlap Quit");
 }

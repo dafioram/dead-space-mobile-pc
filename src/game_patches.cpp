@@ -270,11 +270,11 @@ bool patch_layouts(sbin::Database& db) {
             u32 m = db.array_count(arr);
             std::vector<u8> d(db.body(arr), db.body(arr) + size_t(m) * esize);
             std::vector<u8> quit;
-            const char* names[] = {"BTN_PLAY", "BTN_OPTIONS", "BTN_QUITGAME", "BTN_EXTRAS", "BTN_INFO"};
+            const char* names[] = {"BTN_PLAY", "BTN_OPTIONS", "BTN_INFO", "BTN_EXTRAS", "BTN_QUITGAME"};
             for (u32 i = 0; i < m; i++) {
                 u8* e = &d[i * esize];
                 std::string name = db.string(get<u16>(e + o_name));
-                for (int slot : {0, 1, 3, 4}) {
+                for (int slot : {0, 1, 2, 3}) {
                     if (name != names[slot]) continue;
                     s32 verts = get<s32>(e + o_verts);
                     float old_x = first_vertex(e, o_x);
@@ -289,12 +289,12 @@ bool patch_layouts(sbin::Database& db) {
                 s32 verts = get<s32>(quit.data() + o_verts);
                 // Quit uses the off-state sublayout directly, without the normal
                 // button wrapper's (4,4) inset.
-                put<s32>(quit.data() + o_verts, x_vertices(verts, 1, bar.x[2] - bar.x[0] + 4 * bar.scale, false, 4));
+                put<s32>(quit.data() + o_verts, x_vertices(verts, 1, bar.x[4] - bar.x[0] + 4 * bar.scale, false, 4));
                 d.insert(d.end(), quit.begin(), quit.end());
                 db.add_array(16, u16(s_entity), m + 1, d);
                 db.replace_with_last(arr);
                 g_main_menu_quit_added = true;
-                LOGI("menu patch: Quit added between Options and Extras (horizontal scale %.3f)", bar.scale);
+                LOGI("menu patch: bottom bar Play / Options / Info / Extras / Quit (horizontal scale %.3f)", bar.scale);
             }
         }
     }
@@ -547,6 +547,34 @@ std::string read_wstring(u32 ws) {
     for (u32 p = b; p < e; p += 2) out += char(mem::r16(p));
     return out;
 }
+
+// The native menu animator explicitly registers the original buttons for fading.
+// Register our layout entity with that same instance, before its initial fade is
+// applied, so it shares their alpha curve on entry, exit and submenu transitions.
+u32 fn_menu_fade_add = 0, g_menu_animator_ctor_begin = 0, g_menu_animator_ctor_end = 0;
+void on_menu_fade_add(cpu::Ctx& c) {
+    if (!g_main_menu_quit_added || c.lr() < g_menu_animator_ctor_begin || c.lr() >= g_menu_animator_ctor_end ||
+        read_wstring(c.reg(1)) != "BTN_PLAY") return;
+    static u32 quit = guest::wstring("BTN_QUITGAME");
+    // The nested call registers Quit, not Play, so it cannot re-enter this branch.
+    cpu::call(fn_menu_fade_add, {c.reg(0), quit});
+}
+
+void install_main_menu_fade() {
+    fn_menu_fade_add = elf::find("_ZN14FadeUIAnimator10addElementERKN5eastl12basic_stringIwN2im20StringEASTLAllocatorEEE");
+    u32 ctor = elf::find("_ZN18MainMenuUIAnimatorC1EN5eastl10shared_ptrIN2im6layout6LayoutENS0_9allocatorENS0_17smart_ptr_deleterIS4_EEEEi");
+    for (const auto& symbol : elf::g_game.symbols) {
+        if (ctor && symbol.addr == ctor && symbol.size) {
+            g_menu_animator_ctor_begin = ctor;
+            g_menu_animator_ctor_end = ctor + symbol.size;
+            break;
+        }
+    }
+    if (!fn_menu_fade_add || !g_menu_animator_ctor_end ||
+        !cpu::hook_entry(fn_menu_fade_add, "FadeUIAnimator::addElement (main-menu Quit)", on_menu_fade_add))
+        LOGW("main menu: could not register Quit with the native fade animator");
+}
+
 void on_set_tutorial_text(cpu::Ctx& c) {
     g_tut = c.reg(0);
     g_tut_vt = mem::r32(g_tut);
@@ -1191,6 +1219,7 @@ std::shared_ptr<const std::vector<u8>> asset(const std::string& path) {
 }
 
 void install() {
+    install_main_menu_fade();
     // GameObjectPlayable::onUpdate shows the navigation line by itself after the player has been idle for
     // a while (which also tilts the camera down). Skip that: the line only appears when asked for.
     if (!patch_insn(0x19b9b0, 0xda000014, 0xea000014)) LOGW("idle navigation line: not patched");
