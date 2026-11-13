@@ -27,7 +27,13 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   when their bounds are nearby but their origin is distant. E activation of the
   reported gondola was verified locally with the fixed asset set and a disposable
   copy of the supplied save.
-- The Mesa shader fix has not been implemented yet. Other reported terminals
+- `fix/interaction-transforms` / PR #8: resolve touch markers in world space,
+  without reapplying the object's transform; use the player's full facing/up
+  basis for targeting and its debug overlay. The reported side-panel position,
+  a second control panel and an oxygen station accepted E in local testing on a
+  disposable save. Wall/ceiling frames have synthetic test coverage, but a real
+  wall-walking gameplay sequence still needs validation.
+- Death-screen selection and the Mesa shader fix remain unresolved. Other reported terminals
   and the original asset set still need validation.
 
 `.github/workflows/playtest-boundary.yml` fails if a PR from `playtest` targets
