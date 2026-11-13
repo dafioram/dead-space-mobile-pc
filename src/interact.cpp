@@ -49,11 +49,11 @@ const ClassRule kRules[] = {
     {"GameObjectShootSwitch", true, 0},  // (covered ones are opened with E, then cut / shot)
     {"GameObjectPickup", false, 0.15f},
 };
-// Objects without a physics body (control panels, stores, power node locks, O2 stations, some lift
+// Objects without physics bounds (control panels, stores, power node locks, O2 stations, some lift
 // stops...) report no bounds. Their zone is built around their touch-region markers (where the
 // game puts the tap icon, e.g. a console's screen): kNoBodyWidth square, from kNoBodyBelow under
-// the marker to kNoBodyAbove over it. Without markers, around the object's position (which is at
-// the floor) up to kNoBodyHeight.
+// the marker to kNoBodyAbove over it, along the marker's model axes. Without markers,
+// around the object's position (which is at the floor) up to kNoBodyHeight.
 constexpr float kNoBodyWidth = 1.0f, kNoBodyBelow = 1.2f, kNoBodyAbove = 0.4f, kNoBodyHeight = 2.0f;
 const ClassRule* rule_for(const std::string& cls) {
     for (auto& r : kRules)
@@ -61,74 +61,49 @@ const ClassRule* rule_for(const std::string& cls) {
     return nullptr;
 }
 
-struct View {
-    Vec3 p, f, r;  // position, forward, right (horizontal unit vectors)
-};
-
 View view_of(u32 player, float look_yaw) {
-    View v;
-    v.p = objs::pos(player);
-    Vec3 f = objs::facing(player);
-    // the free look orbit rotates the camera about the player: x' = x cos + z sin, z' = -x sin + z cos
-    float c = std::cos(look_yaw), s = std::sin(look_yaw);
-    Vec3 g{f.x * c + f.z * s, 0, -f.x * s + f.z * c};
-    float len = std::sqrt(g.x * g.x + g.z * g.z);
-    if (len < 1e-4f) g = {0, 0, 1}, len = 1;
-    v.f = {g.x / len, 0, g.z / len};
-    v.r = {v.f.z, 0, -v.f.x};
-    return v;
+    return interaction_view(objs::pos(player), objs::facing(player), objs::up(player), look_yaw);
 }
 
-// world point -> view frame
-Vec3 local(const View& v, Vec3 w) {
-    Vec3 d{w.x - v.p.x, w.y - v.p.y, w.z - v.p.z};
-    return {d.x * v.r.x + d.z * v.r.z, d.y, d.x * v.f.x + d.z * v.f.z};
-}
-
-Box zone_of(u32 obj, const ClassRule* rule) {
+std::vector<Zone> zones_of(u32 obj, const ClassRule* rule) {
     Box b = objs::bounds(obj);
-    bool empty = !(b.hi.x > b.lo.x || b.hi.y > b.lo.y || b.hi.z > b.lo.z);
-    if (empty) {
+    std::vector<Zone> zones;
+    if (objs::empty(b)) {
         float h = kNoBodyWidth * 0.5f;
-        auto pts = objs::region_points(obj);
-        if (pts.empty()) {
+        auto regions = objs::regions(obj);
+        if (regions.empty()) {
             Vec3 p = objs::pos(obj);
             b = {{p.x - h, p.y, p.z - h}, {p.x + h, p.y + kNoBodyHeight, p.z + h}};
+            zones.push_back({world_view(), b});
         } else {
-            b = {{1e30f, 1e30f, 1e30f}, {-1e30f, -1e30f, -1e30f}};
-            for (auto& p : pts) {
-                b.lo = {std::min(b.lo.x, p.x - h), std::min(b.lo.y, p.y - kNoBodyBelow), std::min(b.lo.z, p.z - h)};
-                b.hi = {std::max(b.hi.x, p.x + h), std::max(b.hi.y, p.y + kNoBodyAbove), std::max(b.hi.z, p.z + h)};
-            }
+            // Each marker supplies its own world orientation. Keep the corrected
+            // anchor and rotate the existing dimensions, including "below", with
+            // the terminal. Do not join separate markers through empty space.
+            for (const auto& region : regions)
+                zones.push_back({region_frame(region), {{-h, -kNoBodyBelow, -h}, {h, kNoBodyAbove, h}}});
         }
+    } else {
+        // Physics getBounds is already a world-space AABB; never rotate it twice.
+        zones.push_back({world_view(), b});
     }
     float pad = kPad + (rule ? rule->pad : 0);
-    float* lo = &b.lo.x;
-    float* hi = &b.hi.x;
-    for (int k = 0; k < 3; k++) {
-        float c = (lo[k] + hi[k]) * 0.5f, h = std::max((hi[k] - lo[k]) * 0.5f, kMinSize * 0.5f) + pad;
-        lo[k] = c - h;
-        hi[k] = c + h;
+    for (auto& zone : zones) {
+        float* lo = &zone.box.lo.x;
+        float* hi = &zone.box.hi.x;
+        for (int k = 0; k < 3; k++) {
+            float c = (lo[k] + hi[k]) * 0.5f, h = std::max((hi[k] - lo[k]) * 0.5f, kMinSize * 0.5f) + pad;
+            lo[k] = c - h;
+            hi[k] = c + h;
+        }
     }
-    return b;
-}
-
-// zone corners -> bounds in the view frame
-Box local_box(const View& v, const Box& z) {
-    Box out{{1e30f, 1e30f, 1e30f}, {-1e30f, -1e30f, -1e30f}};
-    for (int i = 0; i < 8; i++) {
-        Vec3 w{i & 1 ? z.hi.x : z.lo.x, i & 2 ? z.hi.y : z.lo.y, i & 4 ? z.hi.z : z.lo.z};
-        Vec3 l = local(v, w);
-        out.lo = {std::min(out.lo.x, l.x), std::min(out.lo.y, l.y), std::min(out.lo.z, l.z)};
-        out.hi = {std::max(out.hi.x, l.x), std::max(out.hi.y, l.y), std::max(out.hi.z, l.z)};
-    }
-    return out;
+    return zones;
 }
 
 struct Cand {
     u32 obj;
     std::string cls;
-    Box zone, lz;
+    std::vector<Zone> zones;
+    Box lz;
     bool usable, kinesis, overlap;
     float score;
 };
@@ -164,6 +139,7 @@ bool send_use(u32 obj) {
 
 std::vector<Cand> gather(const View& v, u32 world, bool report) {
     std::vector<Cand> out;
+    Zone player{v, {{-kHalfWidth, kBottom, -kBack}, {kHalfWidth, kTop, kReach}}};
     for (u32 o : objs::world_objects(world)) {
         if (!objs::is_interactive_class(o)) continue;
         Cand c{o, objs::class_name(o), {}, {}, false, false, false, 0};
@@ -173,18 +149,23 @@ std::vector<Cand> gather(const View& v, u32 world, bool report) {
         c.usable = !hidden && !(rule && rule->skip) && (objs::interactive(o) || objs::interactive_plus(o));
         c.kinesis = !hidden && objs::telekinesisable(o);
         if (!c.usable && !c.kinesis && !report) continue;
-        c.zone = zone_of(o, rule);
-        if (!(c.zone.hi.x >= c.zone.lo.x && c.zone.hi.y >= c.zone.lo.y && c.zone.hi.z >= c.zone.lo.z) ||
-            std::fabs(c.zone.lo.x) > 1e6f || std::fabs(c.zone.lo.y) > 1e6f || std::fabs(c.zone.lo.z) > 1e6f)
-            continue;
-        if (!zone_within_radius(c.zone, v.p, kKinesisRange + 4)) continue;
-        c.lz = local_box(v, c.zone);
-        c.overlap = c.lz.hi.x > -kHalfWidth && c.lz.lo.x < kHalfWidth && c.lz.hi.y > kBottom && c.lz.lo.y < kTop &&
-                    c.lz.hi.z > -kBack && c.lz.lo.z < kReach;
-        // nearest the line of sight first: sideways gap to the forward line, then distance
-        float gap = c.lz.lo.x > 0 ? c.lz.lo.x : c.lz.hi.x < 0 ? -c.lz.hi.x : 0;
-        float near_z = std::max(c.lz.lo.z, 0.0f);
-        c.score = gap * 2.0f + near_z * 0.5f;
+        bool found = false;
+        for (const auto& zone : zones_of(o, rule)) {
+            if (!zone_within_radius(zone, v.p, kKinesisRange + 4)) continue;
+            Box lz = zone_bounds(zone, v);
+            bool overlap = zones_overlap(zone, player);
+            // Nearest the line of sight first, among overlapping markers if any.
+            float gap = lz.lo.x > 0 ? lz.lo.x : lz.hi.x < 0 ? -lz.hi.x : 0;
+            float score = gap * 2.0f + std::max(lz.lo.z, 0.0f) * 0.5f;
+            if (!found || (overlap && !c.overlap) || (overlap == c.overlap && score < c.score)) {
+                c.lz = lz;
+                c.score = score;
+            }
+            c.overlap |= overlap;
+            c.zones.push_back(zone);
+            found = true;
+        }
+        if (!found) continue;
         out.push_back(c);
     }
     std::sort(out.begin(), out.end(), [](const Cand& a, const Cand& b) { return a.score < b.score; });
@@ -216,8 +197,8 @@ const Cand* pick(const std::vector<Cand>& cands, const View& v, bool& kinesis) {
 }
 
 void report_all(const std::vector<Cand>& cands, const View& v) {
-    emit(true, fmt("player %.2f %.2f %.2f looking %.2f %.2f; hitbox %.1f..%.1f m ahead, %.1f m wide", v.p.x, v.p.y,
-                   v.p.z, v.f.x, v.f.z, -kBack, kReach, 2 * kHalfWidth));
+    emit(true, fmt("player %.2f %.2f %.2f looking %.2f %.2f %.2f up %.2f %.2f %.2f; hitbox %.1f..%.1f m ahead, %.1f m wide",
+                   v.p.x, v.p.y, v.p.z, v.f.x, v.f.y, v.f.z, v.u.x, v.u.y, v.u.z, -kBack, kReach, 2 * kHalfWidth));
     int n = 0;
     for (auto& c : cands) {
         if (n++ >= 25) break;
@@ -257,9 +238,6 @@ void draw_box(u32 world, const Vec3 c[8], unsigned rgba) {
     for (auto& e : kEdges)
         if (ok[e[0]] && ok[e[1]]) hle::overlay_line(sx[e[0]], sy[e[0]], sx[e[1]], sy[e[1]], rgba);
 }
-void box_corners(const Box& b, Vec3 out[8]) {
-    for (int i = 0; i < 8; i++) out[i] = {i & 1 ? b.hi.x : b.lo.x, i & 2 ? b.hi.y : b.lo.y, i & 4 ? b.hi.z : b.lo.z};
-}
 }  // namespace
 
 void draw_debug(u32 player, u32 world, float look_yaw) {
@@ -270,17 +248,19 @@ void draw_debug(u32 player, u32 world, float look_yaw) {
     const Cand* best = pick(cands, v, kin);
     for (auto& c : cands) {
         if (!c.usable && !c.kinesis) continue;
-        if (!zone_within_radius(c.zone, v.p, 10)) continue;
-        Vec3 corners[8];
-        box_corners(c.zone, corners);
         unsigned col = &c == best ? 0x30ff30ffu : c.usable ? 0xffffffb0u : 0xffc030b0u;
-        draw_box(world, corners, col);
+        for (const auto& zone : c.zones) {
+            if (!zone_within_radius(zone, v.p, 10)) continue;
+            Vec3 corners[8];
+            zone_corners(zone, corners);
+            draw_box(world, corners, col);
+        }
     }
     // hitbox (view frame -> world)
     Vec3 corners[8];
     for (int i = 0; i < 8; i++) {
         float x = i & 1 ? kHalfWidth : -kHalfWidth, y = i & 2 ? kTop : kBottom, z = i & 4 ? kReach : -kBack;
-        corners[i] = {v.p.x + v.r.x * x + v.f.x * z, v.p.y + y, v.p.z + v.r.z * x + v.f.z * z};
+        corners[i] = view_world(v, {x, y, z});
     }
     draw_box(world, corners, 0x30e0ffd0u);
 }
@@ -295,7 +275,10 @@ std::string pick_name(u32 player, u32 world, float look_yaw) {
 }
 
 Approach approach_point(u32 obj, float dist) {
-    Box z = zone_of(obj, rule_for(objs::class_name(obj)));
+    // This diagnostic helper still approaches on the world floor. Use the first
+    // real zone, not a union that could put the target between separate markers.
+    auto zones = zones_of(obj, rule_for(objs::class_name(obj)));
+    Box z = zone_bounds(zones.front(), world_view());
     Vec3 c{(z.lo.x + z.hi.x) * 0.5f, (z.lo.y + z.hi.y) * 0.5f, (z.lo.z + z.hi.z) * 0.5f};
     Vec3 f = objs::facing(obj);
     // distance from the zone centre to its edge along the facing

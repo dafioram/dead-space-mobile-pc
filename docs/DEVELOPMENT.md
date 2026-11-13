@@ -65,7 +65,14 @@ tests also check the asset policy and gameplay smoke-test exit status.
 
 Native tests also cover interaction-zone distance checks, including large objects
 with distant origins, exact search boundaries, three-dimensional distance and
-invalid bounds. Their geometry is synthetic and is not copied from game assets.
+invalid bounds, plus floor/slope/wall/ceiling interaction frames and debug-volume
+round trips. Their geometry is synthetic and is not copied from game assets.
+
+Marker-based interaction zones retain their full world orientation while keeping
+dimensions in metres (model scale is removed). Geometry checks cover rotated
+corners and distances, reflected/invalid marker axes, strict box overlap, empty
+corners of enclosing AABBs, and skew edge-edge separation. Selection and the debug
+overlay use the same oriented boxes; separate markers are not joined by a union.
 
 This is a baseline regression suite, not a claim that the importer handles every
 malformed archive safely. CRC verification and comprehensive importer hardening
