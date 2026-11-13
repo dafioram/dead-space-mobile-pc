@@ -61,28 +61,8 @@ const ClassRule* rule_for(const std::string& cls) {
     return nullptr;
 }
 
-struct View {
-    Vec3 p, f, r;  // position, forward, right (horizontal unit vectors)
-};
-
 View view_of(u32 player, float look_yaw) {
-    View v;
-    v.p = objs::pos(player);
-    Vec3 f = objs::facing(player);
-    // the free look orbit rotates the camera about the player: x' = x cos + z sin, z' = -x sin + z cos
-    float c = std::cos(look_yaw), s = std::sin(look_yaw);
-    Vec3 g{f.x * c + f.z * s, 0, -f.x * s + f.z * c};
-    float len = std::sqrt(g.x * g.x + g.z * g.z);
-    if (len < 1e-4f) g = {0, 0, 1}, len = 1;
-    v.f = {g.x / len, 0, g.z / len};
-    v.r = {v.f.z, 0, -v.f.x};
-    return v;
-}
-
-// world point -> view frame
-Vec3 local(const View& v, Vec3 w) {
-    Vec3 d{w.x - v.p.x, w.y - v.p.y, w.z - v.p.z};
-    return {d.x * v.r.x + d.z * v.r.z, d.y, d.x * v.f.x + d.z * v.f.z};
+    return interaction_view(objs::pos(player), objs::facing(player), objs::up(player), look_yaw);
 }
 
 Box zone_of(u32 obj, const ClassRule* rule) {
@@ -118,7 +98,7 @@ Box local_box(const View& v, const Box& z) {
     Box out{{1e30f, 1e30f, 1e30f}, {-1e30f, -1e30f, -1e30f}};
     for (int i = 0; i < 8; i++) {
         Vec3 w{i & 1 ? z.hi.x : z.lo.x, i & 2 ? z.hi.y : z.lo.y, i & 4 ? z.hi.z : z.lo.z};
-        Vec3 l = local(v, w);
+        Vec3 l = view_local(v, w);
         out.lo = {std::min(out.lo.x, l.x), std::min(out.lo.y, l.y), std::min(out.lo.z, l.z)};
         out.hi = {std::max(out.hi.x, l.x), std::max(out.hi.y, l.y), std::max(out.hi.z, l.z)};
     }
@@ -216,8 +196,8 @@ const Cand* pick(const std::vector<Cand>& cands, const View& v, bool& kinesis) {
 }
 
 void report_all(const std::vector<Cand>& cands, const View& v) {
-    emit(true, fmt("player %.2f %.2f %.2f looking %.2f %.2f; hitbox %.1f..%.1f m ahead, %.1f m wide", v.p.x, v.p.y,
-                   v.p.z, v.f.x, v.f.z, -kBack, kReach, 2 * kHalfWidth));
+    emit(true, fmt("player %.2f %.2f %.2f looking %.2f %.2f %.2f up %.2f %.2f %.2f; hitbox %.1f..%.1f m ahead, %.1f m wide",
+                   v.p.x, v.p.y, v.p.z, v.f.x, v.f.y, v.f.z, v.u.x, v.u.y, v.u.z, -kBack, kReach, 2 * kHalfWidth));
     int n = 0;
     for (auto& c : cands) {
         if (n++ >= 25) break;
@@ -280,7 +260,7 @@ void draw_debug(u32 player, u32 world, float look_yaw) {
     Vec3 corners[8];
     for (int i = 0; i < 8; i++) {
         float x = i & 1 ? kHalfWidth : -kHalfWidth, y = i & 2 ? kTop : kBottom, z = i & 4 ? kReach : -kBack;
-        corners[i] = {v.p.x + v.r.x * x + v.f.x * z, v.p.y + y, v.p.z + v.r.z * x + v.f.z * z};
+        corners[i] = view_world(v, {x, y, z});
     }
     draw_box(world, corners, 0x30e0ffd0u);
 }

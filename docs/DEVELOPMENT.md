@@ -65,7 +65,8 @@ tests also check the asset policy and gameplay smoke-test exit status.
 
 Native tests also cover interaction-zone distance checks, including large objects
 with distant origins, exact search boundaries, three-dimensional distance and
-invalid bounds. Their geometry is synthetic and is not copied from game assets.
+invalid bounds, plus floor/slope/wall/ceiling interaction frames and debug-volume
+round trips. Their geometry is synthetic and is not copied from game assets.
 
 This is a baseline regression suite, not a claim that the importer handles every
 malformed archive safely. CRC verification and comprehensive importer hardening

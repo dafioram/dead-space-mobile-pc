@@ -23,7 +23,8 @@ void wf(u32 addr, float v);
 std::string class_name(u32 obj);  // "GameObjectDoor"
 Vec3 pos(u32 obj);                 // GameObject::getPos
 Box bounds(u32 obj);               // GameObject::getBounds (virtual; pickups/lifts override)
-Vec3 facing(u32 obj);              // GameObject::getFacing (unit, horizontal)
+Vec3 facing(u32 obj);              // GameObject::getFacing (physics body's local +z)
+Vec3 up(u32 obj);                  // GameObject::getUp (physics body's local +y; requires a body)
 // World positions of an interactive object's touch-region markers (+0x190: model nodes placed
 // where the game shows the object's tap icon, e.g. a console's screen).
 std::vector<Vec3> region_points(u32 obj);
