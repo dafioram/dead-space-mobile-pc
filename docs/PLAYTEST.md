@@ -31,8 +31,14 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   without reapplying the object's transform; use the player's full facing/up
   basis for targeting and its debug overlay. The reported side-panel position,
   a second control panel and an oxygen station accepted E in local testing on a
-  disposable save. Wall/ceiling frames have synthetic test coverage, but a real
-  wall-walking gameplay sequence still needs validation.
+  disposable save. The user subsequently confirmed all terminals and the blocked
+  door work, with a wall-oriented activation recorded in their local log.
+  Follow-up `2988f2f` also rotates terminal zones with their marker axes, retaining
+  metre dimensions and the corrected marker anchors. Drawing, radius checks and
+  exact oriented-box selection share the same zones. A wall-oriented diagnostic
+  pose, lower panel, oxygen station and gondola were checked locally; the rotated
+  boxes still need the user's normal-play visual confirmation. Wall/ceiling and
+  rotated-box geometry also have synthetic regression coverage.
 - Death-screen selection and the Mesa shader fix remain unresolved. Other reported terminals
   and the original asset set still need validation.
 
