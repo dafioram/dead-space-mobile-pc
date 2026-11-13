@@ -215,13 +215,15 @@ bool patch_layouts(sbin::Database& db) {
     {
         long button = find_layout("UI_BUTTON_MAIN"), off = find_layout("UI_BUTTON_MAIN_OFF"),
              on = find_layout("UI_BUTTON_MAIN_ON"), menu = find_layout("UI_MAIN");
-        const int o_type = db.field_offset(s_entity, "type"), o_align = db.field_offset(s_entity, "align"),
-                  o_width = db.field_offset(s_entity, "width"), o_anchor_x = db.field_offset(s_vertex, "anchorx");
-        if (button >= 0 && off >= 0 && on >= 0 && menu >= 0 && o_type >= 0 && o_align >= 0 &&
-            o_width >= 0 && o_anchor_x >= 0) {
+        const int o_type = db.field_offset(s_entity, "type"), o_image = db.field_offset(s_entity, "image"),
+                  o_width = db.field_offset(s_entity, "width"), o_height = db.field_offset(s_entity, "height"),
+                  o_anchor_x = db.field_offset(s_vertex, "anchorx"), o_anchor_y = db.field_offset(s_vertex, "anchory");
+        if (button >= 0 && off >= 0 && on >= 0 && menu >= 0 && o_type >= 0 && o_image >= 0 &&
+            o_width >= 0 && o_height >= 0 && o_anchor_x >= 0 && o_anchor_y >= 0) {
             float k = std::min(g_config.screen_w / 480.0f, g_config.screen_h / 320.0f);
             auto bar = menu_nav::main_menu_bar(g_config.screen_w / k);
-            auto x_vertices = [&](s32 arr, float scale, float x = 0.0f, bool absolute = false, float dy = 0.0f) {
+            auto x_vertices = [&](s32 arr, float scale, float x = 0.0f, bool absolute = false,
+                                  float dy = 0.0f, bool local_y = false) {
                 u32 n = db.array_count(size_t(arr)), stride = db.array_stride(size_t(arr));
                 std::vector<u8> data(db.body(size_t(arr)), db.body(size_t(arr)) + size_t(n) * stride);
                 for (u32 i = 0; i < n; i++) {
@@ -229,6 +231,7 @@ bool patch_layouts(sbin::Database& db) {
                     put<float>(v + o_x, get<float>(v + o_x) * scale + x);
                     put<float>(v + o_y, get<float>(v + o_y) + dy);
                     if (absolute) put<float>(v + o_anchor_x, 0);
+                    if (local_y) put<float>(v + o_anchor_y, 0);
                 }
                 return s32(db.add_array(db.array_elem_type(size_t(arr)), db.array_struct(size_t(arr)), n, data));
             };
@@ -239,7 +242,7 @@ bool patch_layouts(sbin::Database& db) {
                 for (u32 i = 0; i < n; i++) {
                     u8* e = &src[i * esize];
                     std::string name = db.string(get<u16>(e + o_name));
-                    if (quit && name != "BTN" && name != "BTN_TEXT") continue;
+                    if (quit && name != "BTN" && name != "BTN_TEXT" && name != "STORY") continue;
                     s32 verts = get<s32>(e + o_verts);
                     if (verts >= 0) put<s32>(e + o_verts, x_vertices(verts, bar.scale));
                     put<float>(e + o_width, get<float>(e + o_width) * bar.scale);
@@ -247,11 +250,19 @@ bool patch_layouts(sbin::Database& db) {
                     if (child == "UI_BUTTON_MAIN_OFF") put<u16>(e + o_lay, db.add_string("UI_BUTTON_MAIN_PORT_OFF"));
                     if (child == "UI_BUTTON_MAIN_ON") put<u16>(e + o_lay, db.add_string("UI_BUTTON_MAIN_PORT_ON"));
                     if (quit && name == "BTN_TEXT" && verts >= 0) {
+                        put<u16>(e + o_name, db.add_string("TEXT_QUIT"));
                         put<u16>(e + o_type, db.add_string("TEXT"));
                         put<u16>(e + o_str, db.add_string("PORT_QUIT_GAME"));
-                        put<u16>(e + o_align, db.add_string("HCENTER|BASELINE"));
-                        // Retain the template's font, colour, baseline and case policy.
-                        put<s32>(e + o_verts, x_vertices(verts, 0, 54.5f * bar.scale));
+                        // Keep the neighbours' left-aligned caption, font and baseline.
+                    }
+                    if (quit && name == "BTN") put<u16>(e + o_name, db.add_string("QUIT_BACKGROUND"));
+                    if (quit && name == "STORY" && verts >= 0) {
+                        auto icon = bar.quit_icon_rect();
+                        put<u16>(e + o_name, db.add_string("ICON_QUIT"));
+                        put<u16>(e + o_image, db.add_string("icons/icon_close_off.tif"));
+                        put<float>(e + o_width, icon.w);
+                        put<float>(e + o_height, icon.h);
+                        put<s32>(e + o_verts, x_vertices(verts, 0, icon.x, true, icon.y - first_vertex(e, o_y), true));
                     }
                     out.insert(out.end(), e, e + esize);
                     kept++;
@@ -260,11 +271,14 @@ bool patch_layouts(sbin::Database& db) {
                 std::vector<u8> lay(db.body(size_t(source)), db.body(size_t(source)) + lsize);
                 put<u16>(lay.data() + o_id, db.add_string(id));
                 put<s32>(lay.data() + o_ents, copied);
-                new_layouts.push_back(s32(db.add_struct_object(u16(s_layout), lay)));
+                s32 layout = s32(db.add_struct_object(u16(s_layout), lay));
+                new_layouts.push_back(layout);
+                return layout;
             };
             copy_button(off, "UI_BUTTON_MAIN_PORT_OFF", false);
             copy_button(on, "UI_BUTTON_MAIN_PORT_ON", false);
             copy_button(button, "UI_BUTTON_MAIN_PORT", false);
+            s32 extras = copy_button(button, "UI_BUTTON_MAIN_PORT_EXTRAS", false);
             copy_button(off, "UI_BUTTON_QUIT_BOTTOM", true);
             size_t arr = entities(size_t(menu));
             u32 m = db.array_count(arr);
@@ -279,19 +293,26 @@ bool patch_layouts(sbin::Database& db) {
                     s32 verts = get<s32>(e + o_verts);
                     float old_x = first_vertex(e, o_x);
                     put<s32>(e + o_verts, x_vertices(verts, bar.scale, bar.x[size_t(slot)] - old_x * bar.scale, true));
-                    put<u16>(e + o_lay, db.add_string("UI_BUTTON_MAIN_PORT"));
+                    put<u16>(e + o_lay, db.add_string(slot == 3 ? "UI_BUTTON_MAIN_PORT_EXTRAS" : "UI_BUTTON_MAIN_PORT"));
                     if (slot == 0) quit.assign(e, e + esize);
                 }
             }
             if (!quit.empty()) {
-                put<u16>(quit.data() + o_name, db.add_string("BTN_QUITGAME"));
+                put<u16>(quit.data() + o_name, db.add_string("PORT_QUIT"));
                 put<u16>(quit.data() + o_lay, db.add_string("UI_BUTTON_QUIT_BOTTOM"));
                 s32 verts = get<s32>(quit.data() + o_verts);
-                // Quit uses the off-state sublayout directly, without the normal
-                // button wrapper's (4,4) inset.
-                put<s32>(quit.data() + o_verts, x_vertices(verts, 1, bar.x[4] - bar.x[0] + 4 * bar.scale, false, 4));
-                d.insert(d.end(), quit.begin(), quit.end());
-                db.add_array(16, u16(s_entity), m + 1, d);
+                // Inherit Extras' existing fade phase and visibility. A separate
+                // FadeUIAnimator entry would change its staggered sequence.
+                auto local = bar.quit_local_rect();
+                float dx = local.x - first_vertex(quit.data(), o_x), dy = local.y - first_vertex(quit.data(), o_y);
+                put<s32>(quit.data() + o_verts, x_vertices(verts, 1, dx, true, dy, true));
+                size_t extra_arr = entities(size_t(extras));
+                u32 extra_count = db.array_count(extra_arr);
+                std::vector<u8> children(db.body(extra_arr), db.body(extra_arr) + size_t(extra_count) * esize);
+                children.insert(children.end(), quit.begin(), quit.end());
+                db.add_array(16, u16(s_entity), extra_count + 1, children);
+                db.replace_with_last(extra_arr);
+                db.add_array(16, u16(s_entity), m, d);
                 db.replace_with_last(arr);
                 g_main_menu_quit_added = true;
                 LOGI("menu patch: bottom bar Play / Options / Info / Extras / Quit (horizontal scale %.3f)", bar.scale);
@@ -546,33 +567,6 @@ std::string read_wstring(u32 ws) {
     if (b < 0x10000 || e <= b || e - b > 200) return out;
     for (u32 p = b; p < e; p += 2) out += char(mem::r16(p));
     return out;
-}
-
-// The native menu animator explicitly registers the original buttons for fading.
-// Register our layout entity with that same instance, before its initial fade is
-// applied, so it shares their alpha curve on entry, exit and submenu transitions.
-u32 fn_menu_fade_add = 0, g_menu_animator_ctor_begin = 0, g_menu_animator_ctor_end = 0;
-void on_menu_fade_add(cpu::Ctx& c) {
-    if (!g_main_menu_quit_added || c.lr() < g_menu_animator_ctor_begin || c.lr() >= g_menu_animator_ctor_end ||
-        read_wstring(c.reg(1)) != "BTN_PLAY") return;
-    static u32 quit = guest::wstring("BTN_QUITGAME");
-    // The nested call registers Quit, not Play, so it cannot re-enter this branch.
-    cpu::call(fn_menu_fade_add, {c.reg(0), quit});
-}
-
-void install_main_menu_fade() {
-    fn_menu_fade_add = elf::find("_ZN14FadeUIAnimator10addElementERKN5eastl12basic_stringIwN2im20StringEASTLAllocatorEEE");
-    u32 ctor = elf::find("_ZN18MainMenuUIAnimatorC1EN5eastl10shared_ptrIN2im6layout6LayoutENS0_9allocatorENS0_17smart_ptr_deleterIS4_EEEEi");
-    for (const auto& symbol : elf::g_game.symbols) {
-        if (ctor && symbol.addr == ctor && symbol.size) {
-            g_menu_animator_ctor_begin = ctor;
-            g_menu_animator_ctor_end = ctor + symbol.size;
-            break;
-        }
-    }
-    if (!fn_menu_fade_add || !g_menu_animator_ctor_end ||
-        !cpu::hook_entry(fn_menu_fade_add, "FadeUIAnimator::addElement (main-menu Quit)", on_menu_fade_add))
-        LOGW("main menu: could not register Quit with the native fade animator");
 }
 
 void on_set_tutorial_text(cpu::Ctx& c) {
@@ -1219,7 +1213,6 @@ std::shared_ptr<const std::vector<u8>> asset(const std::string& path) {
 }
 
 void install() {
-    install_main_menu_fade();
     // GameObjectPlayable::onUpdate shows the navigation line by itself after the player has been idle for
     // a while (which also tilts the camera down). Skip that: the line only appears when asked for.
     if (!patch_insn(0x19b9b0, 0xda000014, 0xea000014)) LOGW("idle navigation line: not patched");

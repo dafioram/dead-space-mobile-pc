@@ -268,6 +268,16 @@ void test_main_menu_bar() {
         require(info_left >= options_right - 0.001f, "Info must fit after Options");
         require(info_right <= extras_left + 0.001f, "Info must fit before Extras");
         require(quit.x >= bar.x[3] + 113 * bar.scale - 0.001f, "Quit must fit after Extras at the far right");
+        auto local = bar.quit_local_rect();
+        require(std::fabs(bar.x[3] + local.x - quit.x) < 0.001f && local.y + 268 == quit.y,
+                "the animated child placement and screen-space Quit hit target must agree");
+        auto icon = bar.quit_icon_rect();
+        require(icon.x >= 0 && icon.x + icon.w < 29 * bar.scale && icon.y >= 0 && icon.y + icon.h < quit.h,
+                "the close icon must fit inside Quit's icon well");
+        require(std::fabs(icon.x + icon.w * 0.5f - 14.5f * bar.scale) < 0.001f &&
+                    icon.y + icon.h * 0.5f == 15.5f,
+                "the close icon must use the same centred placement as neighbouring icons");
+        require(icon.x + icon.w < 32 * bar.scale, "the close icon must stay clear of the left-aligned caption");
         require(quit.contains(quit.x + quit.w * 0.5f, quit.y + quit.h * 0.5f), "Quit centre must accept a click");
         require(!quit.contains(quit.x - 1, quit.y + 1), "space left of Quit must not activate it");
         require(!quit.contains(quit.x + quit.w, quit.y + 1), "Quit's right boundary must not claim its neighbour");

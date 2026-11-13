@@ -18,9 +18,21 @@ struct MainMenuBar {
     std::array<float, 5> x;
     float scale;
 
+    MenuRect quit_local_rect() const {
+        // Quit is a child of Extras' animated layout, sharing its exact fade phase.
+        return {x[4] - x[3] + 4 * scale, 4, 109 * scale, 31};
+    }
+
     MenuRect quit_rect(float layout_height) const {
-        // The off-state artwork's position and dimensions, also used for mouse hits.
-        return {x[4] + 4 * scale, layout_height - 48, 109 * scale, 31};
+        auto r = quit_local_rect();
+        r.x += x[3];
+        r.y += layout_height - 52;
+        return r;
+    }
+
+    MenuRect quit_icon_rect() const {
+        // The existing 18 x 18 close icon, centred in the 29 x 31 icon well.
+        return {5.5f * scale, 6.5f, 18 * scale, 18};
     }
 };
 
