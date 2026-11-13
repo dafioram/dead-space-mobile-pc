@@ -60,6 +60,14 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   standard left-aligned caption. Narrow layouts compact the row horizontally.
   Synthetic tests cover layout, child/hit geometry and icon placement; follow-up
   transition timing, icon appearance and confirmation are left to user playtesting.
+- `fix/menu-widget-lifetime` / fork PR #11: starts from upstream PR #12, retaining
+  jfgomez21's commit separately, and adds mapped-range/required-reference guards
+  before rectangle queries plus cache retirement during supported button/bench
+  destruction paths. Synthetic tests cover read ordering and invalid references.
+  Neither the user nor the assistant has reproduced the reported workbench crash
+  in this fork: this is defensive hardening, not a confirmed purchase/exit fix.
+  Normal bench and menu/controller checks remain user-led; see
+  `docs/MENU_WIDGET_SAFETY.md`.
 - Death-screen selection and the Mesa shader fix remain unresolved. Other reported terminals
   and the original asset set still need validation.
 
