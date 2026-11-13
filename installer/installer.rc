@@ -1,9 +1,18 @@
-// The game program the installer writes out (made by tools/mkinstaller.sh from build/deadspace.exe).
+// Explicit payloads prepared in a fresh directory by tools/build_installer.py.
 PAYLOAD_EXE RCDATA "payload/deadspace.exe"
+PAYLOAD_NOTICES RCDATA "payload/THIRD_PARTY_NOTICES.txt"
+PAYLOAD_INFO RCDATA "payload/BUILD_INFO.txt"
+
+#ifndef APP_VERSION_TEXT
+#define APP_VERSION_TEXT "1.0.0"
+#endif
+#ifndef APP_VERSION_NUMERIC
+#define APP_VERSION_NUMERIC 1,0,0,0
+#endif
 
 1 VERSIONINFO
-FILEVERSION 1,0,0,0
-PRODUCTVERSION 1,0,0,0
+FILEVERSION APP_VERSION_NUMERIC
+PRODUCTVERSION APP_VERSION_NUMERIC
 BEGIN
     BLOCK "StringFileInfo"
     BEGIN
@@ -11,8 +20,8 @@ BEGIN
         BEGIN
             VALUE "FileDescription", "Dead Space Mobile PC Port - Setup"
             VALUE "ProductName", "Dead Space Mobile PC Port"
-            VALUE "FileVersion", "1.0.0"
-            VALUE "ProductVersion", "1.0.0"
+            VALUE "FileVersion", APP_VERSION_TEXT
+            VALUE "ProductVersion", APP_VERSION_TEXT
             VALUE "Comments", "Fan project. Contains no game data: the user supplies their own APK."
         END
     END
