@@ -1,0 +1,19 @@
+name: Playtest must not merge into main
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  reject-playtest:
+    if: github.head_ref == 'playtest'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Reject integration branch as a source for main
+        run: |
+          echo "::error::playtest is integration-only. Close this PR and submit the individual themed fix branches instead."
+          exit 1
