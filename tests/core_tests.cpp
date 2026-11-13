@@ -9,6 +9,7 @@
 #include <string>
 
 #include "asset_file.h"
+#include "floor_snap_policy.h"
 #include "interaction_geometry.h"
 #include "settings.h"
 
@@ -94,6 +95,59 @@ void test_interaction_geometry() {
     require(!interact::zone_within_radius({{0, 0, 0}, {infinity, 1, 1}}, {0, 0, 0}, 13), "reject infinite bounds");
 }
 
+void test_floor_snap_recovery() {
+    movement::FloorSnapRecovery recovery;
+    objs::Vec3 p{};
+    recovery.update(true, true, p, 20);
+    for (int i = 0; i < 4; i++) recovery.update(true, true, p, 20);
+    require(!recovery.active(), "a short movement hitch must keep the original floor ray");
+    p.z += 0.04f;
+    recovery.update(true, true, p, 20);
+    require(!recovery.active(), "ordinary movement must clear accumulated stall time");
+    for (int i = 0; i < 5; i++) recovery.update(true, true, p, 20);
+    require(recovery.active(), "sustained blocked walking must request the wider floor probe");
+    for (int i = 0; i < 19; i++) recovery.update(true, true, p, 20);
+    require(recovery.active(), "give a recovery sweep time to clear the seam");
+    recovery.update(true, true, p, 20);
+    require(!recovery.active(), "a failed recovery must return to the original ray after a bounded interval");
+    for (int i = 0; i < 10; i++) recovery.update(true, true, p, 20);
+    require(!recovery.active(), "leave a ray-only cooldown between recovery attempts");
+    for (int i = 0; i < 5; i++) recovery.update(true, true, p, 20);
+    require(recovery.active(), "a still-blocked player may retry after cooldown");
+    recovery.update(true, false, p, 20);
+    require(!recovery.active(), "releasing movement must immediately cancel recovery");
+
+    for (int dt : {8, 16, 33, 50}) {
+        recovery.reset();
+        p = {};
+        recovery.update(true, true, p, dt);
+        for (int i = 0; i < 100; i++) {
+            p.z += 2.0f * float(dt) / 1000.0f;
+            recovery.update(true, true, p, dt);
+            require(!recovery.active(), "normal walking must stay on the ray at different frame rates");
+        }
+        for (int i = 0; i < (100 + dt - 1) / dt; i++) recovery.update(true, true, p, dt);
+        require(recovery.active(), "stall detection must use elapsed simulation time, not a frame count");
+        recovery.update(false, true, p, dt);
+        require(!recovery.active(), "leaving grounded living zero-G locomotion must cancel recovery");
+    }
+    recovery.update(true, true, p, 20);
+    for (int i = 0; i < 4; i++) recovery.update(true, true, p, 20);
+    p.x += 10;
+    recovery.update(true, true, p, 20);
+    require(!recovery.active(), "a teleport is movement, not a stalled frame");
+    recovery.update(true, true, {std::numeric_limits<float>::quiet_NaN(), 0, 0}, 20);
+    require(!recovery.active(), "invalid positions must clear recovery");
+    recovery.update(true, true, p, 0);
+    require(!recovery.active(), "non-advancing simulation time must not arm recovery");
+    recovery.reset();
+    for (int i = 0; i < 100; i++) {
+        p.z += 0.004f;
+        recovery.update(true, 0.1f, p, 20);
+        require(!recovery.active(), "slow partial-stick movement must not be mistaken for a stall");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -102,7 +156,8 @@ int main() {
         test_asset_files(temp.path);
         test_settings(temp.path);
         test_interaction_geometry();
-        std::cout << "Asset-file, settings and interaction-geometry checks passed.\n";
+        test_floor_snap_recovery();
+        std::cout << "Asset-file, settings, interaction-geometry and floor-snap policy checks passed.\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
