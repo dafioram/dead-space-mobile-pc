@@ -28,6 +28,7 @@
 #include "config.h"
 #include "cpu.h"
 #include "elf_loader.h"
+#include "floor_snap_policy.h"
 #include "guest_util.h"
 #include "hle/timing.h"
 #include "jni/jni.h"
@@ -426,11 +427,38 @@ int grab_state(u32 player) {
     return 0;
 }
 
+movement::FloorSnapRecovery g_floor_snap_recovery;
+
+// A floor ray can keep pinning the body to the lower ramp face while its leading edge
+// collides with the next one. Use the game's existing sphere-sweep snap so support is
+// sampled across the supplied radius, not just directly beneath the body's origin.
+// Keep its distance, radius, collision filtering and orientation interpolation intact.
+// Only use it briefly after a stall; retain the original floor ray between attempts.
+void on_floor_snap(cpu::Ctx& c) {
+    u32 player = c.reg(0);
+    if (!player || player != g_player || c.reg(3) != 0 || !g_floor_snap_recovery.active()) return;
+    // State 0 is ordinary locomotion. Leave jumping, grapples, death and floor
+    // acquisition after flight on the original path, as well as all other objects.
+    if (mem::r32(player + 0x210) != 0 || !(mem::r32(player + 0x48) & 0x40000)) return;
+    c.set_reg(3, 1);  // snapToFloor(distance, radius, useSphere)
+}
+
+void update_floor_snap_recovery(u32 player, int dt_ms) {
+    static u32 fn_alive = elf::find("_ZNK18GameObjectPlayable7isAliveEv"),
+               fn_zero_g = elf::find("_ZNK10GameObject20isInZeroGEnvironmentEv");
+    bool eligible = !g_paused && mem::r32(player + 0x210) == 0 && (mem::r32(player + 0x48) & 0x40000) &&
+                    fn_alive && fn_zero_g && (cpu::call(fn_alive, {player}) & 0xff) &&
+                    (cpu::call(fn_zero_g, {player}) & 0xff);
+    float x = f32(player + 0x1bc), z = f32(player + 0x1c4);
+    g_floor_snap_recovery.update(eligible, std::sqrt(x * x + z * z), objs::pos(player), dt_ms);
+}
+
 void on_player_update(cpu::Ctx& c) {
     u32 player = c.reg(0);
     int dt_ms = int(c.reg(1));
     if (g_trace && g_player_tick == 100) LOGI("[input] player update dt=%d", dt_ms);
     if (g_player != player) {
+        g_floor_snap_recovery.reset();
         LOGI("input: player object %08x", player);
         if (g_give_weapons) {
             cpu::call(elf::find("_ZN18GameObjectPlayable19debugGiveAllWeaponsEv"), {player});
@@ -550,6 +578,7 @@ void on_player_update(cpu::Ctx& c) {
     }
     if (g_aiming) snap_free_look(player);
     tick_free_look(player, dt_ms);
+    update_floor_snap_recovery(player, dt_ms);
 }
 
 void on_hud_event(cpu::Ctx& c) {
@@ -782,6 +811,7 @@ void install() {
         cpu::HleFn fn;
     };
     const Hook hooks[] = {
+        {"_ZN10GameObject11snapToFloorEffa", "GameObject::snapToFloor", on_floor_snap},
         {"_ZN18GameObjectPlayable8onUpdateEi", "GameObjectPlayable::onUpdate", on_player_update},
         {"_ZN3Hud7onEventERKN2im5EventE", "Hud::onEvent", on_hud_event},
         {"_ZN18GameObjectPlayable7onEventERKN2im5EventE", "GameObjectPlayable::onEvent", on_player_event},
