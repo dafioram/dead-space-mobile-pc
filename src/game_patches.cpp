@@ -18,6 +18,7 @@
 #include "hle/hle.h"
 #include "input.h"
 #include "log.h"
+#include "menu_geometry.h"
 #include "objects.h"
 #include "render/native.h"
 #include "sbin.h"
@@ -138,7 +139,7 @@ template <class T> void put(u8* p, T v) { std::memcpy(p, &v, sizeof v); }
 // entity names and label, placed in both options panes (main menu and pause menu):
 //   - "Anti-Aliasing" under "Invert Y Axis" on page 3
 //   - the port rows on pages 4+ (pages are 480 units apart, rows 60 apart)
-const float kQuitTextDy = 23.0f;  // the caption of the top-bar button, moved down into it
+bool g_main_menu_quit_added = false;
 
 bool patch_layouts(sbin::Database& db) {
     int s_layout = db.find_struct("Layout"), s_entity = db.find_struct("Entity"), s_vertex = db.find_struct("Vertex");
@@ -208,49 +209,92 @@ bool patch_layouts(sbin::Database& db) {
         new_layouts.push_back(make_row(r.slider ? row8 : row9, r.slider ? "SENSITIVITY" : "INVERT_Y", "PORT_" + r.key,
                                        "OPTIONS_PORT_" + r.key, "UI_HEADER_PORT_" + r.key, kRowScale));
 
-    // A Quit button on the main menu. The game can exit (the back key on the main menu asks "Are you sure
-    // you want to exit?"), but shows no button for it. This one takes the place of the two hidden top-right
-    // links to EA's store pages, with the same top-bar button art: a copy of that button's layout without
-    // the logos, its caption replaced by "Quit" inside the button. The game makes no widget for an entity
-    // it does not know, so menu_nav treats its area as a button and sends the back key.
+    // Quit belongs in the bottom bar, using the same artwork and font as its neighbours.
+    // The game creates widgets only for known menu entities, so Quit remains a port
+    // hit target which sends the same back key as Escape (including confirmation).
     {
-        long top = find_layout("UI_BUTTON_MAIN_TOP"), menu = find_layout("UI_MAIN");
-        if (top >= 0 && menu >= 0) {
-            size_t ents = entities(size_t(top));
-            u32 n = db.array_count(ents), kept = 0;
-            std::vector<u8> src(db.body(ents), db.body(ents) + size_t(n) * esize), out;
-            for (u32 i = 0; i < n; i++) {
-                u8* e = &src[i * esize];
-                std::string name = db.string(get<u16>(e + o_name));
-                if (name.rfind("ICON_", 0) == 0 || name == "TEXT_DOWNLOAD_CONTENT") continue;
-                if (name == "TEXT_MORE_GAMES") {
-                    put<u16>(e + o_name, db.add_string("TEXT_QUIT"));
-                    put<u16>(e + o_str, db.add_string("PORT_QUIT_GAME"));
-                    s32 v = get<s32>(e + o_verts);
-                    if (v >= 0) put<s32>(e + o_verts, clone_array(size_t(v), 0, kQuitTextDy));
+        long button = find_layout("UI_BUTTON_MAIN"), off = find_layout("UI_BUTTON_MAIN_OFF"),
+             on = find_layout("UI_BUTTON_MAIN_ON"), menu = find_layout("UI_MAIN");
+        const int o_type = db.field_offset(s_entity, "type"), o_align = db.field_offset(s_entity, "align"),
+                  o_width = db.field_offset(s_entity, "width"), o_anchor_x = db.field_offset(s_vertex, "anchorx");
+        if (button >= 0 && off >= 0 && on >= 0 && menu >= 0 && o_type >= 0 && o_align >= 0 &&
+            o_width >= 0 && o_anchor_x >= 0) {
+            float k = std::min(g_config.screen_w / 480.0f, g_config.screen_h / 320.0f);
+            auto bar = menu_nav::main_menu_bar(g_config.screen_w / k);
+            auto x_vertices = [&](s32 arr, float scale, float x = 0.0f, bool absolute = false, float dy = 0.0f) {
+                u32 n = db.array_count(size_t(arr)), stride = db.array_stride(size_t(arr));
+                std::vector<u8> data(db.body(size_t(arr)), db.body(size_t(arr)) + size_t(n) * stride);
+                for (u32 i = 0; i < n; i++) {
+                    u8* v = &data[i * stride];
+                    put<float>(v + o_x, get<float>(v + o_x) * scale + x);
+                    put<float>(v + o_y, get<float>(v + o_y) + dy);
+                    if (absolute) put<float>(v + o_anchor_x, 0);
                 }
-                out.insert(out.end(), e, e + esize);
-                kept++;
-            }
-            s32 quit_ents = s32(db.add_array(16, u16(s_entity), kept, out));
-            std::vector<u8> lay(size_t(lsize), 0);
-            put<u16>(&lay[size_t(o_id)], db.add_string("UI_BUTTON_QUIT_TOP"));
-            put<s32>(&lay[size_t(o_ents)], quit_ents);
-            new_layouts.push_back(s32(db.add_struct_object(u16(s_layout), lay)));
-
+                return s32(db.add_array(db.array_elem_type(size_t(arr)), db.array_struct(size_t(arr)), n, data));
+            };
+            auto copy_button = [&](long source, const char* id, bool quit) {
+                size_t arr = entities(size_t(source));
+                u32 n = db.array_count(arr), kept = 0;
+                std::vector<u8> src(db.body(arr), db.body(arr) + size_t(n) * esize), out;
+                for (u32 i = 0; i < n; i++) {
+                    u8* e = &src[i * esize];
+                    std::string name = db.string(get<u16>(e + o_name));
+                    if (quit && name != "BTN" && name != "BTN_TEXT") continue;
+                    s32 verts = get<s32>(e + o_verts);
+                    if (verts >= 0) put<s32>(e + o_verts, x_vertices(verts, bar.scale));
+                    put<float>(e + o_width, get<float>(e + o_width) * bar.scale);
+                    std::string child = db.string(get<u16>(e + o_lay));
+                    if (child == "UI_BUTTON_MAIN_OFF") put<u16>(e + o_lay, db.add_string("UI_BUTTON_MAIN_PORT_OFF"));
+                    if (child == "UI_BUTTON_MAIN_ON") put<u16>(e + o_lay, db.add_string("UI_BUTTON_MAIN_PORT_ON"));
+                    if (quit && name == "BTN_TEXT" && verts >= 0) {
+                        put<u16>(e + o_type, db.add_string("TEXT"));
+                        put<u16>(e + o_str, db.add_string("PORT_QUIT_GAME"));
+                        put<u16>(e + o_align, db.add_string("HCENTER|BASELINE"));
+                        // Retain the template's font, colour, baseline and case policy.
+                        put<s32>(e + o_verts, x_vertices(verts, 0, 54.5f * bar.scale));
+                    }
+                    out.insert(out.end(), e, e + esize);
+                    kept++;
+                }
+                s32 copied = s32(db.add_array(16, u16(s_entity), kept, out));
+                std::vector<u8> lay(db.body(size_t(source)), db.body(size_t(source)) + lsize);
+                put<u16>(lay.data() + o_id, db.add_string(id));
+                put<s32>(lay.data() + o_ents, copied);
+                new_layouts.push_back(s32(db.add_struct_object(u16(s_layout), lay)));
+            };
+            copy_button(off, "UI_BUTTON_MAIN_PORT_OFF", false);
+            copy_button(on, "UI_BUTTON_MAIN_PORT_ON", false);
+            copy_button(button, "UI_BUTTON_MAIN_PORT", false);
+            copy_button(off, "UI_BUTTON_QUIT_BOTTOM", true);
             size_t arr = entities(size_t(menu));
             u32 m = db.array_count(arr);
             std::vector<u8> d(db.body(arr), db.body(arr) + size_t(m) * esize);
+            std::vector<u8> quit;
+            const char* names[] = {"BTN_PLAY", "BTN_OPTIONS", "BTN_QUITGAME", "BTN_EXTRAS", "BTN_INFO"};
             for (u32 i = 0; i < m; i++) {
-                if (db.string(get<u16>(&d[i * esize] + o_name)) != "BTN_EA") continue;
-                std::vector<u8> e(d.begin() + i * esize, d.begin() + (i + 1) * esize);
-                put<u16>(&e[size_t(o_name)], db.add_string("BTN_QUITGAME"));
-                put<u16>(&e[size_t(o_lay)], db.add_string("UI_BUTTON_QUIT_TOP"));
-                d.insert(d.end(), e.begin(), e.end());
+                u8* e = &d[i * esize];
+                std::string name = db.string(get<u16>(e + o_name));
+                for (int slot : {0, 1, 3, 4}) {
+                    if (name != names[slot]) continue;
+                    s32 verts = get<s32>(e + o_verts);
+                    float old_x = first_vertex(e, o_x);
+                    put<s32>(e + o_verts, x_vertices(verts, bar.scale, bar.x[size_t(slot)] - old_x * bar.scale, true));
+                    put<u16>(e + o_lay, db.add_string("UI_BUTTON_MAIN_PORT"));
+                    if (slot == 0) quit.assign(e, e + esize);
+                }
+            }
+            if (!quit.empty()) {
+                put<u16>(quit.data() + o_name, db.add_string("BTN_QUITGAME"));
+                put<u16>(quit.data() + o_lay, db.add_string("UI_BUTTON_QUIT_BOTTOM"));
+                s32 verts = get<s32>(quit.data() + o_verts);
+                // Quit uses the off-state sublayout directly, without the normal
+                // button wrapper's (4,4) inset.
+                put<s32>(quit.data() + o_verts, x_vertices(verts, 1, bar.x[2] - bar.x[0] + 4 * bar.scale, false, 4));
+                d.insert(d.end(), quit.begin(), quit.end());
                 db.add_array(16, u16(s_entity), m + 1, d);
                 db.replace_with_last(arr);
-                LOGI("menu patch: Quit button added to the main menu");
-                break;
+                g_main_menu_quit_added = true;
+                LOGI("menu patch: Quit added between Options and Extras (horizontal scale %.3f)", bar.scale);
             }
         }
     }
@@ -1120,6 +1164,8 @@ bool options_click(float x, float y) {
     if (lx > 145 && lx < 200) return turn_page(g_window, 1), true;
     return false;
 }
+
+bool main_menu_quit_added() { return g_main_menu_quit_added; }
 
 std::shared_ptr<const std::vector<u8>> asset(const std::string& path) {
     std::string p = path;
