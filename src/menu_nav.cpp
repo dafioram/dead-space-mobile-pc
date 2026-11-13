@@ -12,6 +12,7 @@
 #include "hle/gles.h"
 #include "log.h"
 #include "menu_geometry.h"
+#include "menu_widget_safety.h"
 
 namespace menu_nav {
 
@@ -47,6 +48,20 @@ void on_button_event(cpu::Ctx& c) {
     u32 ev = c.reg(1);
     if (mem::r32(ev + 4) == 10) g_seen[c.reg(0)] = {g_frame, g_windows.empty() ? 0 : g_windows.back().first};
 }
+void on_button_destroyed(cpu::Ctx& c) {
+    u32 button = c.reg(0);
+    g_seen.erase(button);  // retire before the guest releases its layout/entity references
+    if (g_focus == button) g_focus = 0;
+}
+
+struct WidgetMemory {
+    bool readable(u32 address, size_t size) const {
+        static_assert(mem::PAGE_SIZE == kGuestPageSize);
+        return readable_guest_range(address, size, mem::is_mapped);
+    }
+    u32 read32(u32 address) const { return mem::r32(address); }
+    u8 read8(u32 address) const { return mem::r8(address); }
+};
 void on_window_event(cpu::Ctx& c) {
     if (g_windows.size() > 16) return;  // runaway (should not happen)
     g_windows.push_back({c.reg(0), c.lr()});
@@ -139,14 +154,15 @@ std::vector<Button> all_buttons() {
             it = g_seen.erase(it);
             continue;
         }
-        // Check validity, enabled flag (+0x24), and sub-layout (+0x38) BEFORE calling
-        // LayoutButton::getActiveRect(), so destroyed/detached Bench nodes don't crash.
-        if (b < 0x10000 || mem::r32(b) < 0x10000) {
+        // Upstream PR #12's ordering matters: do not ask a disabled/detached
+        // button for geometry. Check mapped ranges before host reads as well.
+        WidgetMemory memory;
+        ButtonQueryState state = button_query_state(b, memory);
+        if (state == ButtonQueryState::discard) {
             it = g_seen.erase(it);
             continue;
         }
-        u32 sub = mem::r32(b + 0x38);
-        if (!mem::r8(b + 0x24) || (sub && (sub < 0x10000 || !mem::r8(sub + 0x54)))) {
+        if (state == ButtonQueryState::inactive) {
             ++it;
             continue;
         }
@@ -316,6 +332,24 @@ void install() {
     if (!ev || !fn_rect || !cpu::hook_entry(ev, "LayoutButton::onEvent", on_button_event)) {
         LOGW("menu navigation: game functions not found");
         return;
+    }
+    // BenchGridButton inlines its base cleanup, so track it explicitly as well.
+    // These destructors start with PC-relative loads. Hook just after their
+    // prologues, while r0 is still this and before any fields are released.
+    // Only the verified library/sites are supported; do not relocate a PC load.
+    const struct {
+        const char* symbol;
+        u32 image_offset, hook_offset, first, second;
+    } destructors[] = {
+        {"_ZN12LayoutButtonD1Ev", 0xe11d4, 0x10, 0xe2843d05, 0xe48030a4},
+        {"_ZN12LayoutButtonD2Ev", 0xe12fc, 0x10, 0xe2843d05, 0xe48030a4},
+        {"_ZN15BenchGridButtonD1Ev", 0x93bb4, 0x0c, 0xe2833078, 0xe1a04000},
+    };
+    for (const auto& hook : destructors) {
+        u32 method = elf::find(hook.symbol), site = method + hook.hook_offset;
+        if (!method || method != mem::ELF_BASE + hook.image_offset || mem::r32(site) != hook.first ||
+            mem::r32(site + 4) != hook.second || !cpu::hook_entry(site, hook.symbol, on_button_destroyed))
+            LOGW("menu navigation: cannot track button destruction via %s", hook.symbol);
     }
     fn_window_rect = elf::find("_ZN15ScrollingWindow13getWindowRectEv");
     u32 wev = elf::find("_ZN15ScrollingWindow7onEventERKN2im5EventE");

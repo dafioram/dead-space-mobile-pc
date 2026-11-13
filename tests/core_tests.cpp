@@ -5,6 +5,8 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -13,6 +15,7 @@
 #include "interaction_geometry.h"
 #include "input_policy.h"
 #include "menu_geometry.h"
+#include "menu_widget_safety.h"
 #include "settings.h"
 
 namespace fs = std::filesystem;
@@ -319,6 +322,81 @@ void test_death_input_ownership() {
     require(input::gameplay_input_allowed(true, true, false, false, false), "a live respawn may recapture input normally");
 }
 
+struct FakeWidgetMemory {
+    std::map<uint32_t, uint32_t> words;
+    std::map<uint32_t, uint8_t> bytes;
+    std::set<uint32_t> pages;
+    int reads = 0;
+    bool readable(uint32_t address, size_t size) const {
+        return menu_nav::readable_guest_range(address, size, [&](uint32_t page) { return pages.count(page) != 0; });
+    }
+    uint32_t read32(uint32_t address) {
+        require(readable(address, 4) && words.count(address), "guard must not read an unmapped or uninitialised word");
+        reads++;
+        return words.at(address);
+    }
+    uint8_t read8(uint32_t address) {
+        require(readable(address, 1) && bytes.count(address), "guard must not read an unmapped or uninitialised byte");
+        reads++;
+        return bytes.at(address);
+    }
+};
+
+void test_menu_widget_safety() {
+    // Entirely synthetic addresses/fields: no library, object dump or save is used.
+    constexpr uint32_t button = 0x30000, sub = 0x50000, entity = 0x70000;
+    FakeWidgetMemory good;
+    good.pages = {0x30000, 0x40000, 0x50000, 0x60000, 0x70000, 0x80000};
+    good.words = {{button, 0x40000}, {button + 0x38, sub}, {button + 0x58, entity},
+                  {sub, 0x60000}, {entity, 0x80000}};
+    good.bytes = {{button + 0x24, 1}, {sub + 0x54, 1}};
+    using State = menu_nav::ButtonQueryState;
+    require(menu_nav::button_query_state(button, good) == State::ready, "enabled visible attached button may query geometry");
+
+    auto disabled = good;
+    disabled.bytes[button + 0x24] = 0;
+    disabled.words.erase(button + 0x38);
+    disabled.words.erase(button + 0x58);
+    require(menu_nav::button_query_state(button, disabled) == State::inactive,
+            "disabled widgets must be skipped before reading their detached references");
+    auto hidden = good;
+    hidden.bytes[sub + 0x54] = 0;
+    hidden.words.erase(button + 0x58);
+    require(menu_nav::button_query_state(button, hidden) == State::inactive,
+            "hidden layouts must be skipped before querying their active-region entity");
+    for (uint32_t bad : {0u, 0x40u, 0x90000u}) {
+        auto memory = good;
+        memory.reads = 0;
+        require(menu_nav::button_query_state(bad, memory) == State::discard, "reject null, low and unmapped widget addresses");
+        require(memory.reads == 0, "invalid widget addresses must be rejected without dereferencing them");
+        for (uint32_t field : {button, button + 0x38, button + 0x58, sub, entity}) {
+            memory = good;
+            memory.words[field] = bad;
+            require(menu_nav::button_query_state(button, memory) == State::discard,
+                    "missing or unmapped layouts, entities and vtables must not reach geometry queries");
+        }
+    }
+    auto split = good;
+    split.reads = 0;
+    require(menu_nav::button_query_state(button + 0xfc0, split) == State::discard && split.reads == 0,
+            "a widget crossing into an unmapped page must be rejected before its first read");
+    split = good;
+    split.words[entity] = 0x80ff0;
+    require(menu_nav::button_query_state(button, split) == State::discard,
+            "the active-region entity's virtual-method slot must fit in mapped memory too");
+
+    int checks = 0;
+    auto mapped = [&](uint32_t) { checks++; return true; };
+    require(!menu_nav::readable_guest_range(0xfffffff8u, 16, mapped), "reject overflowing guest spans");
+    require(!menu_nav::readable_guest_range(button, 0, mapped), "reject empty spans");
+    require(checks == 0, "invalid spans must not query the mapping table");
+    require(menu_nav::readable_guest_range(0xfffffffcu, 4, mapped) && checks == 1,
+            "the last guest page must not overflow the page iteration");
+    checks = 0;
+    require(menu_nav::readable_guest_range(0x30fffu, 4098, mapped) && checks == 3,
+            "validate every page, including intermediate pages, of a guest span");
+}
+
 }  // namespace
 
 int main() {
@@ -332,7 +410,8 @@ int main() {
         test_floor_snap_recovery();
         test_main_menu_bar();
         test_death_input_ownership();
-        std::cout << "Asset-file, settings, geometry, input ownership and floor-snap policy checks passed.\n";
+        test_menu_widget_safety();
+        std::cout << "Asset-file, settings, geometry, widget safety, input ownership and floor-snap policy checks passed.\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
