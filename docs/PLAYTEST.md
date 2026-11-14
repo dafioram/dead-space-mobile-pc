@@ -108,6 +108,15 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   no damage suppression or forced detach. The report of continued damage after
   pushing a monster away is not yet independently reproduced or fixed. See
   `docs/ZERO_G_GRAPPLE_INVESTIGATION.md`.
+- `feat/cli-help-no-save` / fork PR #18: early `--help`/`-h`, disposable
+  `--no-save` userdata (saves and settings), and `docs/debug_menu.md`. Original
+  userdata is copied, never linked or written by the session; native autosaves
+  work on the temporary copy and relaunch restores the original starting save.
+  This does not freeze checkpoints within a running session. Synthetic protection
+  and early-help tests pass; actual gameplay remains user-led. The debug guide is
+  allowlisted in portable packages, and this diagnostic build also lists
+  `--trace-grapple` in help. Source snapshots/links and cleanup limits are
+  documented in the guide.
 - The Mesa shader fix remains unresolved (waiting for the upstream contributor).
   Other reported terminals
   and the original asset set still need validation.
