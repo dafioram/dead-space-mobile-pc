@@ -16,9 +16,11 @@
 #endif
 
 #include "apk.h"
+#include "cli_help.h"
 #include "config.h"
 #include "crash.h"
 #include "settings.h"
+#include "temporary_profile.h"
 #include "texpack.h"
 #include "cpu.h"
 #include "elf_loader.h"
@@ -196,6 +198,15 @@ std::string first_existing(std::initializer_list<std::string> paths) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Before even parsing side-effecting debug flags (audio dump/crash test),
+    // opening logs, touching assets/profiles or initialising SDL/OpenGL.
+    if (cli::help_requested(argc, argv)) {
+        std::fputs(cli::help_text(), stdout);
+        std::fflush(stdout);
+        return 0;
+    }
+    TemporaryProfile temporary_profile;
+    bool no_save = false;
     std::string assets, lib, data, logfile, shot_dir, apk_path, dev_dir;
     std::vector<u64> shot_frames;
     int fps_arg = -1;  // --fps N overrides the Frame Rate Limit setting
@@ -212,6 +223,7 @@ int main(int argc, char** argv) {
         else if (a == "--apk") apk_path = next();
         else if (a == "--dump-audio") jni::audio_dump(next().c_str());
         else if (a == "--data") data = next();
+        else if (a == "--no-save") no_save = true;
         else if (a == "--log") logfile = next();
         else if (a == "--width") g_config.screen_w = std::stoi(next()), res_set = true;
         else if (a == "--height") g_config.screen_h = std::stoi(next()), res_set = true;
@@ -317,6 +329,17 @@ int main(int argc, char** argv) {
                                  "again, or run:  deadspace --apk <path to APK>",
                                  nullptr);
         return 1;
+    }
+    if (no_save) {
+        try {
+            temporary_profile.prepare(data);
+            LOGI("save protection: original userdata %s will not receive game/settings writes", data.c_str());
+            data = temporary_profile.data_path().string();
+            LOGI("save protection: disposable session %s (relaunch to restore the original save)", data.c_str());
+        } catch (const std::exception& error) {
+            LOGE("cannot prepare --no-save profile: %s", error.what());
+            return 1;  // never silently run against the writable original
+        }
     }
     hle::g_assets_dir = assets;
     hle::g_data_dir = data;
@@ -657,6 +680,11 @@ int main(int argc, char** argv) {
     SDL_GL_DeleteContext(gl);
     SDL_DestroyWindow(win);
     SDL_Quit();
+    // _Exit below intentionally skips destructors because guest threads remain.
+    // Remove only our disposable tree; a locked file may leave it for later
+    // manual removal, but can never redirect writes back to the original.
+    if (auto error = temporary_profile.discard())
+        LOGW("temporary profile cleanup incomplete: %s (%s)", temporary_profile.data_path().string().c_str(), error.message().c_str());
     std::fflush(stdout);
     std::_Exit(0);  // guest threads are still running; skip static destructors
 }

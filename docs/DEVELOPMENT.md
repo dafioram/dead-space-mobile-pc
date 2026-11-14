@@ -1,5 +1,11 @@
 # Development and private game data
 
+For console commands, debug keys, command-line help and disposable `--no-save`
+sessions, see `debug_menu.md` alongside this file in the source documentation
+(included as `docs/debug_menu.md` in portable packages). No-save sessions protect the
+userdata source, but cannot protect it from a helper that deletes it before
+launch, such as `tools/dev.py start --fresh`.
+
 ## Never commit or distribute game data
 
 Supply your own legally obtained APK. Keep APKs, OBBs, extracted assets and ARM

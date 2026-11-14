@@ -58,6 +58,17 @@ class ReleaseTests(unittest.TestCase):
         with zipfile.ZipFile(archive) as z:
             self.assertTrue(all(n.startswith(archive.stem + "/") for n in z.namelist()))
 
+    def test_optional_debug_guide_does_not_relax_other_docs(self):
+        self.populate()
+        (self.stage / "docs").mkdir()
+        (self.stage / "docs/debug_menu.md").write_text("synthetic guide", encoding="utf-8")
+        self.checksums()
+        release.verify_stage(self.stage, "windows-x86_64", self.commit, self.tag)
+        (self.stage / "docs/private.log").write_text("synthetic private log", encoding="utf-8")
+        self.checksums()
+        with self.assertRaises(ValueError):
+            release.verify_stage(self.stage, "windows-x86_64", self.commit, self.tag)
+
     def test_linux_zip_retains_executable_permissions(self):
         self.populate("linux-x86_64")
         archive = release.package(self.stage, self.root / "out", "linux-x86_64", self.commit, self.tag)
