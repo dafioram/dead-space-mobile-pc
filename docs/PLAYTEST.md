@@ -81,6 +81,12 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   at unchanged `aa79eb5` and given portable Windows/Linux assets plus a verified
   installer/checksums; it intentionally excludes later untagged fixes. See
   `docs/RELEASING.md`. The automation requires PR #13 to be merged into main.
+- `fix/windows-release-staging` / fork PR #15: correct the Windows staging
+  failure after a successful compile/test run. Tag resolution avoids command-
+  wrapper-sensitive caret syntax, and Windows staging uses the host Python/Git
+  context outside MSYS. Provenance is checked before compiling; real-Git tests
+  cover lightweight/annotated tags and the Windows wrapper regression. This
+  changes release tooling only and does not move RC2 or change its application.
 - The Mesa shader fix remains unresolved. Other reported terminals
   and the original asset set still need validation.
 
