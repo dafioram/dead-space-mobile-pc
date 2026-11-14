@@ -300,6 +300,28 @@ void test_main_menu_bar() {
     require(narrow.scale < 1, "4:3 must compact the bar rather than hide or overlap Quit");
 }
 
+void test_death_input_ownership() {
+    // All player/pause/cinematic/dialog combinations, including a dead player
+    // that continues receiving updates throughout its animation/restart screen.
+    for (int bits = 0; bits < 32; bits++) {
+        bool current = (bits & 1) != 0, alive = (bits & 2) != 0, paused = (bits & 4) != 0,
+             cinematic = (bits & 8) != 0, dialog = (bits & 16) != 0;
+        bool gameplay = input::gameplay_input_allowed(current, alive, paused, cinematic, dialog);
+        require(gameplay == (bits == 3), "only a current living player outside menus/cinematics owns gameplay input");
+        for (int capture = 0; capture < 8; capture++) {
+            bool alt = (capture & 1) != 0, focused = (capture & 2) != 0, scripted = (capture & 4) != 0;
+            bool expected = bits == 3 && !alt && (focused || scripted);
+            require(input::should_capture_gameplay(gameplay, alt, focused, scripted) == expected,
+                    "focus, scripted input and Left Alt must not bypass death/menu input ownership");
+        }
+    }
+    require(input::gameplay_input_allowed(true, true, false, false, false), "ordinary living gameplay remains enabled");
+    require(!input::gameplay_input_allowed(true, false, false, false, false),
+            "death releases capture even before the HUD reports pause or a recognised dialog");
+    require(!input::gameplay_input_allowed(false, false, false, false, false), "a missing player cannot recapture the cursor");
+    require(input::gameplay_input_allowed(true, true, false, false, false), "a live respawn may recapture input normally");
+}
+
 struct FakeWidgetMemory {
     std::map<uint32_t, uint32_t> words;
     std::map<uint32_t, uint8_t> bytes;
@@ -373,28 +395,6 @@ void test_menu_widget_safety() {
     checks = 0;
     require(menu_nav::readable_guest_range(0x30fffu, 4098, mapped) && checks == 3,
             "validate every page, including intermediate pages, of a guest span");
-}
-
-void test_death_input_ownership() {
-    // All player/pause/cinematic/dialog combinations, including a dead player
-    // that continues receiving updates throughout its animation/restart screen.
-    for (int bits = 0; bits < 32; bits++) {
-        bool current = (bits & 1) != 0, alive = (bits & 2) != 0, paused = (bits & 4) != 0,
-             cinematic = (bits & 8) != 0, dialog = (bits & 16) != 0;
-        bool gameplay = input::gameplay_input_allowed(current, alive, paused, cinematic, dialog);
-        require(gameplay == (bits == 3), "only a current living player outside menus/cinematics owns gameplay input");
-        for (int capture = 0; capture < 8; capture++) {
-            bool alt = (capture & 1) != 0, focused = (capture & 2) != 0, scripted = (capture & 4) != 0;
-            bool expected = bits == 3 && !alt && (focused || scripted);
-            require(input::should_capture_gameplay(gameplay, alt, focused, scripted) == expected,
-                    "focus, scripted input and Left Alt must not bypass death/menu input ownership");
-        }
-    }
-    require(input::gameplay_input_allowed(true, true, false, false, false), "ordinary living gameplay remains enabled");
-    require(!input::gameplay_input_allowed(true, false, false, false, false),
-            "death releases capture even before the HUD reports pause or a recognised dialog");
-    require(!input::gameplay_input_allowed(false, false, false, false, false), "a missing player cannot recapture the cursor");
-    require(input::gameplay_input_allowed(true, true, false, false, false), "a live respawn may recapture input normally");
 }
 
 }  // namespace
