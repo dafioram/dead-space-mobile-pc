@@ -34,8 +34,12 @@ def main():
     args = parser.parse_args()
     root = args.source_root.resolve() if args.source_root else ROOT
     revision = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
-    if args.release_tag and release_commit(root, args.release_tag) != revision:
-        parser.error("release staging requires HEAD to be the tagged commit")
+    if args.release_tag:
+        try:
+            if release_commit(root, args.release_tag) != revision:
+                parser.error("release staging requires HEAD to be the tagged commit")
+        except (ValueError, subprocess.CalledProcessError) as error:
+            parser.error(f"cannot validate release tag before staging: {error}")
     executable = "deadspace.exe" if args.platform == "windows-x86_64" else "deadspace"
     files = {
         args.build_dir / executable: executable,

@@ -25,7 +25,10 @@ def release_commit(root, tag):
     validate_tag(tag)
     def git(*args):
         return subprocess.check_output(["git", "-C", str(root), *args], text=True).strip()
-    commit = git("rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}")
+    # A Windows command wrapper can strip the caret from ^{commit}. rev-list
+    # peels lightweight/annotated tags without shell-sensitive revision syntax,
+    # and still fails when the ref is missing or does not name a commit.
+    commit = git("rev-list", "--max-count=1", f"refs/tags/{tag}", "--")
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("invalid release commit")
     # Never turn a playtest-only integration commit into a production release.
