@@ -12,6 +12,7 @@
 #include "hle/gles.h"
 #include "log.h"
 #include "menu_geometry.h"
+#include "menu_widget_safety.h"
 
 namespace menu_nav {
 
@@ -47,6 +48,20 @@ void on_button_event(cpu::Ctx& c) {
     u32 ev = c.reg(1);
     if (mem::r32(ev + 4) == 10) g_seen[c.reg(0)] = {g_frame, g_windows.empty() ? 0 : g_windows.back().first};
 }
+void on_button_destroyed(cpu::Ctx& c) {
+    u32 button = c.reg(0);
+    g_seen.erase(button);  // retire before the guest releases its layout/entity references
+    if (g_focus == button) g_focus = 0;
+}
+
+struct WidgetMemory {
+    bool readable(u32 address, size_t size) const {
+        static_assert(mem::PAGE_SIZE == kGuestPageSize);
+        return readable_guest_range(address, size, mem::is_mapped);
+    }
+    u32 read32(u32 address) const { return mem::r32(address); }
+    u8 read8(u32 address) const { return mem::r8(address); }
+};
 void on_window_event(cpu::Ctx& c) {
     if (g_windows.size() > 16) return;  // runaway (should not happen)
     g_windows.push_back({c.reg(0), c.lr()});
@@ -132,8 +147,27 @@ std::vector<Button> all_buttons() {
     std::vector<Button> out;
     static u32 rect = mem::heap_alloc(16, 8);
     float k = std::min(g_screen_w / 480.0f, g_screen_h / 320.0f);  // layout units -> pixels
-    for (auto& [b, seen] : g_seen) {
-        if (seen.frame + 1 < g_frame) continue;
+    for (auto it = g_seen.begin(); it != g_seen.end(); ) {
+        u32 b = it->first;
+        const Seen& seen = it->second;
+        if (seen.frame + 1 < g_frame) {
+            it = g_seen.erase(it);
+            continue;
+        }
+        // Upstream PR #12's ordering matters: do not ask a disabled/detached
+        // button for geometry. Check mapped ranges before host reads as well.
+        WidgetMemory memory;
+        ButtonQueryState state = button_query_state(b, memory);
+        if (state == ButtonQueryState::discard) {
+            it = g_seen.erase(it);
+            continue;
+        }
+        if (state == ButtonQueryState::inactive) {
+            ++it;
+            continue;
+        }
+        ++it;
+
         cpu::call(fn_rect, {rect, b});
         float r[4];
         std::memcpy(r, mem::host(rect), 16);
@@ -299,6 +333,24 @@ void install() {
         LOGW("menu navigation: game functions not found");
         return;
     }
+    // BenchGridButton inlines its base cleanup, so track it explicitly as well.
+    // These destructors start with PC-relative loads. Hook just after their
+    // prologues, while r0 is still this and before any fields are released.
+    // Only the verified library/sites are supported; do not relocate a PC load.
+    const struct {
+        const char* symbol;
+        u32 image_offset, hook_offset, first, second;
+    } destructors[] = {
+        {"_ZN12LayoutButtonD1Ev", 0xe11d4, 0x10, 0xe2843d05, 0xe48030a4},
+        {"_ZN12LayoutButtonD2Ev", 0xe12fc, 0x10, 0xe2843d05, 0xe48030a4},
+        {"_ZN15BenchGridButtonD1Ev", 0x93bb4, 0x0c, 0xe2833078, 0xe1a04000},
+    };
+    for (const auto& hook : destructors) {
+        u32 method = elf::find(hook.symbol), site = method + hook.hook_offset;
+        if (!method || method != mem::ELF_BASE + hook.image_offset || mem::r32(site) != hook.first ||
+            mem::r32(site + 4) != hook.second || !cpu::hook_entry(site, hook.symbol, on_button_destroyed))
+            LOGW("menu navigation: cannot track button destruction via %s", hook.symbol);
+    }
     fn_window_rect = elf::find("_ZN15ScrollingWindow13getWindowRectEv");
     u32 wev = elf::find("_ZN15ScrollingWindow7onEventERKN2im5EventE");
     g_return_stub = cpu::register_hle("ScrollingWindow::onEvent return", on_window_return);
@@ -308,7 +360,6 @@ void install() {
     if (u32 f = elf::find(("_ZN9BenchItem" + draw).c_str())) cpu::hook_entry(f, "BenchItem::draw", on_bench_item_draw);
     for (const char* sym : {"_ZN10StorePanel7onEventERKN2im5EventE", "_ZN10BenchPanel7onEventERKN2im5EventE"})
         if (u32 f = elf::find(sym)) cpu::hook_entry(f, "list panel onEvent", on_panel_event);
-
 }
 
 void set_tap(std::function<void(float, float)> tap) { g_tap = std::move(tap); }
