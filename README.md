@@ -465,11 +465,12 @@ ninja -C build
 
 The Windows build is linked statically: `deadspace.exe` needs no extra DLLs.
 
-The installer (`installer/installer.cpp`, a small Win32 program with the stripped `deadspace.exe`
-embedded as a resource and `src/apk.cpp` for the import) is built with:
+The installer (`installer/installer.cpp`, a small Win32 program with the checked
+`deadspace.exe` and notices embedded as resources, and `src/apk.cpp` for the import)
+can be built manually from an exact tagged checkout:
 
 ```
-bash tools/mkinstaller.sh        # -> release/DeadSpaceMobilePCPort-Setup.exe
+bash tools/mkinstaller.sh v1.1-rc1 build
 ```
 
 `setup.exe /silent <folder> <apk>` installs without a window (exit code 0 on success), for tests.
@@ -491,6 +492,11 @@ under the run's **Artifacts** section (retained for 14 days), with dependency
 notices, build information and SHA-256 checksums. These are not tagged releases.
 Linux artifacts require the host libraries above; Windows builds are statically
 linked. Neither artifacts nor tests contain game data; supply your own APK.
+
+Published releases have a separate workflow that attaches checked Windows/Linux
+portable ZIPs and checksums. The Windows installer remains a manual build. See
+[release and installer instructions](docs/RELEASING.md), including how to backfill
+an already-published tag without moving it.
 
 See [the test and CI instructions](docs/DEVELOPMENT.md) for a lightweight test-only
 build that does not require SDL2, OpenGL or Dynarmic.

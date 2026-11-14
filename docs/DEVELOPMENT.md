@@ -96,8 +96,10 @@ libraries listed in the build instructions; they are not universal AppImages.
 
 Actions are pinned to commit IDs, job tokens have read-only contents permission,
 checkout credentials are not persisted, and no `pull_request_target` workflow
-executes untrusted code. No release is published and no installer is built here;
-tagged release packaging is intentionally a separate follow-up.
+executes untrusted code. The ordinary build workflow publishes no releases and
+builds no installer. A separate published-release/manual-backfill workflow builds
+exact-tag portable assets, verifies them, and uploads them with a narrowly scoped
+write-permission job. The Windows installer stays manual; see [RELEASING.md](RELEASING.md).
 
 ## Commit attribution
 
