@@ -37,6 +37,7 @@ Logging:
   -v, --verbose             Verbose logging.
   --log FILE                Main log destination (default: beside executable).
   --trace-input             Trace native player/HUD input events.
+  --trace-grapple           Trace grapple transitions, hit requests and HP changes.
 
 Developer options (see docs/debug_menu.md):
   --dev DIR                 Enable the file-command interface in DIR.
