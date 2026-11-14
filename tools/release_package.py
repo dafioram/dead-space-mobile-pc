@@ -48,7 +48,8 @@ def verify_stage(stage, platform, commit, tag):
     required = {binary, "README.md", "DEVELOPMENT.md", "BUILD_INFO.txt", "SHA256SUMS.txt"}
     if not required <= paths.keys() or not any(n.startswith("licenses/") for n in paths):
         raise ValueError("incomplete release staging")
-    if any(n not in required and not n.startswith("licenses/") for n in paths):
+    optional_docs = {"docs/debug_menu.md"}  # older release tags do not contain it
+    if any(n not in required | optional_docs and not n.startswith("licenses/") for n in paths):
         raise ValueError("unexpected file outside the release allowlist")
     info = paths["BUILD_INFO.txt"].read_text(encoding="utf-8").splitlines()
     if any(line not in info for line in (f"Platform: {platform}", f"Commit: {commit}", f"Tag: {tag}")):

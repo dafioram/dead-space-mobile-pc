@@ -47,6 +47,11 @@ def main():
         root / "docs" / "DEVELOPMENT.md": "DEVELOPMENT.md",
         root / "docs" / "licenses" / "Boost-1.0.txt": "licenses/Boost-1.0.txt",
     }
+    # Optional for exact-tag backfills predating this documentation. Never copy
+    # the docs directory wholesale; diagnostics and private fixtures stay out.
+    debug_guide = root / "docs" / "debug_menu.md"
+    if debug_guide.exists():
+        files[debug_guide] = "docs/debug_menu.md"
     for source, destination in BUNDLED_NOTICES.items():
         files[root / "external" / "dynarmic" / source] = "licenses/" + destination
     if args.platform == "windows-x86_64":

@@ -32,3 +32,14 @@ set_tests_properties(build_staging PROPERTIES TIMEOUT 60)
 add_test(NAME release_packaging COMMAND "${Python3_EXECUTABLE}" -m unittest discover
     -s "${CMAKE_CURRENT_SOURCE_DIR}" -p test_release_package.py -v)
 set_tests_properties(release_packaging PROPERTIES TIMEOUT 60)
+
+add_executable(profile_tests profile_tests.cpp ../src/temporary_profile.cpp ../src/settings.cpp)
+target_include_directories(profile_tests PRIVATE ../src)
+add_test(NAME temporary_profile COMMAND profile_tests)
+set_tests_properties(temporary_profile PROPERTIES TIMEOUT 60)
+
+if (DEADSPACE_BUILD_APP)
+    add_test(NAME cli_help COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_cli_help.py"
+        --executable "$<TARGET_FILE:deadspace>" -v)
+    set_tests_properties(cli_help PROPERTIES TIMEOUT 60)
+endif()

@@ -40,6 +40,7 @@ add_executable(deadspace
     src/apk.cpp
     src/asset_file.cpp
     src/settings.cpp
+    src/temporary_profile.cpp
     src/crash.cpp
     src/sbin.cpp
     src/game_patches.cpp
