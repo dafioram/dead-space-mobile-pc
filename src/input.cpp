@@ -69,6 +69,7 @@ u32 fn_change_weapon, fn_can_change_weapon;
 u32 vt_vector2, vt_action;
 
 bool g_trace = false;
+bool g_grapple_trace = false;
 
 // Cinematics (GameObjectCinematic, e.g. the opening fly-by): state +0x174, 1 = starting, 2 = playing,
 // 3 = finished. The game ends one by calling stateTransition(3) when its animation is over
@@ -485,6 +486,59 @@ void on_input_reset(cpu::Ctx& c) {
     if (g_trace) LOGI("[input] native scheme reset: epoch=%u route=%u", g_input_epoch.load(), mem::r32(hud + 0x2a4));
 }
 
+// Opt-in observation only: never skip a hit, alter health, end a grapple or
+// detach an attacker. Native HitEvent::initGrapple identifies type 9 at +0x54,
+// source +0, requested damage +0x64. A hit request is not proof of HP loss.
+void on_player_damage_trace(cpu::Ctx& c) {
+    if (!g_grapple_trace || c.reg(0) != g_player) return;
+    u32 player = c.reg(0), event = c.reg(1), source = mem::r32(event);
+    float distance = -1;
+    if (source && mem::is_mapped(source) && mem::is_mapped(source + 0x58)) {
+        auto a = objs::pos(player), b = objs::pos(source);
+        distance = std::hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+    }
+    LOGI("[grapple] damage-request tick=%u type=%u requested=%g hp-before=%g state=%d phase=%d attacker=%08x source=%08x distance=%g caller=%s",
+         g_player_tick.load(), mem::r32(event + 0x54), f32(event + 0x64), f32(player + 0x25c),
+         s32(mem::r32(player + 0x210)), s32(mem::r32(player + 0x37c)), mem::r32(player + 0x384), source,
+         distance, cpu::symbolize(c.lr()).c_str());
+}
+
+void on_grapple_transition_trace(cpu::Ctx& c) {
+    if (!g_grapple_trace || c.reg(0) != g_player) return;
+    u32 player = c.reg(0);
+    LOGI("[grapple] transition tick=%u phase=%d -> %d state=%d attacker=%08x caller=%s", g_player_tick.load(),
+         s32(mem::r32(player + 0x37c)), s32(c.reg(1)), s32(mem::r32(player + 0x210)),
+         mem::r32(player + 0x384), cpu::symbolize(c.lr()).c_str());
+}
+
+void on_grapple_end_trace(cpu::Ctx& c) {
+    if (!g_grapple_trace || c.reg(0) != g_player) return;
+    u32 player = c.reg(0);
+    LOGI("[grapple] native-end tick=%u state=%d phase=%d attacker=%08x caller=%s", g_player_tick.load(),
+         s32(mem::r32(player + 0x210)), s32(mem::r32(player + 0x37c)), mem::r32(player + 0x384),
+         cpu::symbolize(c.lr()).c_str());
+}
+
+void trace_grapple_player(u32 player) {
+    if (!g_grapple_trace) return;
+    static u32 previous_player = 0, previous_attacker = 0;
+    static int previous_state = 0, previous_phase = 0;
+    static float previous_health = 0;
+    int state = s32(mem::r32(player + 0x210)), phase = s32(mem::r32(player + 0x37c));
+    u32 attacker = mem::r32(player + 0x384);
+    float health = f32(player + 0x25c);
+    if (previous_player == player && previous_state == state && previous_phase == phase &&
+        previous_attacker == attacker && previous_health == health) return;
+    auto p = objs::pos(player), up = objs::up(player);
+    LOGI("[grapple] sample tick=%u player=%08x state=%d phase=%d attacker=%08x hp=%g pos=(%g,%g,%g) up=(%g,%g,%g)",
+         g_player_tick.load(), player, state, phase, attacker, health, p.x, p.y, p.z, up.x, up.y, up.z);
+    previous_player = player;
+    previous_state = state;
+    previous_phase = phase;
+    previous_attacker = attacker;
+    previous_health = health;
+}
+
 movement::FloorSnapRecovery g_floor_snap_recovery;
 
 // A floor ray can keep pinning the body to the lower ramp face while its leading edge
@@ -539,6 +593,7 @@ void on_player_update(cpu::Ctx& c) {
         g_health_frac = mx > 0 ? std::clamp(hp / mx, 0.0f, 1.0f) : 1.0f;
     }
     g_state = s32(mem::r32(player + 0x210));
+    trace_grapple_player(player);
     {
         int gs = grab_state(player);
         if (gs != g_grab_state) LOGI("input: grab state %d -> %d", g_grab_state, gs);
@@ -813,6 +868,7 @@ bool mouse_smoothing() { return settings::get_int("mouse_smoothing", 0) != 0; }
 }  // namespace
 
 void set_trace(bool on) { g_trace = on; }
+void set_grapple_trace(bool on) { g_grapple_trace = on; }
 
 int binding_count() { return B_COUNT; }
 int pad_binding_count() { return P_COUNT; }
@@ -973,6 +1029,18 @@ void install() {
     for (auto& h : hooks) {
         u32 a = elf::find(h.sym);
         if (!a || !cpu::hook_entry(a, h.name, h.fn)) LOGW("input: cannot hook %s", h.name);
+    }
+    if (g_grapple_trace) {
+        const Hook trace_hooks[] = {
+            {"_ZN18GameObjectPlayable16onDamageReceivedER8HitEvent", "GameObjectPlayable::onDamageReceived (trace)", on_player_damage_trace},
+            {"_ZN18GameObjectPlayable22stateTransitionGrappleENS_12GrappleStateE", "GameObjectPlayable::stateTransitionGrapple (trace)", on_grapple_transition_trace},
+            {"_ZN18GameObjectPlayable10endGrappleEv", "GameObjectPlayable::endGrapple (trace)", on_grapple_end_trace},
+        };
+        for (auto& h : trace_hooks) {
+            u32 a = elf::find(h.sym);
+            if (!a || !cpu::hook_entry(a, h.name, h.fn)) LOGW("grapple trace: cannot hook %s", h.name);
+        }
+        LOGI("grapple trace: enabled (read-only; damage and native cleanup unchanged)");
     }
 }
 

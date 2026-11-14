@@ -96,6 +96,18 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   store exits, suit changes and subsequent bench/control recovery need user
   validation. See `docs/SCRIPTED_INPUT_OWNERSHIP.md`. Zero-G inversion is not
   changed, and this is not a confirmed workbench crash fix.
+- User feedback on `fix/scripted-input-ownership`: encounter camera locking
+  provisionally passed. Store/suit-change transitions remain separate checks.
+- `fix/zero-g-camera` / fork PR #17: rotate standing free-look around the body's
+  current surface up, matching native body yaw instead of world Y. Share that
+  rotation with interaction selection/debug geometry. Floor, ceiling, all four
+  wall axes, tilted surfaces and yaw-transfer invariants have synthetic tests;
+  actual zero-G visual checks remain user-led. See `docs/ZERO_G_CAMERA.md`.
+- `diagnostics/zero-g-grapple`: opt-in `--trace-grapple` logs native transitions,
+  end/cleanup, damage requests and sampled HP/state changes. Disabled by default;
+  no damage suppression or forced detach. The report of continued damage after
+  pushing a monster away is not yet independently reproduced or fixed. See
+  `docs/ZERO_G_GRAPPLE_INVESTIGATION.md`.
 - The Mesa shader fix remains unresolved (waiting for the upstream contributor).
   Other reported terminals
   and the original asset set still need validation.

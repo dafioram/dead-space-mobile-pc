@@ -11,6 +11,7 @@ namespace input {
 
 void install();          // hooks into the game (call after the library is loaded)
 void set_trace(bool on);  // debug: log game input events
+void set_grapple_trace(bool on);  // debug: observe native grapple transitions and damage without changing them
 void set_test_mode(bool on);  // debug: scripted input, capture without window focus
 void set_give_weapons(bool on);                                         // debug
 void set_teleport(const std::string& cls, float x, float y, float z);  // debug

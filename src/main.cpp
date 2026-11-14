@@ -220,6 +220,7 @@ int main(int argc, char** argv) {
         else if (a == "--fps") fps_arg = std::stoi(next());
         else if (a == "--msaa") msaa_arg = std::stoi(next());
         else if (a == "--trace-input") input::set_trace(true);
+        else if (a == "--trace-grapple") input::set_grapple_trace(true);
         else if (a == "--level") patches::set_level_override(next());
         else if (a == "--teleport") {  // debug: ClassName[:x;y;z]
             std::string v = next();
