@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "config.h"
+#include "camera_geometry.h"
 #include "cpu.h"
 #include "elf_loader.h"
 #include "floor_snap_policy.h"
@@ -366,18 +367,20 @@ void on_look_at(cpu::Ctx& c) {
     if (g_free_yaw == 0 || !player || g_frames_without_player > 2) return;
     u32 body = mem::r32(player + 0x58);  // btRigidBody: basis rows at +4, origin at +0x34
     if (!body) return;
-    float px = f32(body + 0x34), pz = f32(body + 0x3c);
-    float cs = std::cos(g_free_yaw), sn = std::sin(g_free_yaw);
+    objs::Vec3 pivot{f32(body + 0x34), f32(body + 0x38), f32(body + 0x3c)};
+    camera::YawRotation rotation(objs::up(player), g_free_yaw);
     for (u32 v : {c.reg(1), c.reg(2)}) {
-        float x = f32(v) - px, z = f32(v + 8) - pz;
-        wf32(v, px + x * cs + z * sn);
-        wf32(v + 8, pz - x * sn + z * cs);
+        auto point = rotation.orbit({f32(v), f32(v + 4), f32(v + 8)}, pivot);
+        wf32(v, point.x);
+        wf32(v + 4, point.y);
+        wf32(v + 8, point.z);
     }
     // the up vector tilts with the camera pitch; it must turn too or the view rolls
     u32 up = c.reg(3);
-    float ux = f32(up), uz = f32(up + 8);
-    wf32(up, ux * cs + uz * sn);
-    wf32(up + 8, -ux * sn + uz * cs);
+    auto direction = rotation.rotate({f32(up), f32(up + 4), f32(up + 8)});
+    wf32(up, direction.x);
+    wf32(up + 4, direction.y);
+    wf32(up + 8, direction.z);
     record_camera(c);
 }
 

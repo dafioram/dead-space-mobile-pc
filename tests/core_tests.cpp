@@ -124,8 +124,8 @@ void test_interaction_frames() {
     auto floor = interact::interaction_view({}, {0, 0, 1}, {0, 1, 0}, quarter_turn);
     require(near(floor.f, {1, 0, 0}), "floor free-look yaw preserves the original direction");
     auto wall = interact::interaction_view({}, {0, 1, 0}, {1, 0, 0}, quarter_turn);
-    require(near(wall.f, {0, 1, 0}) && near(wall.u, {0, 0, -1}),
-            "wall free look applies the camera orbit to the complete body basis");
+    require(near(wall.f, {0, 0, 1}) && near(wall.u, {1, 0, 0}),
+            "wall free look turns around body up rather than world Y");
     auto ceiling = interact::interaction_view({}, {0, 0, 1}, {0, -1, 0}, 0);
     require(near(interact::view_world(ceiling, {0, -1, 0}), {0, 1, 0}),
             "interaction-volume bottom points toward the ceiling when upside down");
@@ -204,6 +204,63 @@ void test_oriented_zones() {
         require(near(frame.p, marker.p) && near(frame.r, identity.r) && near(frame.u, identity.u) && near(frame.f, identity.f),
                 "degenerate, sheared or invalid marker axes fall back without moving the anchor");
     }
+}
+
+void test_surface_camera_orbit() {
+    using objs::Vec3;
+    auto near = [](Vec3 a, Vec3 b) { return std::hypot(a.x - b.x, a.y - b.y, a.z - b.z) < 2e-5f; };
+    const float quarter_turn = 1.57079632679f;
+    struct Surface { Vec3 up, forward; };
+    const Surface surfaces[] = {
+        {{0, 1, 0}, {0, 0, 1}}, {{0, -1, 0}, {0, 0, 1}},
+        {{1, 0, 0}, {0, 1, 0}}, {{-1, 0, 0}, {0, 1, 0}},
+        {{0, 0, 1}, {1, 0, 0}}, {{0, 0, -1}, {1, 0, 0}},
+        {{0, 0.8f, -0.6f}, {0, 0.6f, 0.8f}},
+    };
+    Vec3 pivot{13, -7, 29};
+    for (auto surface : surfaces) {
+        auto up = surface.up, forward = surface.forward;
+        auto right = interact::cross(up, forward);
+        for (float angle : {-quarter_turn, -0.37f, 0.0f, 0.37f, quarter_turn}) {
+            camera::YawRotation rotation(up, angle);
+            Vec3 expected{forward.x * std::cos(angle) + right.x * std::sin(angle),
+                          forward.y * std::cos(angle) + right.y * std::sin(angle),
+                          forward.z * std::cos(angle) + right.z * std::sin(angle)};
+            require(near(rotation.rotate(forward), expected), "yaw must follow the local body right on every surface");
+            require(near(rotation.rotate(up), up), "yaw must preserve the surface up, including on slopes");
+            Vec3 eye{pivot.x - forward.x * 3 + up.x, pivot.y - forward.y * 3 + up.y,
+                     pivot.z - forward.z * 3 + up.z};
+            auto moved = rotation.orbit(eye, pivot);
+            Vec3 expected_eye{pivot.x - expected.x * 3 + up.x, pivot.y - expected.y * 3 + up.y,
+                              pivot.z - expected.z * 3 + up.z};
+            require(near(moved, expected_eye), "orbit rotates all three coordinates about the player's actual pivot");
+            require(near(rotation.orbit(pivot, pivot), pivot), "yaw must never move the pivot");
+            camera::YawRotation inverse(up, -angle);
+            require(near(inverse.orbit(moved, pivot), eye), "camera orbit must be reversible without scale or drift");
+            Vec3 camera_up{up.x + forward.x * 0.2f, up.y + forward.y * 0.2f, up.z + forward.z * 0.2f};
+            auto turned_up = rotation.rotate(camera_up);
+            require(std::fabs(interact::dot(turned_up, expected) - interact::dot(camera_up, forward)) < 1e-5f,
+                    "the camera up vector must rotate with eye/target to preserve pitch and roll");
+
+            auto view = interact::interaction_view(pivot, forward, up, angle);
+            require(near(view.f, expected) && near(view.u, up), "selection and debug geometry follow the same camera yaw");
+            // adjustYaw uses a local-Y rotation too: transferring some yaw to
+            // the body and retaining the remainder must leave the view put.
+            camera::YawRotation body_step(up, angle * 0.4f), remaining(up, angle * 0.6f);
+            require(near(body_step.rotate(remaining.rotate(forward)), expected),
+                    "stationary orbit and moving/aiming catch-up must agree on the yaw axis and sign");
+            camera::YawRotation scaled({up.x * 3, up.y * 3, up.z * 3}, angle);
+            require(near(scaled.rotate(forward), expected), "normalise supplied body up without scaling the view");
+        }
+    }
+    require(near(camera::YawRotation({0, -1, 0}, quarter_turn).rotate({0, 0, 1}), {-1, 0, 0}),
+            "ceiling orbit must not reuse the upright world-Y direction");
+    for (Vec3 bad : {Vec3{}, Vec3{0, std::numeric_limits<float>::infinity(), 0},
+                     Vec3{std::numeric_limits<float>::quiet_NaN(), 0, 0}})
+        require(near(camera::YawRotation(bad, quarter_turn).orbit({1, 2, 3}, pivot), {1, 2, 3}),
+                "invalid body up leaves the native camera unchanged rather than inventing an axis");
+    require(near(camera::YawRotation({0, 1, 0}, std::numeric_limits<float>::quiet_NaN()).rotate({1, 2, 3}), {1, 2, 3}),
+            "invalid yaw must not contaminate the native camera");
 }
 
 void test_floor_snap_recovery() {
@@ -407,6 +464,7 @@ int main() {
         test_interaction_geometry();
         test_interaction_frames();
         test_oriented_zones();
+        test_surface_camera_orbit();
         test_floor_snap_recovery();
         test_main_menu_bar();
         test_death_input_ownership();
