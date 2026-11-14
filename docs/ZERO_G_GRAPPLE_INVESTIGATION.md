@@ -3,6 +3,15 @@
 Status: user-reported; not yet independently reproduced or fixed. Kept on
 `diagnostics/zero-g-grapple`, separate from the zero-G camera rotation fix.
 
+A bounded run of the combined build on a disposable copy of the retained first
+spacewalk checkpoint reached the exterior with the trace enabled. The sampled
+player remained at 200 HP, grapple phase -1 and no attacker reference; the route
+did not produce an active enemy/grapple encounter. This verifies trace-enabled
+startup and ordinary traversal only, not successful grapple release or absence
+of the reported bug. The assistant-owned instance was stopped afterwards. No
+forced spawns, teleporting, invulnerability or health changes were used, and the
+original checkpoint, assets and user's installation were not modified.
+
 The report is that after visibly pushing a monster away, the player could move
 but continued taking damage. Visual separation alone does not establish whether
 the native grapple ended, the attacker resumed an attack, another enemy hit the
