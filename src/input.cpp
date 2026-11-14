@@ -48,10 +48,12 @@ struct Event {
     float x = 0, y = 0;   // move vector / look delta
     int flags = 0;
     std::string id;       // HUD string id
+    u32 epoch = 0;        // native input reset generation when this was queued
 };
 
 std::mutex g_lock;
 std::deque<Event> g_queue;
+std::atomic<u32> g_input_epoch{0};
 
 // game objects (written on the game thread)
 std::atomic<u32> g_player{0}, g_hud{0}, g_world{0};
@@ -61,6 +63,7 @@ std::atomic<int> g_state{0};
 
 // game functions / vtables
 u32 fn_player_event, fn_hud_event, fn_is_paused, fn_in_rig, fn_in_pause_menu, fn_is_alive;
+u32 fn_get_hud, fn_can_change_facing;
 u32 fn_change_weapon, fn_can_change_weapon;
 u32 vt_vector2, vt_action;
 
@@ -269,6 +272,7 @@ std::vector<std::function<void(unsigned)>> g_jobs;  // guarded by g_lock
 std::atomic<bool> g_interact_debug{false};
 void push(Event e) {
     std::lock_guard lk(g_lock);
+    e.epoch = g_input_epoch;
     g_queue.push_back(std::move(e));
 }
 
@@ -317,13 +321,30 @@ void hud_button(u32 hud, const std::string& id) {
 // so he ends up facing where the camera looks. Game thread only.
 float g_free_yaw = 0;
 bool g_free_moving = false;  // last move input was non-zero
+bool g_free_turning = false;
 u32 g_lookat_sites[4] = {};  // return addresses of CameraController's getLookAtTransform calls
 
 bool free_look_enabled() { return settings::get_int("free_look", 1) != 0; }
 
+bool player_owns_input(u32 player);
+bool player_owns_free_look(u32 player) {
+    return free_look_input_allowed(player_owns_input(player),
+                                  player && fn_can_change_facing && (cpu::call(fn_can_change_facing, {player}) & 0xff));
+}
+
+void reset_free_look() {
+    g_free_moving = false;
+    g_free_yaw = 0;
+    g_free_turning = false;
+}
+
 // Turns the player by `angle` radians of the free-look orbit and removes it from the orbit, so the
 // view stays put while he turns.
 void turn_free_look(u32 player, float angle) {
+    if (!player_owns_free_look(player)) {
+        reset_free_look();
+        return;
+    }
     static u32 fn_adjust_yaw = elf::find("_ZN10GameObject9adjustYawEf");
     g_free_yaw -= angle;
     u32 v;
@@ -333,7 +354,6 @@ void turn_free_look(u32 player, float angle) {
 
 // Moving, aiming or acting starts turning the player to face the camera; tick_free_look eases him
 // round over a few frames (time constant kTurnTau) rather than snapping.
-bool g_free_turning = false;
 constexpr float kTurnTauMs = 120.0f;
 void snap_free_look(u32) {
     if (g_free_yaw != 0) g_free_turning = true;
@@ -362,6 +382,10 @@ void on_look_at(cpu::Ctx& c) {
     u32 lr = c.lr();
     if (std::find(std::begin(g_lookat_sites), std::end(g_lookat_sites), lr) == std::end(g_lookat_sites)) return;
     record_camera(c);
+    if (!player_owns_free_look(player)) {
+        reset_free_look();
+        return;
+    }
     // only while that player is alive and updating (not during level loads)
     if (g_free_yaw == 0 || !player || g_frames_without_player > 2) return;
     u32 body = mem::r32(player + 0x58);  // btRigidBody: basis rows at +4, origin at +0x34
@@ -432,6 +456,32 @@ bool player_is_alive(u32 player) {
     return player && fn_is_alive && (cpu::call(fn_is_alive, {player}) & 0xff);
 }
 
+bool dialog_open();
+
+bool player_owns_input(u32 player) {
+    u32 hud = g_hud;
+    if (!player || !hud) return false;
+    // Match Hud::onEvent's native route instead of bypassing objectGetInput /
+    // hudHide with direct player events. Hidden-softly still permits gameplay.
+    if (!scripted_input_allowed(int(mem::r32(hud + 0x2a4)), mem::r8(hud + 0x2a8) != 0,
+                                int(mem::r32(player + 0x210)), mem::r32(player + 0x1b4))) return false;
+    bool paused = (cpu::call(fn_is_paused, {hud}) & 0xff) || (cpu::call(fn_in_rig, {hud}) & 0xff) ||
+                  (cpu::call(fn_in_pause_menu, {hud}) & 0xff);
+    return gameplay_input_allowed(true, player_is_alive(player), paused, g_frames_without_cine < 10, dialog_open());
+}
+
+void on_input_reset(cpu::Ctx& c) {
+    u32 hud = g_hud;
+    if (!hud || c.reg(0) != hud + 0x10) return;
+    // The native scheme forgets its held gestures on ownership changes. Do the
+    // same for direct port input, including events already in a local drain.
+    std::lock_guard lk(g_lock);
+    g_input_epoch++;
+    g_queue.clear();
+    reset_free_look();
+    if (g_trace) LOGI("[input] native scheme reset: epoch=%u route=%u", g_input_epoch.load(), mem::r32(hud + 0x2a4));
+}
+
 movement::FloorSnapRecovery g_floor_snap_recovery;
 
 // A floor ray can keep pinning the body to the lower ramp face while its leading edge
@@ -471,6 +521,7 @@ void on_player_update(cpu::Ctx& c) {
         }
     }
     g_player = player;
+    g_hud = cpu::call(fn_get_hud, {player});
     g_player_tick++;
     if (++g_ticks_this_player == 600 && !g_teleport_class.empty() && g_world) debug_teleport(player, g_world);
     g_aiming = mem::r8(player + 0x1ed) != 0;
@@ -510,16 +561,16 @@ void on_player_update(cpu::Ctx& c) {
         jobs.swap(g_jobs);
     }
     for (auto& j : jobs) j(player);
-    // Death animations can keep updating the player even while the restart UI
-    // is open. Discard queued gameplay input, but still allow diagnostic jobs.
-    if (!player_is_alive(player)) {
-        g_free_moving = false;
-        g_free_yaw = 0;
-        g_free_turning = false;
+    // A live, updating player need not own input (script, store exit, death UI).
+    // Diagnostic jobs still run, but gameplay events must not bypass that owner.
+    if (!player_owns_input(player)) {
+        reset_free_look();
         g_floor_snap_recovery.reset();
         return;
     }
     for (auto& e : q) {
+        // Interact/HUD/actions can hand input away midway through this drain.
+        if (!queued_gameplay_input_allowed(player_owns_input(player), e.epoch, g_input_epoch)) continue;
         switch (e.kind) {
         case EV_MOVE:
             g_free_moving = e.x != 0 || e.y != 0;
@@ -527,6 +578,10 @@ void on_player_update(cpu::Ctx& c) {
             send_vector2(player, 1, e.x, e.y, e.flags);
             break;
         case EV_LOOK: {
+            if (!player_owns_free_look(player)) {
+                reset_free_look();
+                break;
+            }
             // e.x/e.y are mouse counts (already scaled by the port sensitivity); the game turns
             // look pixels into yaw at Tweaks+0x54 radians per pixel (pitch uses its own matching rate)
             static u32 tweaks = 0;
@@ -583,6 +638,11 @@ void on_player_update(cpu::Ctx& c) {
         }
         }
     }
+    if (!player_owns_input(player)) {
+        reset_free_look();
+        g_floor_snap_recovery.reset();
+        return;
+    }
     if (g_interact_debug && !g_paused) interact::draw_debug(player, g_world, g_free_yaw);
     if (!g_paused) debugview::draw(player, g_world);
     if (g_player_tick % 30 == 0) interact::repair_objective_panel(g_world);
@@ -623,10 +683,12 @@ void on_scheme_init(cpu::Ctx& c) { g_world = c.reg(1); }
 void on_player_destroyed(cpu::Ctx& c) {
     if (c.reg(0) != g_player) return;
     g_player = 0;
-    g_free_yaw = 0;
-    g_free_turning = false;
+    g_hud = 0;
+    g_paused = true;
+    reset_free_look();
     g_frames_without_player = 1000;
     std::lock_guard lk(g_lock);
+    g_input_epoch++;
     g_queue.clear();  // actions queued for the old player must not reach a respawn
 }
 
@@ -693,28 +755,53 @@ bool cinematic_playing() { return g_frames_without_cine < 10; }
 bool gameplay_active() {
     u32 player = g_player;
     bool current = player && g_frames_without_player < 10;
-    // Read the game's live result, not a health snapshot from the previous
-    // update: oxygen damage can become fatal later in that same update.
-    return gameplay_input_allowed(current, current && player_is_alive(player), g_paused, cinematic_playing(), dialog_open());
+    // Query live ownership, not the preceding frame's pause/health snapshot.
+    return current && player_owns_input(player);
+}
+
+bool block_scripted_pointer() {
+    u32 player = g_player, hud = g_hud;
+    if (!player || !hud || g_frames_without_player >= 10 || !player_is_alive(player) || dialog_open()) return false;
+    if ((cpu::call(fn_is_paused, {hud}) & 0xff) || (cpu::call(fn_in_rig, {hud}) & 0xff) ||
+        (cpu::call(fn_in_pause_menu, {hud}) & 0xff)) return false;
+    return scripted_pointer_blocked(int(mem::r32(hud + 0x2a4)), int(mem::r32(player + 0x210)), mem::r32(player + 0x1b4));
+}
+
+void clear_pending_gameplay_input() {
+    g_look_dx = g_look_dy = 0;
+    std::memset(g_smooth_x, 0, sizeof g_smooth_x);
+    std::memset(g_smooth_y, 0, sizeof g_smooth_y);
+    g_rmb = g_lmb = false;
+    g_pending_fire = 0;
+    g_run_toggle = false;
+}
+
+void sync_native_input_reset() {
+    // Main-thread-only state must also reset when ownership changes twice
+    // between host frames (and capture therefore appears unchanged).
+    static u32 seen = 0;
+    u32 epoch = g_input_epoch;
+    if (seen == epoch) return;
+    seen = epoch;
+    clear_pending_gameplay_input();
 }
 
 void set_gameplay_capture(bool want) {
     if (want == g_mouse_captured) return;
     if (!g_test) SDL_SetRelativeMouseMode(want ? SDL_TRUE : SDL_FALSE);
     LOGI("input: gameplay controls %s", want ? "active (mouse captured)" : "released");
+    u32 player = g_player, hud = g_hud;
+    if (player && hud)
+        LOGI("input: native ownership route=%u passthrough=%u player-state=%u freeze=%08x epoch=%u",
+             mem::r32(hud + 0x2a4), mem::r8(hud + 0x2a8), mem::r32(player + 0x210),
+             mem::r32(player + 0x1b4), g_input_epoch.load());
     g_mouse_captured = want;
     SDL_ShowCursor(want || g_pad_active ? SDL_DISABLE : SDL_ENABLE);
-    g_look_dx = g_look_dy = 0;
-    std::memset(g_smooth_x, 0, sizeof g_smooth_x);
-    std::memset(g_smooth_y, 0, sizeof g_smooth_y);
     if (!want && g_moving) {
         push({EV_MOVE});
         g_moving = false;
     }
-    if (!want) {
-        g_rmb = g_lmb = false;
-        g_pending_fire = 0;
-    }
+    clear_pending_gameplay_input();
 }
 
 float mouse_scale() { return std::max(1, settings::get_int("mouse_sensitivity", 100)) / 100.0f; }
@@ -835,12 +922,15 @@ void install() {
     fn_in_rig = elf::find("_ZNK3Hud7isInRigEv");
     fn_in_pause_menu = elf::find("_ZNK3Hud13isInPauseMenuEv");
     fn_is_alive = elf::find("_ZNK18GameObjectPlayable7isAliveEv");
+    fn_get_hud = elf::find("_ZN10GameObject6getHudEv");
+    fn_can_change_facing = elf::find("_ZNK18GameObjectPlayable15canChangeFacingEv");
     fn_change_weapon = elf::find("_ZN18GameObjectPlayable12changeWeaponENS_11WeaponIndexE");
     fn_can_change_weapon = elf::find("_ZNK18GameObjectPlayable15canChangeWeaponEv");
     fn_cine_transition = elf::find("_ZN19GameObjectCinematic15stateTransitionENS_5StateE");
     vt_vector2 = elf::find("_ZTV12Vector2Event") + 8;
     vt_action = elf::find("_ZTV11ActionEvent") + 8;
-    if (!fn_player_event || !fn_hud_event || !fn_is_paused || !fn_in_rig || !fn_in_pause_menu || !fn_is_alive || vt_vector2 == 8 ||
+    if (!fn_player_event || !fn_hud_event || !fn_is_paused || !fn_in_rig || !fn_in_pause_menu || !fn_is_alive ||
+        !fn_get_hud || !fn_can_change_facing || vt_vector2 == 8 ||
         vt_action == 8) {
         LOGE("input: game functions not found; keyboard/mouse gameplay controls disabled");
         return;
@@ -856,6 +946,7 @@ void install() {
         {"_ZN3Hud7onEventERKN2im5EventE", "Hud::onEvent", on_hud_event},
         {"_ZN18GameObjectPlayable7onEventERKN2im5EventE", "GameObjectPlayable::onEvent", on_player_event},
         {"_ZN16InputSchemeBasic4initEP9GameWorld", "InputSchemeBasic::init", on_scheme_init},
+        {"_ZN11InputScheme5resetEv", "InputScheme::reset", on_input_reset},
         {"_ZN18GameObjectPlayableD0Ev", "GameObjectPlayable::~GameObjectPlayable (deleting)", on_player_destroyed},
         {"_ZN18GameObjectPlayable11revertPitchEff", "GameObjectPlayable::revertPitch", on_revert_pitch},
         {"_ZN19GameObjectCinematic8onUpdateEi", "GameObjectCinematic::onUpdate", on_cinematic_update},
@@ -1121,6 +1212,7 @@ bool pad_event(const SDL_Event& e) {
 }
 
 bool event(const SDL_Event& e, SDL_Window* win) {
+    sync_native_input_reset();
     // Events are polled before frame(). Hand ownership back immediately when a
     // death/menu transition occurred in the preceding guest frame, so its first
     // click is not swallowed as fire/look input by stale capture state.
@@ -1189,7 +1281,11 @@ bool event(const SDL_Event& e, SDL_Window* win) {
         back_key();
         return true;
     }
-    if (!g_mouse_captured) return false;
+    if (!g_mouse_captured) {
+        if ((e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP ||
+             e.type == SDL_MOUSEWHEEL) && block_scripted_pointer()) return true;
+        return false;
+    }
     switch (e.type) {
     case SDL_MOUSEMOTION:
         g_look_dx += float(e.motion.xrel);
@@ -1247,6 +1343,7 @@ void update_light_bar() {
 }
 
 bool frame(SDL_Window* win) {
+    sync_native_input_reset();
     update_light_bar();
     u32 ctick = g_cinematic_tick;
     if (ctick != g_cine_tick_seen && g_cinematic) {

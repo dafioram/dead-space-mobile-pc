@@ -397,6 +397,58 @@ void test_menu_widget_safety() {
             "validate every page, including intermediate pages, of a guest span");
 }
 
+void test_scripted_input_ownership() {
+    using input::HudInputRoute;
+    const int player = int(HudInputRoute::player);
+    const int grapple = int(HudInputRoute::grapple);
+    const int object = int(HudInputRoute::object);
+    const int hidden = int(HudInputRoute::hidden);
+    for (bool passthrough : {false, true}) {
+        require(input::hud_routes_player_input(player, passthrough), "ordinary HUD routes to the player");
+        require(input::hud_routes_player_input(grapple, passthrough), "grapple struggle controls must remain available");
+        require(!input::hud_routes_player_input(object, passthrough), "object input ownership cannot be bypassed by port controls");
+        require(input::hud_routes_player_input(hidden, passthrough) == passthrough,
+                "hideSoftly permits gameplay; hide without passthrough does not");
+        for (int unknown : {-1, 4, 100})
+            require(!input::hud_routes_player_input(unknown, passthrough), "unknown native routes must not enable gameplay");
+    }
+    for (int state = 19; state <= 24; state++) {
+        require(!input::scripted_input_allowed(player, true, state, 0),
+                "bench/store entry, exit and suit-change states retain control even after UI release");
+        require(!input::scripted_input_allowed(hidden, true, state, 0),
+                "softly hidden HUD cannot prematurely end a store animation lock");
+    }
+    for (int state : {0, 4, 9, 10, 11, 18, 25})
+        require(input::scripted_input_allowed(player, false, state, 0),
+                "do not blanket-block aiming, grapples, zero-G jumps, kinesis or unrelated states");
+    require(input::scripted_input_allowed(grapple, false, 9, 0), "native grapple route must accept struggle actions");
+    require(!input::scripted_input_allowed(player, false, 0, 3), "native facing-and-position freeze owns player input");
+    require(!input::scripted_input_allowed(player, false, 0, 0x43), "other freeze bits cannot mask the full control lock");
+    require(!input::scripted_input_allowed(player, false, 0, 0xffffffffu), "Brute intro freezes all native control bits");
+    require(input::scripted_input_allowed(player, false, 0, 1), "facing-only lock must not block movement wholesale");
+    require(input::scripted_input_allowed(player, false, 0, 2), "position-only lock must not block look wholesale");
+    require(input::scripted_pointer_blocked(player, 21, 0), "store exit clicks must not fall back to mobile touch movement");
+    require(input::scripted_pointer_blocked(player, 0, 0xffffffffu), "Brute reveal must not receive fallback touch gestures");
+    require(!input::scripted_pointer_blocked(object, 20, 0), "store and bench menus must still receive real pointer clicks");
+    require(!input::scripted_pointer_blocked(player, 0, 0), "ordinary Alt touch-pointer access remains available");
+    require(!input::scripted_pointer_blocked(grapple, 9, 0), "grapple input must not be mistaken for a scripted pointer lock");
+
+    for (bool owned : {false, true})
+        for (bool facing : {false, true})
+            require(input::free_look_input_allowed(owned, facing) == (owned && facing),
+                    "camera orbit and player catch-up must obey ownership and native canChangeFacing");
+
+    // Model a local event drain: interact hands input away before a queued look
+    // or fire; an entire enter/exit may also reset native input between frames.
+    uint32_t epoch = 7;
+    require(input::queued_gameplay_input_allowed(true, 7, epoch), "fresh gameplay input is delivered");
+    require(!input::queued_gameplay_input_allowed(false, 7, epoch), "mid-drain script takeover drops remaining events");
+    epoch++;
+    require(!input::queued_gameplay_input_allowed(true, 7, epoch), "ownership restoration cannot replay pre-reset input");
+    require(input::queued_gameplay_input_allowed(true, 8, epoch), "new input resumes after the native handoff");
+    require(!input::queued_gameplay_input_allowed(true, 0xffffffffu, 0), "epoch wrap must not accept an old event");
+}
+
 }  // namespace
 
 int main() {
@@ -410,6 +462,7 @@ int main() {
         test_floor_snap_recovery();
         test_main_menu_bar();
         test_death_input_ownership();
+        test_scripted_input_ownership();
         test_menu_widget_safety();
         std::cout << "Asset-file, settings, geometry, widget safety, input ownership and floor-snap policy checks passed.\n";
         return 0;
