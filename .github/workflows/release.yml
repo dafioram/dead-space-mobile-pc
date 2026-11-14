@@ -28,7 +28,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: main
+          # Pin the tools to this workflow's revision, including a reviewed
+          # workflow_dispatch fix branch used to backfill an older release tag.
+          ref: ${{ github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
       - id: release
@@ -77,11 +79,19 @@ jobs:
           fetch-depth: 0
           submodules: recursive
           persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - id: python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
       - name: Private-data policy before building
         run: python ../automation/tools/check_assets.py --tracked
+      - name: Validate checked-out release before compiling
+        env:
+          HOST_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          set -euo pipefail
+          test "$("$HOST_PYTHON" ../automation/tools/release_package.py resolve --source-root . --tag "$RELEASE_TAG")" = "$RELEASE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
       - name: Linux dependencies
         if: runner.os == 'Linux'
         run: |
@@ -106,7 +116,7 @@ jobs:
           ctest --test-dir build --output-on-failure
           strip --strip-debug build/deadspace
           python ../automation/tools/stage_build.py --platform linux-x86_64 --build-dir build --output staging --source-root . --release-tag "$RELEASE_TAG"
-      - name: Windows build, tests and allowlisted staging
+      - name: Windows build and tests
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
@@ -115,11 +125,21 @@ jobs:
           cmake --build build --parallel 2
           ctest --test-dir build --output-on-failure
           strip --strip-debug build/deadspace.exe
-          python ../automation/tools/stage_build.py --platform windows-x86_64 --build-dir build --output staging --mingw-prefix "$MINGW_PREFIX" --source-root . --release-tag "$RELEASE_TAG"
+          printf 'RELEASE_MINGW_PREFIX=%s\n' "$(cygpath -m "$MINGW_PREFIX")" >> "$GITHUB_ENV"
+      # Keep provenance/staging on the setup-python host interpreter, not the
+      # MSYS native-Python -> Git command-wrapper boundary used for compilation.
+      - name: Windows allowlisted staging with host Python
+        if: runner.os == 'Windows'
+        env:
+          HOST_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          set -euo pipefail
+          "$HOST_PYTHON" ../automation/tools/stage_build.py --platform windows-x86_64 --build-dir build --output staging --mingw-prefix "$RELEASE_MINGW_PREFIX" --source-root . --release-tag "$RELEASE_TAG"
       - name: Package portable archive and checksum
         env:
           PLATFORM: ${{ matrix.platform }}
-        run: python ../automation/tools/release_package.py pack --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT" --platform "$PLATFORM" --staging staging --output release-assets
+          HOST_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: '"$HOST_PYTHON" ../automation/tools/release_package.py pack --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT" --platform "$PLATFORM" --staging staging --output release-assets'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: portable-${{ matrix.platform }}
