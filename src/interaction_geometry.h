@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "objects.h"
+#include "camera_geometry.h"
 
 namespace interact {
 
@@ -23,11 +24,10 @@ inline View world_view() { return {{}, {0, 0, 1}, {1, 0, 0}, {0, 1, 0}}; }
 
 inline View interaction_view(objs::Vec3 position, objs::Vec3 facing, objs::Vec3 up, float yaw) {
     objs::Vec3 right = cross(up, facing);
-    float c = std::cos(yaw), s = std::sin(yaw);
-    // Match input.cpp's free-look camera orbit. Rotate the complete body frame,
-    // including up; never flatten a wall-facing direction onto the world XZ plane.
-    auto orbit = [c, s](objs::Vec3 v) { return objs::Vec3{v.x * c + v.z * s, v.y, -v.x * s + v.z * c}; };
-    return {position, orbit(facing), orbit(right), orbit(up)};
+    // Selection and camera orbit must turn about the same surface-relative up,
+    // including on walls, ceilings and interpolated surface transitions.
+    camera::YawRotation rotation(up, yaw);
+    return {position, rotation.rotate(facing), rotation.rotate(right), rotation.rotate(up)};
 }
 
 inline objs::Vec3 view_local(const View& v, objs::Vec3 w) {
