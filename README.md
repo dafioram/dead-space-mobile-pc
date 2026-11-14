@@ -118,6 +118,15 @@ All of these are saved in `userdata/port_settings.ini` (`msaa`, `mouse_sensitivi
 Options: `--msaa N`, `--width W --height H` (game resolution, default = desktop resolution), `--fullscreen` (borderless),
 `--fps N` (frame cap for this run, 0 = off; overrides the Frame Rate Limit setting), `--verbose`, `--log FILE`.
 
+Run `deadspace --help` (or `-h`) for all supported flags without starting the game.
+Use `--assets DIR --lib FILE` for matching extracted game files elsewhere and
+`--data DIR` for a different userdata root (saves **and** settings).
+`--no-save` plays on a disposable copy of that root: autosaves/settings work in
+the temporary session, but originals are not updated. Relaunch to return to the
+original starting save; this does not freeze checkpoints within a running game.
+See [Debug controls and save protection](docs/debug_menu.md) for examples, console
+commands, keyboard shortcuts, developer tools and safety limits.
+
 Touch instructions are reworded for keyboard and mouse (English only): tutorial boxes and loading
 hints name the keys bound when the game starts, and the tutorials' touch graphics (arrows, hand, device
 pictures) are removed from the layouts, leaving the text box. On the loading screen that waits for

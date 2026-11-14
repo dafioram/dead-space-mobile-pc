@@ -59,6 +59,13 @@ class StagingTests(unittest.TestCase):
         self.assertTrue((self.output / "licenses/SDL2/LICENSE").is_file())
         self.assertFalse((self.output / "deadspace").exists())
 
+    def test_debug_guide_is_allowlisted_without_copying_other_docs(self):
+        (self.root / "docs/debug_menu.md").write_text("synthetic guide", encoding="utf-8")
+        (self.root / "docs/private.log").write_text("synthetic private log", encoding="utf-8")
+        self.stage()
+        self.assertEqual((self.output / "docs/debug_menu.md").read_text(encoding="utf-8"), "synthetic guide")
+        self.assertFalse((self.output / "docs/private.log").exists())
+
     def test_existing_output_is_never_deleted(self):
         self.output.mkdir()
         marker = self.output / "keep.txt"
