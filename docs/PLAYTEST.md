@@ -87,7 +87,17 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   context outside MSYS. Provenance is checked before compiling; real-Git tests
   cover lightweight/annotated tags and the Windows wrapper regression. This
   changes release tooling only and does not move RC2 or change its application.
-- The Mesa shader fix remains unresolved. Other reported terminals
+- `fix/scripted-input-ownership` / fork PR #16: respect native HUD input routing,
+  Brute intro/spawn freeze flags and the player's complete bench/store/suit-change
+  animation sequence. Guard free-look/catch-up yaw with native facing permission;
+  invalidate queued/pending port input with native scheme resets. Suppress touch
+  fallback during player sequence locks without blocking object-owned menus.
+  Windows/Linux builds and synthetic policies are checked; actual Brute reveal,
+  store exits, suit changes and subsequent bench/control recovery need user
+  validation. See `docs/SCRIPTED_INPUT_OWNERSHIP.md`. Zero-G inversion is not
+  changed, and this is not a confirmed workbench crash fix.
+- The Mesa shader fix remains unresolved (waiting for the upstream contributor).
+  Other reported terminals
   and the original asset set still need validation.
 
 `.github/workflows/playtest-boundary.yml` fails if a PR from `playtest` targets
