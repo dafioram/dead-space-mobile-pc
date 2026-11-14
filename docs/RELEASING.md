@@ -27,6 +27,15 @@ This rebuilds that tag, not current main. Packaging tools are checked out separa
 so older tags can be backfilled. If a prior upload partially succeeded, review the
 existing assets rather than automatically deleting/replacing them.
 
+Windows compilation/tests run in MSYS2, but release staging/packaging use the
+host interpreter selected by setup-python. The MinGW notice path is exported as
+a native Windows path. A preflight checks tag resolution and checkout SHA before
+compilation. Tag peeling avoids caret revision syntax, which Windows command
+wrappers can alter; real-Git tests cover lightweight/annotated tags, rejected refs
+and the Windows wrapper regression. A staging-only fix does not require moving
+an existing release tag: after merging the fix, manually backfill the same tag
+from `main` using the workflow dispatch described above.
+
 Ordinary CI artifacts are still temporary (14 days). Assets attached to a GitHub
 release do not use that CI retention period. No installer is built automatically.
 
