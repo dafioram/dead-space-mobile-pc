@@ -198,6 +198,22 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   builds and all nine synthetic suites pass on the themed branch; live locator
   display and menu/interactive regressions remain user-led and unconfirmed.
   See `docs/DIRECT_LOCATOR.md`; other issue #22 items are not closed by this fix.
+- `fix/store-list-lifetime` / source `1dc3b61`: follow the user's reproduced
+  store-entry crash from port menu navigation into stale window geometry.
+  Replace the persistent item-window pointer and cached-window rectangle calls
+  with per-owner generations and actual native draw/clip snapshots. Retire
+  supported window/item destructor paths, including inlined store/bench cleanup,
+  and keep item selection/scrolling within its own owner. Windows/Linux builds
+  and nine suites pass on the themed branch. Bounded disposable Windows checks
+  completed six entries with delivered movement before activation, store tab
+  switching in Legacy/Native, two bench visits and Options control enumeration.
+  No crash or invalid snapshot warning occurred. Developer positioning/level
+  override was used; natural user reproduction, visual/controller and broader
+  purchase/node-grid/scroll regressions remain unconfirmed. This is not proof
+  that issue #22's reported softlock has the same cause or that the independent
+  exit crash is fixed. See `docs/STORE_LIST_LIFETIME.md`. Production main through
+  `7598c4c` (including merged PR #25) is now integrated; no iOS-import work is
+  included and no release tag is changed.
 - Android-origin save compatibility: the user's four original save files use
   SBIN v2, pass all chunk checksums and match the comparison port save's common
   campaign/player/weapon/inventory/metadata/achievement field types. Android
