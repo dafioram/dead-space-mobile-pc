@@ -1064,6 +1064,10 @@ void run_on_game_thread(std::function<void(unsigned)> fn) {
 unsigned world() { return g_world; }
 int grab() { return g_grab_state; }
 unsigned player() { return g_frames_without_player > 2 ? 0u : unsigned(g_player); }
+unsigned context_epoch() { return g_input_epoch; }
+bool debug_mutation_allowed(unsigned player) {
+    return player && player == g_player && player_owns_input(player) && grab_state(player) == 0;
+}
 bool camera(float eye[3], float target[3], float up[3]) {
     if (SDL_GetTicks() - g_cam_ms > 100) return false;
     std::memcpy(eye, g_cam, 12);

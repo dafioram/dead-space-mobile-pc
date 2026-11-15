@@ -11,6 +11,7 @@
 // While typing a /command, matching commands are suggested above the input line; Tab completes
 // the first one.
 #include "console.h"
+#include "console_debug.h"
 #include "debugview.h"
 #include "render/native.h"
 
@@ -104,6 +105,11 @@ const Command kCommands[] = {
     {"/bandana", "", "toggle infinite ammo"},
     {"/level_", "MAP", "load a level, e.g. /level_01_gov_02"},
     {"/kill", "", "kill the player"},
+    {"/credits_", "AMOUNT", "set credits (not add); can autosave"},
+    {"/nodes_", "AMOUNT", "set power nodes (not add); can autosave"},
+    {"/rich", "[_CREDITS_NODES]", "set wallet; default 500000 credits / 200 nodes; can autosave"},
+    {"/restore", "", "restore native health/stasis maxima and request oxygen refill; can autosave"},
+    {"/enemies", "[_RADIUS]", "read-only nearest enemies; default 30 m, maximum 500 m"},
     {"/debug_lights", "", "toggle the light placement view (F6)"},
     {"/debug_hitboxes", "", "toggle the hitbox view (F7)"},
     {"/debug_interact", "", "toggle the interaction box view (F10)"},
@@ -226,6 +232,12 @@ void run(const std::string& raw) {
     if (line == "/clear") {
         std::lock_guard lk(g_lock);
         g_log.clear();
+        return;
+    }
+    auto debug = console_debug::parse(line);
+    if (debug.kind != console_debug::Kind::none) {
+        std::string error;
+        if (!console_debug::submit(debug, print, error)) return fail(error);
         return;
     }
     if (line == "/kill") {

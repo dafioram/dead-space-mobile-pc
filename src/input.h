@@ -28,6 +28,9 @@ void run_on_game_thread(std::function<void(unsigned player)> fn);
 unsigned world();
 int grab();  // 0 = free; 1/5/7 = grabbed, waiting for a move; 100 = swarms attached
 unsigned player();  // the live player object, or 0
+unsigned context_epoch();  // invalidates queued debug requests across native input/player resets
+// Game-thread only: current living player owns ordinary input, with no grapple/swarm takeover.
+bool debug_mutation_allowed(unsigned player);
 // Eye, target and up of the gameplay camera (physics/render space); false when it has not been
 // computed in the last 100 ms (cinematics, menus).
 bool camera(float eye[3], float target[3], float up[3]);  // current GameWorld (0 before gameplay)
