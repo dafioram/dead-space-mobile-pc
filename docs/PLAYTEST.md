@@ -185,8 +185,21 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   native movement restrictions, grapple/swarm/shake-off motion and physical key/
   stick tracking. No player physics/freeze-field writes or save changes. Both
   application builds and nine synthetic test suites pass on the themed branch;
-  live RIG/power-node and interactive regressions still need user confirmation.
+  the user now confirms the movement fix works, including the bench and a sewer
+  door unlocked with a power node. Natural grapple/swarm/scripted-motion
+  regressions remain outstanding; this is not exhaustive input validation.
   See `docs/MENU_MOVEMENT_HANDOFF.md`. Other issue #22 items remain separate.
+- Android-origin save compatibility: the user's four original save files use
+  SBIN v2, pass all chunk checksums and match the comparison port save's common
+  campaign/player/weapon/inventory/metadata/achievement field types. Android
+  settings omit the comparison set's inactive slot-2/slot-3 activation flags;
+  common types still match. Imported userdata files are byte-identical to those
+  originals. The supplied --no-save log loads chapter 2 (`01_gov_02`) successfully,
+  then uses a console level jump to the sewer (`03_water_01`) for menu tests and
+  shuts down normally. No shader failure or crash is logged; missing font/beam-
+  effect asset warnings remain separate. This confirms this Android save set,
+  not all APK variants/original assets, natural chapter progression, or a fix
+  for the other tester's chapter-2 crash. Save/log evidence is retained privately.
 - The user completed the campaign and successfully started New Game+ in the
   same save slot. Completion also unlocks Hard for fresh games in other slots;
   this is separate from the completed slot's New Game+ restart. Item-by-item
