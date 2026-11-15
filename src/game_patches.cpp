@@ -237,7 +237,7 @@ bool patch_layouts(sbin::Database& db) {
                 }
                 return s32(db.add_array(db.array_elem_type(size_t(arr)), db.array_struct(size_t(arr)), n, data));
             };
-            auto copy_button = [&](long source, const char* id, bool quit) {
+            auto copy_button = [&](long source, const char* id, bool quit, bool extras = false) {
                 size_t arr = entities(size_t(source));
                 u32 n = db.array_count(arr), kept = 0;
                 std::vector<u8> src(db.body(arr), db.body(arr) + size_t(n) * esize), out;
@@ -249,8 +249,8 @@ bool patch_layouts(sbin::Database& db) {
                     if (verts >= 0) put<s32>(e + o_verts, x_vertices(verts, bar.scale));
                     put<float>(e + o_width, get<float>(e + o_width) * bar.scale);
                     std::string child = db.string(get<u16>(e + o_lay));
-                    if (child == "UI_BUTTON_MAIN_OFF") put<u16>(e + o_lay, db.add_string("UI_BUTTON_MAIN_PORT_OFF"));
-                    if (child == "UI_BUTTON_MAIN_ON") put<u16>(e + o_lay, db.add_string("UI_BUTTON_MAIN_PORT_ON"));
+                    if (const char* replacement = menu_nav::main_menu_child_layout(child, extras))
+                        put<u16>(e + o_lay, db.add_string(replacement));
                     if (quit && name == "BTN_TEXT" && verts >= 0) {
                         put<u16>(e + o_name, db.add_string("TEXT_QUIT"));
                         put<u16>(e + o_type, db.add_string("TEXT"));
@@ -280,7 +280,12 @@ bool patch_layouts(sbin::Database& db) {
             copy_button(off, "UI_BUTTON_MAIN_PORT_OFF", false);
             copy_button(on, "UI_BUTTON_MAIN_PORT_ON", false);
             copy_button(button, "UI_BUTTON_MAIN_PORT", false);
-            s32 extras = copy_button(button, "UI_BUTTON_MAIN_PORT_EXTRAS", false);
+            // Extras has its own wrapper to carry Quit through the native fade.
+            // Give that wrapper independent mutable captions/icons too: sharing
+            // the other wrapper's children lets Extras overwrite Info's visuals.
+            copy_button(off, "UI_BUTTON_MAIN_PORT_EXTRAS_OFF", false);
+            copy_button(on, "UI_BUTTON_MAIN_PORT_EXTRAS_ON", false);
+            s32 extras = copy_button(button, "UI_BUTTON_MAIN_PORT_EXTRAS", false, true);
             copy_button(off, "UI_BUTTON_QUIT_BOTTOM", true);
             size_t arr = entities(size_t(menu));
             u32 m = db.array_count(arr);

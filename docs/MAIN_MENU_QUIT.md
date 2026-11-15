@@ -19,6 +19,12 @@ list, so adding an entry changes the sequence and can make Quit appear early.
 The prior registration hook is removed. There is no separate timer, copied alpha
 or change to the original buttons' animation sequence.
 
+Extras' copied wrapper also has independent OFF/ON child layouts. Sharing the
+other wrapper's mutable captions/icons could make the third button display
+Extras even though its native `BTN_INFO` action still opened Info. Only those
+visual child references are separated; labels still use the game's localisation,
+and button actions, placement, fonts and fade routing are unchanged.
+
 A real left mouse click now reaches the same Quit handler as generated taps
 from keyboard/controller navigation. That handler sends the same back key as
 Escape, opening the existing X/checkmark exit confirmation rather than exiting
@@ -27,7 +33,11 @@ a touch. Quit is exposed only when its artwork was added and all four original
 main-menu buttons are usable; it is not active under dialogs or in submenus.
 
 Asset-free tests cover placement, neighbour separation, wide-layout preservation,
-narrow layouts, child/hit-target agreement, icon centring, click boundaries and scaled coordinates. The user verifies visual
+narrow layouts, separate Info/Extras visual-child references, child/hit-target
+agreement, icon centring, click boundaries and scaled coordinates. An offline
+read-only asset probe also checks independent caption arrays in both visual
+states, preserved native action IDs and the existing Extras-owned Quit child at
+1280x720, 1920x1080 and 1024x768. The user verifies visual
 appearance, mouse activation and confirmation/cancellation during playtesting.
 The user confirmed the first build's appearance, and their private recording
 identified the unsynchronised transition timing addressed by the follow-up.

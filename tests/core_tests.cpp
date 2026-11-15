@@ -317,6 +317,20 @@ void test_floor_snap_recovery() {
 }
 
 void test_main_menu_bar() {
+    for (const char* state : {"UI_BUTTON_MAIN_OFF", "UI_BUTTON_MAIN_ON"}) {
+        const char* regular = menu_nav::main_menu_child_layout(state, false);
+        const char* extras = menu_nav::main_menu_child_layout(state, true);
+        require(regular && extras && std::string_view(regular) != extras,
+                "Extras must not reuse Info's mutable caption/icon child layouts in either visual state");
+        require(std::string_view(extras).find("_EXTRAS_") != std::string_view::npos,
+                "Extras must resolve to its separately registered visual children");
+    }
+    require(std::string_view(menu_nav::main_menu_child_layout("UI_BUTTON_MAIN_OFF", false)) == "UI_BUTTON_MAIN_PORT_OFF" &&
+                std::string_view(menu_nav::main_menu_child_layout("UI_BUTTON_MAIN_ON", false)) == "UI_BUTTON_MAIN_PORT_ON",
+            "regular Info/Play/Options visual references must remain unchanged");
+    require(!menu_nav::main_menu_child_layout("UI_UNRELATED", true) &&
+                !menu_nav::main_menu_child_layout("UI_UNRELATED", false),
+            "unrelated child layouts must not be redirected");
     for (float width : {480.0f, 512.0f, 568.8889f, 598.0f, 599.0f, 640.0f, 854.0f}) {
         auto bar = menu_nav::main_menu_bar(width);
         auto quit = bar.quit_rect(320);
