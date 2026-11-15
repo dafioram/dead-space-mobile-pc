@@ -850,8 +850,8 @@ vec4 vpos(vec2 t) {  // xyz = view-space position, w = view distance
 void main() {
     vec4 c = vpos(uv);
     float f = clamp(c.w / 64.0, 0.0, 1.0) * 255.0;
-    vec2 packed = vec2(floor(f) / 255.0, fract(f));
-    if (c.w > 60.0) { frag = vec4(1.0, packed, 1.0); return; }
+    vec2 packed_distance = vec2(floor(f) / 255.0, fract(f));
+    if (c.w > 60.0) { frag = vec4(1.0, packed_distance, 1.0); return; }
     vec3 p = c.xyz;
     vec3 xa = vpos(uv + vec2(u_px.x, 0.0)).xyz - p, xb = p - vpos(uv - vec2(u_px.x, 0.0)).xyz;
     vec3 ya = vpos(uv + vec2(0.0, u_px.y)).xyz - p, yb = p - vpos(uv - vec2(0.0, u_px.y)).xyz;
@@ -870,7 +870,7 @@ void main() {
         float vv = dot(v, v);
         sum += max(0.0, dot(v, n) - bias - 0.15 * sqrt(vv)) / (vv + 0.0001) * max(0.0, 1.0 - vv / r2);
     }
-    frag = vec4(clamp(1.0 - sum * u_radius * u_gain / float(u_n), 0.0, 1.0), packed, 1.0);
+    frag = vec4(clamp(1.0 - sum * u_radius * u_gain / float(u_n), 0.0, 1.0), packed_distance, 1.0);
 }
 )";
 // 9-tap blur that does not cross depth edges
