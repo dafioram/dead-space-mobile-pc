@@ -139,6 +139,16 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   layout units and left of the number, whose position is unchanged. Regression
   tests check the actual draw bounds and separation; revised appearance remains
   user-led and unconfirmed.
+- RIG credits follow-up `46f6117` supersedes that placement: the user found the
+  left icon too small/far away. It is now up to 56x28 units, six units right of
+  the unchanged number, matching the node counter's ordering. Its width is
+  limited to leave a gap before nodes; tests cover a narrower template too.
+- Exit crash remains open, separate from currency positioning: the user used
+  Escape -> Quit -> Yes during gameplay. The retained log/dump are consistent
+  with an invalid animation-track reference during native boss-scene teardown.
+  The dump's PE identity matches `5ba6add`, not the later executable on disk.
+  The underlying ownership failure is not diagnosed or fixed; no cleanup/error
+  suppression is included in these UI revisions. Private evidence is not in Git.
 - Other reported terminals and the original asset set still need validation.
 
 `.github/workflows/playtest-boundary.yml` fails if a PR from `playtest` targets
