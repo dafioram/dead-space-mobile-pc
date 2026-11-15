@@ -81,6 +81,12 @@ Commands are case-insensitive; spaces are accepted in place of underscores.
 | `/debug_vertexlight` | Cycle F5 painted-light view |
 | `/debug_off` | Reset those four debug views; not a reset for cheats or graphics settings |
 | `/give_all` | Give every weapon; can affect subsequently saved progress |
+| `/credits AMOUNT` | **Set**, never add, credits; integer 0–2,147,483,647 |
+| `/nodes AMOUNT` | **Set**, never add, power nodes; same integer bounds |
+| `/rich` | **Set** 500,000 credits and 200 nodes, even if current balances are higher |
+| `/rich CREDITS NODES` | Set both balances to explicit values; supply both or neither |
+| `/restore` | Restore the native suit health/stasis maxima and request the normal native oxygen refill |
+| `/enemies [RADIUS]` | Read-only nearest 10 native enemies, including dead/hidden ones; default 30 m, range 0.1–500 m |
 | `/god` | Toggle invulnerability; unsuitable for reproducing damage bugs |
 | `/bandana` | Toggle infinite ammo |
 | `/kill` | Kill the player using the normal death path |
@@ -93,6 +99,33 @@ Count defaults to 1. Spawn placement uses a simple ground-oriented arrangement;
 it is not a faithful way to reproduce a naturally scripted zero-G encounter.
 Weapon, health, spawn and level commands require an appropriate loaded game.
 They are existing developer tools, not guaranteed safe gameplay features.
+
+Resource examples: `/credits_500000`, `/nodes_200`, and `/rich_500000_200`
+are equivalent to their space-separated spellings. These are **set-to** commands:
+repeating them does not accumulate resources. `/credits` leaves nodes unchanged;
+`/nodes` leaves credits unchanged. Negative, malformed and out-of-range values
+are rejected rather than clamped. The upper bound is a debug safety limit, not
+a claim about the retail game's wallet cap.
+
+Resource changes and `/restore` require a current living player in ordinary
+gameplay, outside object menus, noninteractive scripts and grapple/swarm
+takeovers. Requests are applied on the game thread and discarded if the player,
+world or native input-reset generation changes before execution. They do not
+resurrect the player, unlock suits/weapons, cancel scripts, alter physics or
+change god/infinite-ammo mode. **Changes can autosave** to the active profile;
+use `--no-save` for temporary testing.
+
+`/restore` uses the actual suit maxima, not a fixed 100 health. Oxygen retains
+native eligibility and refill timing; the console reports whether refill started
+or was unavailable/not needed. It does not fabricate an instantly full oxygen
+bar or clear suffocation/death flags.
+
+`/enemies 30` measures three-dimensional distance and reports class, guest
+address, distance, native alive status and the hidden flag. Its summary counts
+all positioned native enemies within the radius and shows the nearest 10 so the
+console remains readable. It does not guess a universal enemy HP field, kill,
+damage, activate or remove anything. No enemy-kill command is added; the older
+experimental developer `kill_broken` helper remains unsafe and separate.
 
 ## Command-line diagnostics
 
