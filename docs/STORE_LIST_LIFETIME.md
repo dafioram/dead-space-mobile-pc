@@ -76,6 +76,12 @@ checks, not a natural route, an old/new deterministic crash comparison, a visual
 sign-off, or exhaustive controller, scroll, purchase or node-grid testing. All
 captures and logs remain private outside the checkout.
 
+The user subsequently played the combined `edfef88` build and reported that it
+was solid with no crashes. This confirms the store-entry fix for their normal
+playtest. It does not establish the cause of ChrisLynn94's separate softlock,
+resolve the animation-track exit crash, or substitute for every regression
+check below.
+
 ## Playtest checklist
 
 Use the combined `playtest` executable, with `--no-save --trace-input` and the
@@ -100,6 +106,6 @@ intended `--data` root. Do not overwrite assets or original profiles.
 Startup should log `menu navigation: native window draw snapshots and list
 lifetimes tracked`. Unsupported-site or invalid-native-snapshot warnings should
 be investigated, not dismissed as a successful fix. Retain any new failure's
-exact build identity, full log and dump privately. Until this checklist is
-confirmed, describe the change as a targeted lifetime fix/hardening, not a
-gameplay-confirmed resolution of issue #22.
+exact build identity, full log and dump privately. The user's confirmation is
+specific to the reproduced store-entry crash; do not describe it as a resolution
+of every item in issue #22.
