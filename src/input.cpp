@@ -457,14 +457,19 @@ int grab_state(u32 player) {
     return 0;
 }
 
-bool noninteractive_cinematic(u32 player) {
-    const bool cinematic = recent_cinematic(g_cinematic != 0, SDL_GetTicks(), g_cinematic_ms);
+bool tracked_cinematic_active() {
+    return recent_cinematic(g_cinematic != 0, SDL_GetTicks(), g_cinematic_ms);
+}
+
+bool noninteractive_sequence(u32 player) {
+    const bool cinematic = tracked_cinematic_active();
     if (!player) return cinematic;  // the opening fly-by can precede the player
     const int state = s32(mem::r32(player + 0x210));
-    if (!cinematic && state != 29) return false;
+    const u32 freeze = mem::r32(player + 0x1b4);
+    if (!cinematic && !scripted_player_sequence(state, freeze)) return false;
     const u32 hud = player == g_player ? g_hud.load() : 0;
     const int route = hud ? s32(mem::r32(hud + 0x2a4)) : -1;
-    return noninteractive_cinematic_input(cinematic, state, route, grab_state(player) != 0);
+    return noninteractive_scripted_input(cinematic, state, route, grab_state(player) != 0, freeze);
 }
 
 bool player_is_alive(u32 player) {
@@ -482,7 +487,7 @@ bool player_owns_input(u32 player) {
                                 int(mem::r32(player + 0x210)), mem::r32(player + 0x1b4))) return false;
     bool paused = (cpu::call(fn_is_paused, {hud}) & 0xff) || (cpu::call(fn_in_rig, {hud}) & 0xff) ||
                   (cpu::call(fn_in_pause_menu, {hud}) & 0xff);
-    return gameplay_input_allowed(true, player_is_alive(player), paused, noninteractive_cinematic(player), dialog_open());
+    return gameplay_input_allowed(true, player_is_alive(player), paused, noninteractive_sequence(player), dialog_open());
 }
 
 void on_input_reset(cpu::Ctx& c) {
@@ -744,8 +749,8 @@ void on_player_event(cpu::Ctx& c) {
     // Native onEvent plays the melee sound before startSlash checks permission.
     // Cover native/touch input too, not just actions queued by the port. Do not
     // filter grapple gestures, ordinary combat states or scripted animation events.
-    if (type == 1008 && mem::r32(ev + 8) == 14 && noninteractive_cinematic(c.reg(0))) {
-        if (g_trace) LOGI("[input] melee discarded during noninteractive cinematic");
+    if (type == 1008 && mem::r32(ev + 8) == 14 && noninteractive_sequence(c.reg(0))) {
+        if (g_trace) LOGI("[input] melee discarded during noninteractive scripted sequence");
         cpu::skip_function(c, 1);  // recognized/consumed, as native action 14 returns
         return;
     }
@@ -843,7 +848,7 @@ bool block_scripted_pointer() {
     if (!player || !hud || g_frames_without_player >= 10 || !player_is_alive(player) || dialog_open()) return false;
     if ((cpu::call(fn_is_paused, {hud}) & 0xff) || (cpu::call(fn_in_rig, {hud}) & 0xff) ||
         (cpu::call(fn_in_pause_menu, {hud}) & 0xff)) return false;
-    return noninteractive_cinematic(player) ||
+    return noninteractive_sequence(player) ||
            scripted_pointer_blocked(int(mem::r32(hud + 0x2a4)), int(mem::r32(player + 0x210)), mem::r32(player + 0x1b4));
 }
 
@@ -982,7 +987,7 @@ float free_look_yaw() { return g_free_yaw; }
 void set_interact_debug(bool on) { g_interact_debug = on; }
 bool interact_debug() { return g_interact_debug; }
 bool controls_active() { return g_mouse_captured; }
-bool blocks_gameplay_pointer() { return block_scripted_pointer() && noninteractive_cinematic(g_player); }
+bool blocks_gameplay_pointer() { return block_scripted_pointer() && noninteractive_sequence(g_player); }
 void press_back() { back_key(); }
 void begin_capture(int i) { g_capture = i; }
 bool capturing() { return g_capture >= 0; }
@@ -1355,7 +1360,8 @@ bool event(const SDL_Event& e, SDL_Window* win) {
     }
     // skip a playing cinematic
     const u32 current_player = g_frames_without_player < 10 ? g_player.load() : 0;
-    if (cinematic_playing() && fn_cine_transition && noninteractive_cinematic(current_player) &&
+    if (cinematic_playing() && fn_cine_transition &&
+        cinematic_skip_allowed(tracked_cinematic_active(), noninteractive_sequence(current_player)) &&
         ((e.type == SDL_KEYDOWN && !e.key.repeat &&
           (e.key.keysym.sym == SDLK_SPACE || e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER)) ||
          (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT))) {
