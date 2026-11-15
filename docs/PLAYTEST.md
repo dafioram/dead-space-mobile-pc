@@ -124,9 +124,16 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   on AMD Windows and Linux Mesa llvmpipe; both application builds and eight
   test suites pass. Normal-play visual confirmation remains user-led. This is
   not a confirmed stretched-geometry or suit-upgrade fix. RC3 remains unchanged.
-- Production main through RC3 (`9a0c461`) is integrated; PRs #16, #17 and #18
-  are merged, not pending. Other reported terminals and the original asset set
-  still need validation.
+- The user confirmed the shader switch works with this fix. PR #19 is merged;
+  production main through `44a8e40` is integrated, including the merged PRs #16,
+  #17 and #18.
+- `feat/rig-credits-display` / fork PR #20: add a read-only credits tile left of
+  the RIG node counter, reusing its styling and the existing credits icon. Read
+  the store's native wallet without adding an item, changing money or touching
+  on-disk assets. Synthetic layout tests and an offline private-copy layout check
+  pass; live wallet, appearance and navigation confirmation remain user-led.
+  See `docs/RIG_CREDITS.md`. RC3 remains unchanged.
+- Other reported terminals and the original asset set still need validation.
 
 `.github/workflows/playtest-boundary.yml` fails if a PR from `playtest` targets
 `main`. This is an additional warning, not a substitute for repository branch
