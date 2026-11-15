@@ -80,6 +80,15 @@ inline bool queued_gameplay_input_allowed(bool owned, std::uint32_t queued_epoch
     return owned && queued_epoch == current_epoch;
 }
 
+inline bool movement_release_allowed(bool current_player, bool alive, bool can_change_position,
+                                     int player_state, int hud_route, bool grabbed) {
+    // Menu/object ownership denies new movement, not cancellation of our old
+    // movement. Grapple/swarm/shake-off and native freezes still own their motion.
+    return current_player && alive && can_change_position && !grabbed &&
+           hud_route != int(HudInputRoute::grapple) &&
+           player_state != 9 && player_state != 10 && player_state != 12;
+}
+
 inline bool free_look_input_allowed(bool owned, bool can_change_facing) {
     return owned && can_change_facing;
 }
