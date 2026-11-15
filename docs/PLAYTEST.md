@@ -168,6 +168,13 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   input, so route 2 alone does not exempt a live movie or explicit tram/generic/
   collection animation. This protects interactive ownership without reopening
   movie clicks; synthetic tests cover both sides of that boundary.
+- The user confirmed the extended scripted-input fix works. This does not imply
+  exhaustive natural grapple/swarm/shake-off regression coverage.
+- The user completed the campaign and successfully started New Game+ in the
+  same save slot. Completion also unlocks Hard for fresh games in other slots;
+  this is separate from the completed slot's New Game+ restart. Item-by-item
+  carry-over, later NG+ progression and relaunch persistence were not separately
+  reported as checked.
 - Exit crash remains open, separate from currency positioning: the user used
   Escape -> Quit -> Yes during gameplay. The retained log/dump are consistent
   with an invalid animation-track reference during native boss-scene teardown.
