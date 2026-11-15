@@ -73,29 +73,49 @@ bool patch_layout(sbin::Database& db) {
                           db.array_elem_type(size_t(a)), db.array_struct(size_t(a)), n, step});
     }
 
-    // Put a wider, noninteractive tile immediately left of the nodes. Both are
-    // children of NODES, so the native RIG visibility and fade apply to both.
-    // Ten decimal digits fit without truncating the unsigned 32-bit wallet.
+    // Keep the accepted amount position, but put a small currency icon on its
+    // left. Reserve space for ten digits and keep the tile clear of the nodes.
     constexpr float panel_shift = -160.0f, panel_width = 150.0f;
+    constexpr float icon_width = 36.0f, icon_height = 14.0f, amount_width = 80.0f, gap = 8.0f;
     const char* names[] = {"PORT_CREDIT_BACKGROUND", "PORT_CREDIT_ICON", "PORT_CREDIT_AMOUNT"};
     const float node_width = read<float>(background.data() + width);
+    const float amount_dx = panel_shift + panel_width - node_width - gap;
+    const float amount_right = read<float>(copies[2].points.data() + x) + amount_dx;
+    const float icon_left = amount_right - amount_width - gap - icon_width;
+    const float panel_left = icon_left - gap;
+    const float panel_right = read<float>(copies[0].points.data() + x) + panel_shift + panel_width;
+    const float panel_top = read<float>(copies[0].points.data() + y);
+    const float panel_height = read<float>(background.data() + height);
     for (size_t i = 0; i < copies.size(); ++i) {
         auto& copy = copies[i];
         auto* e = copy.entity.data();
         write<uint16_t>(e + name, db.add_string(names[i]));
-        float dx = panel_shift;
-        if (i == 0) write<float>(e + width, panel_width);
-        if (i == 1) {
-            dx += panel_width - node_width;
-            write<uint16_t>(e + image, db.add_string("items/item_credit.tif"));
-        }
         if (i == 2) {
-            dx += panel_width - node_width - 8.0f;
             write<uint16_t>(e + align, db.add_string("RIGHT|TOP"));
-        }
-        for (uint32_t p = 0; p < copy.count; ++p) {
-            auto* v = copy.points.data() + size_t(p) * copy.stride;
-            write<float>(v + x, read<float>(v + x) + dx);
+            for (uint32_t p = 0; p < copy.count; ++p) {
+                auto* v = copy.points.data() + size_t(p) * copy.stride;
+                write<float>(v + x, read<float>(v + x) + amount_dx);
+            }
+        } else {
+            // IMAGE calls drawImage(image, x, y): its XML width/height are not
+            // draw bounds. STRETCH calls the sized overload, using two vertices.
+            // Otherwise the large store/pickup credits texture covers the nodes.
+            write<uint16_t>(e + type, db.add_string("STRETCH"));
+            write<float>(e + width, 0.0f);
+            write<float>(e + height, 0.0f);
+            if (i == 1) write<uint16_t>(e + image, db.add_string("items/item_credit.tif"));
+            const std::vector<uint8_t> point(copy.points.begin(), copy.points.begin() + copy.stride);
+            copy.points = point;
+            copy.points.insert(copy.points.end(), point.begin(), point.end());
+            copy.count = 2;
+            const float left = i == 0 ? panel_left : icon_left;
+            const float top = i == 0 ? panel_top : panel_top + (panel_height - icon_height) * 0.5f;
+            const float w = i == 0 ? panel_right - panel_left : icon_width;
+            const float h = i == 0 ? panel_height : icon_height;
+            write<float>(copy.points.data() + x, left);
+            write<float>(copy.points.data() + y, top);
+            write<float>(copy.points.data() + copy.stride + x, left + w);
+            write<float>(copy.points.data() + copy.stride + y, top + h);
         }
         const auto added = db.add_array(copy.element_type, copy.structure, copy.count, copy.points);
         write<int32_t>(e + vertices, int32_t(added));
