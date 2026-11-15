@@ -13,6 +13,7 @@
 #include "log.h"
 #include "menu_geometry.h"
 #include "menu_widget_safety.h"
+#include "menu_window_cache.h"
 
 namespace menu_nav {
 
@@ -24,14 +25,19 @@ namespace {
 // menu), its sub-layout's visibility and the screen bounds (off-screen options pages).
 struct Seen {
     u64 frame;
-    u32 window;  // ScrollingWindow whose content the button is (0 = none)
+    WindowRef window;  // lifetime of the window whose content the button is
 };
 std::map<u32, Seen> g_seen;  // button -> last update
 // ScrollingWindow::onEvent calls in progress (main thread): the window and the caller's return
 // address, restored by the return stub. Buttons updated inside belong to that window's content.
-std::vector<std::pair<u32, u32>> g_windows;
+struct WindowCall {
+    WindowRef window;
+    u32 caller;
+};
+std::vector<WindowCall> g_windows, g_drawing_windows;
+WindowCache g_window_views;
 u32 g_return_stub = 0;
-u32 fn_window_rect = 0;
+u32 g_draw_return_stub = 0;
 u64 g_frame = 1;
 u32 fn_rect = 0;
 int g_screen_w = 1, g_screen_h = 1;
@@ -46,7 +52,7 @@ std::function<void()> g_quit;
 
 void on_button_event(cpu::Ctx& c) {
     u32 ev = c.reg(1);
-    if (mem::r32(ev + 4) == 10) g_seen[c.reg(0)] = {g_frame, g_windows.empty() ? 0 : g_windows.back().first};
+    if (mem::r32(ev + 4) == 10) g_seen[c.reg(0)] = {g_frame, g_windows.empty() ? WindowRef{} : g_windows.back().window};
 }
 void on_button_destroyed(cpu::Ctx& c) {
     u32 button = c.reg(0);
@@ -63,27 +69,25 @@ struct WidgetMemory {
     u8 read8(u32 address) const { return mem::r8(address); }
 };
 void on_window_event(cpu::Ctx& c) {
-    if (g_windows.size() > 16) return;  // runaway (should not happen)
-    g_windows.push_back({c.reg(0), c.lr()});
+    g_windows.push_back({g_window_views.observe(c.reg(0), g_frame), c.lr()});
     c.set_reg(14, g_return_stub);  // the window's onEvent returns through on_window_return
 }
 void on_window_return(cpu::Ctx& c) {
     if (g_windows.empty()) return;
-    c.set_reg(14, g_windows.back().second);  // the stub's BX LR continues at the real caller
+    c.set_reg(14, g_windows.back().caller);  // the stub's BX LR continues at the real caller
     g_windows.pop_back();
 }
 // Content offset and visible area of a ScrollingWindow, in layout units: a touch at screen x
 // reaches content at x - rect.x - scroll (ScrollingWindow::onEvent)
-bool window_view(u32 win, float& ox, float& oy, float r[4]) {
-    static u32 buf = mem::heap_alloc(16, 8);
-    if (!fn_window_rect || mem::r32(win) < 0x10000) return false;
-    cpu::call(fn_window_rect, {buf, win});
-    std::memcpy(r, mem::host(buf), 16);  // float x, y, w, h
+bool window_view(WindowRef owner, float& ox, float& oy, float r[4]) {
+    const auto* view = g_window_views.find(owner, g_frame);
+    if (!view) return false;
+    std::copy(view->rect.begin(), view->rect.end(), r);
     // window layouts sit in a 480-unit frame centred on the (wider) screen
     float k = std::min(g_screen_w / 480.0f, g_screen_h / 320.0f), margin = (g_screen_w / k - 480.0f) * 0.5f;
     r[0] += margin;
-    ox = r[0] + float(s32(mem::r32(win + 0x9c)));
-    s32 sy = s32(mem::r32(win + 0xa0));  // vertical scroll (INT_MIN-like in horizontal-only windows)
+    ox = r[0] + float(view->scroll_x);
+    s32 sy = view->scroll_y;  // INT_MIN-like in horizontal-only windows
     oy = r[1] + float(sy > -100000 && sy < 100000 ? sy : 0);
     return true;
 }
@@ -93,27 +97,74 @@ bool window_view(u32 win, float& ox, float& oy, float r[4]) {
 // tapped like a button.
 struct Item {
     u64 frame;
+    WindowRef window;
     float x, y, pw, ph;  // where it was drawn; width and height of its panel
     bool across;         // laid out side by side (bench)
 };
 std::map<u32, Item> g_items;
-u32 g_item_window = 0;  // the ScrollingWindow showing them
 void note_item(cpu::Ctx& c, bool across) {
+    // A draw, not the most recent panel event, establishes the item's owner.
+    // A new store can draw before its panel has received its first event.
+    if (g_drawing_windows.empty()) return;
+    WindowRef owner = g_drawing_windows.back().window;
+    const auto* view = g_window_views.find(owner, g_frame);
+    if (!view || view->frame != g_frame) return;
     float v[4];
     const u32 bits[4] = {c.reg(3), mem::r32(c.reg(13)), mem::r32(c.reg(13) + 4), mem::r32(c.reg(13) + 8)};
     std::memcpy(v, bits, 16);
-    g_items[c.reg(0)] = {g_frame, v[0], v[1], v[2], v[3], across};
+    for (float value : v)
+        if (!std::isfinite(value)) return;
+    g_items[c.reg(0)] = {g_frame, owner, v[0], v[1], v[2], v[3], across};
 }
 void on_store_item_draw(cpu::Ctx& c) { note_item(c, false); }
 void on_bench_item_draw(cpu::Ctx& c) { note_item(c, true); }
-void on_panel_event(cpu::Ctx&) {
-    if (!g_windows.empty()) g_item_window = g_windows.back().first;
+void on_window_draw(cpu::Ctx& c) {
+    g_drawing_windows.push_back({g_window_views.observe(c.reg(0), g_frame), c.lr()});
+    c.set_reg(14, g_draw_return_stub);
+}
+void on_window_draw_return(cpu::Ctx& c) {
+    if (g_drawing_windows.empty()) return;
+    c.set_reg(14, g_drawing_windows.back().caller);
+    g_drawing_windows.pop_back();
+}
+void on_window_clip(cpu::Ctx& c) {
+    // Checked site in ScrollingWindow::draw, after native getWindowRect and
+    // alignment, immediately before setClip. Copy its real result while alive.
+    if (g_drawing_windows.empty() || g_drawing_windows.back().window.address != c.reg(5)) return;
+    WindowView view;
+    view.owner = g_drawing_windows.back().window;
+    view.frame = g_frame;
+    std::memcpy(view.rect.data(), mem::host(c.reg(6)), 16);
+    u32 win = view.owner.address;
+    view.scroll_x = s32(mem::r32(win + 0x9c));
+    view.scroll_y = s32(mem::r32(win + 0xa0));
+    view.panel = mem::r32(win + 0x7c);
+    view.vtable = mem::r32(win);
+    if (!g_window_views.capture(view)) LOGW("menu navigation: invalid native window draw snapshot %08x", win);
+}
+void on_item_destroyed(cpu::Ctx& c) {
+    g_items.erase(c.reg(0));
+    if (g_focus == c.reg(0)) g_focus = 0;
+}
+void on_window_destroyed(cpu::Ctx& c) {
+    u32 win = c.reg(0);
+    g_window_views.retire(win);
+    for (auto it = g_items.begin(); it != g_items.end();)
+        if (it->second.window.address == win) {
+            if (g_focus == it->first) g_focus = 0;
+            it = g_items.erase(it);
+        } else ++it;
+    for (auto it = g_seen.begin(); it != g_seen.end();)
+        if (it->second.window.address == win) {
+            if (g_focus == it->first) g_focus = 0;
+            it = g_seen.erase(it);
+        } else ++it;
 }
 // Size of an entry: its panel's extent across the list, the distance to the next entry along it
 void item_size(const Item& it, float& w, float& h) {
     float pitch = 1e9f;
     for (auto& [o, other] : g_items) {
-        if (other.frame + 1 < g_frame || other.across != it.across) continue;
+        if (other.frame + 1 < g_frame || other.window != it.window || other.across != it.across) continue;
         float d = std::fabs(it.across ? other.x - it.x : other.y - it.y);
         if (d > 1.0f) pitch = std::min(pitch, d);
     }
@@ -122,17 +173,16 @@ void item_size(const Item& it, float& w, float& h) {
     h = it.across ? it.ph : pitch;
 }
 // The part of the screen the list's window shows, in the same units
-bool item_view(float r[4]) {
-    static u32 buf = mem::heap_alloc(16, 8);
-    if (!g_item_window || !fn_window_rect || mem::r32(g_item_window) < 0x10000) return false;
-    cpu::call(fn_window_rect, {buf, g_item_window});
-    std::memcpy(r, mem::host(buf), 16);
+bool item_view(const Item& item, float r[4]) {
+    const auto* view = g_window_views.find(item.window, g_frame);
+    if (!view || view->frame != item.frame) return false;
+    std::copy(view->rect.begin(), view->rect.end(), r);
     return r[2] > 1.0f && r[3] > 1.0f;
 }
 // 1 when all of the entry is in view, 0 when it is cut off or scrolled out
 bool item_in_view(const Item& it) {
     float r[4], w, h;
-    if (!item_view(r)) return true;
+    if (!item_view(it, r)) return false;  // no owner/geometry yet, not an unclipped list
     item_size(it, w, h);
     return it.across ? it.x > r[0] - 3 && it.x + w < r[0] + r[2] + 3 : it.y > r[1] - 3 && it.y + h < r[1] + r[3] + 3;
 }
@@ -171,7 +221,7 @@ std::vector<Button> all_buttons() {
         cpu::call(fn_rect, {rect, b});
         float r[4];
         std::memcpy(r, mem::host(rect), 16);
-        if (seen.window) {
+        if (seen.window.address) {
             float ox, oy, w[4];
             if (!window_view(seen.window, ox, oy, w)) continue;
             r[0] += ox;
@@ -180,7 +230,7 @@ std::vector<Button> all_buttons() {
             float cx = r[0] + r[2] * 0.5f, cy = r[1] + r[3] * 0.5f;
             if (cx < w[0] || cx > w[0] + w[2] || cy < w[1] || cy > w[1] + w[3]) continue;
         }
-        out.push_back({b, wname(b + 0x10), int(r[0] * k), int(r[1] * k), int(r[2] * k), int(r[3] * k), seen.window != 0});
+        out.push_back({b, wname(b + 0x10), int(r[0] * k), int(r[1] * k), int(r[2] * k), int(r[3] * k), seen.window.address != 0});
     }
     for (auto& [o, it] : g_items) {
         if (it.frame + 1 < g_frame || !item_in_view(it)) continue;
@@ -200,7 +250,7 @@ u32 next_item(u32 from, int dir) {
     u32 best = 0;
     float bd = 1e9f;
     for (auto& [o, it] : g_items) {
-        if (it.frame + 1 < g_frame || it.across != f->second.across) continue;
+        if (it.frame + 1 < g_frame || it.window != f->second.window || it.across != f->second.across) continue;
         float d = (it.across ? it.x - f->second.x : it.y - f->second.y) * float(dir);
         if (d > 1.0f && d < bd) bd = d, best = o;
     }
@@ -208,17 +258,30 @@ u32 next_item(u32 from, int dir) {
 }
 // Scrolls the list so that the entry is in view (it is drawn there from the next frame on)
 void scroll_to_item(u32 obj) {
-    Item& it = g_items[obj];
+    auto found = g_items.find(obj);
+    if (found == g_items.end()) return;
+    Item& it = found->second;
     float r[4], w, h;
-    if (!item_view(r)) return;
+    if (!item_view(it, r)) return;
+    const auto* view = g_window_views.find(it.window, g_frame);
+    WidgetMemory memory;
+    u32 win = it.window.address;
+    // Scrolling still uses the native live window. Mapping alone is not enough:
+    // require its tracked generation, current draw, vtable and panel identity.
+    if (!view || !memory.readable(win, 0xa4) || mem::r32(win) != view->vtable ||
+        mem::r32(win + 0x7c) != view->panel) return;
     item_size(it, w, h);
     float lo = it.across ? r[0] : r[1], hi = lo + (it.across ? r[2] : r[3]), at = it.across ? it.x : it.y, len = it.across ? w : h;
     float d = at < lo ? lo - at : at + len > hi ? hi - (at + len) : 0.0f;
     if (d == 0.0f) return;
-    const u32 field = g_item_window + (it.across ? 0x9c : 0xa0);
-    mem::w32(field, u32(s32(mem::r32(field)) + s32(std::lround(d))));
+    const u32 field = win + (it.across ? 0x9c : 0xa0);
+    s32 scroll = s32(mem::r32(field)) + s32(std::lround(d));
+    mem::w32(field, u32(scroll));
+    WindowView moved = *view;
+    (it.across ? moved.scroll_x : moved.scroll_y) = scroll;
+    g_window_views.capture(moved);
     for (auto& [o, other] : g_items)  // (so that the highlight and the tap are right at once)
-        if (other.across == it.across) (it.across ? other.x : other.y) += d;
+        if (other.window == it.window && other.across == it.across) (it.across ? other.x : other.y) += d;
 }
 
 // Buttons the player can use right now
@@ -324,6 +387,49 @@ void set_focus(const Button* b) {
     if (moved && b->item && g_tap && mem::r32(b->obj + 0x64) != 4) g_tap(g_fx, g_fy);
 }
 
+void install_window_tracking(const std::string& draw) {
+    // Store/bench destructors inline ScrollingWindow cleanup. The base hooks
+    // alone would miss them. Retire before any geometry/item references go away.
+    const struct {
+        const char* symbol;
+        u32 image_offset, hook_offset, first, second;
+        cpu::HleFn handler;
+    } hooks[] = {
+        {"_ZN15ScrollingWindowD1Ev", 0xe2274, 0x10, 0xe2843b02, 0xe480307c, on_window_destroyed},
+        {"_ZN15ScrollingWindowD2Ev", 0xe23e8, 0x10, 0xe2843b02, 0xe480307c, on_window_destroyed},
+        {"_ZN11StoreWindowD1Ev", 0xa6b30, 0x0c, 0xe2833040, 0xe1a04000, on_window_destroyed},
+        {"_ZN11BenchWindowD1Ev", 0x93220, 0x14, 0xe7953003, 0xe2833008, on_window_destroyed},
+        {"_ZN11BenchWindowD0Ev", 0x93ae8, 0x14, 0xe7953003, 0xe2833008, on_window_destroyed},
+        {"_ZN9StoreItemD1Ev", 0xa730c, 0x0c, 0xe28330e8, 0xe1a04000, on_item_destroyed},
+        {"_ZN9BenchItemD1Ev", 0x93d60, 0x0c, 0xe28330b8, 0xe1a04000, on_item_destroyed},
+    };
+    u32 method = elf::find(("_ZN15ScrollingWindow" + draw).c_str());
+    u32 clip = method + 0x50;
+    bool valid = method == mem::ELF_BASE + 0xdbac4 && mem::r32(method) == 0xe92d40f0 &&
+                 mem::r32(method + 4) == 0xe24dd024 && mem::r32(clip) == 0xe1a01006 && mem::r32(clip + 4) == 0xe1a00004;
+    for (const auto& hook : hooks) {
+        u32 function = elf::find(hook.symbol), site = function + hook.hook_offset;
+        valid = valid && function == mem::ELF_BASE + hook.image_offset &&
+                mem::r32(site) == hook.first && mem::r32(site + 4) == hook.second;
+    }
+    if (!valid) {
+        LOGW("menu navigation: window lifetime/draw sites unsupported; scrolling navigation unavailable");
+        return;
+    }
+    for (const auto& hook : hooks)
+        if (!cpu::hook_entry(mem::ELF_BASE + hook.image_offset + hook.hook_offset, hook.symbol, hook.handler)) {
+            LOGW("menu navigation: cannot install window/item lifetime hook %s", hook.symbol);
+            return;
+        }
+    g_draw_return_stub = cpu::register_hle("ScrollingWindow::draw return", on_window_draw_return);
+    if (!cpu::hook_entry(clip, "ScrollingWindow native clip", on_window_clip) ||
+        !cpu::hook_entry(method, "ScrollingWindow::draw", on_window_draw)) {
+        LOGW("menu navigation: cannot capture native scrolling-window draws");
+        return;
+    }
+    LOGI("menu navigation: native window draw snapshots and list lifetimes tracked");
+}
+
 }  // namespace
 
 void install() {
@@ -351,15 +457,13 @@ void install() {
             mem::r32(site + 4) != hook.second || !cpu::hook_entry(site, hook.symbol, on_button_destroyed))
             LOGW("menu navigation: cannot track button destruction via %s", hook.symbol);
     }
-    fn_window_rect = elf::find("_ZN15ScrollingWindow13getWindowRectEv");
     u32 wev = elf::find("_ZN15ScrollingWindow7onEventERKN2im5EventE");
     g_return_stub = cpu::register_hle("ScrollingWindow::onEvent return", on_window_return);
     if (wev) cpu::hook_entry(wev, "ScrollingWindow::onEvent", on_window_event);
     const std::string draw = "4drawERN2im14SpriteGraphicsERN5eastl10shared_ptrINS0_11TexturePackENS3_9allocatorENS3_17smart_ptr_deleterIS5_EEEEffff";
+    install_window_tracking(draw);
     if (u32 f = elf::find(("_ZN9StoreItem" + draw).c_str())) cpu::hook_entry(f, "StoreItem::draw", on_store_item_draw);
     if (u32 f = elf::find(("_ZN9BenchItem" + draw).c_str())) cpu::hook_entry(f, "BenchItem::draw", on_bench_item_draw);
-    for (const char* sym : {"_ZN10StorePanel7onEventERKN2im5EventE", "_ZN10BenchPanel7onEventERKN2im5EventE"})
-        if (u32 f = elf::find(sym)) cpu::hook_entry(f, "list panel onEvent", on_panel_event);
 }
 
 void set_tap(std::function<void(float, float)> tap) { g_tap = std::move(tap); }
@@ -471,9 +575,11 @@ void frame(bool gameplay_active) {
     g_screen_w = g_config.screen_w;
     g_screen_h = g_config.screen_h;
     g_frame++;
+    g_window_views.prune(g_frame);
     for (auto it = g_seen.begin(); it != g_seen.end();)
         it = it->second.frame + 2 < g_frame ? g_seen.erase(it) : std::next(it);
     g_windows.clear();  // (between game frames nothing is in progress)
+    g_drawing_windows.clear();
     for (auto it = g_items.begin(); it != g_items.end();)
         it = it->second.frame + 2 < g_frame ? g_items.erase(it) : std::next(it);
     if (gameplay_active || !g_keyboard) return;
