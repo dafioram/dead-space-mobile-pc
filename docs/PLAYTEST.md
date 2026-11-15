@@ -214,6 +214,11 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   exit crash is fixed. See `docs/STORE_LIST_LIFETIME.md`. Production main through
   `7598c4c` (including merged PR #25) is now integrated; no iOS-import work is
   included and no release tag is changed.
+- Store-entry follow-up: the user played combined `edfef88` and confirmed it
+  was solid with no crashes. The reproduced store-entry crash is user-confirmed
+  fixed; ChrisLynn94's original softlock and the independent exit crash remain
+  separate. This confirmation does not cover every purchase/controller/grid
+  regression scenario.
 - Android-origin save compatibility: the user's four original save files use
   SBIN v2, pass all chunk checksums and match the comparison port save's common
   campaign/player/weapon/inventory/metadata/achievement field types. Android
