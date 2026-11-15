@@ -143,6 +143,17 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   left icon too small/far away. It is now up to 56x28 units, six units right of
   the unchanged number, matching the node counter's ordering. Its width is
   limited to leave a gap before nodes; tests cover a narrower template too.
+- The user confirmed that final currency layout is perfect on Windows only.
+  Linux visual validation remains outstanding; currency geometry is unchanged.
+- `fix/noninteractive-cinematic-input` / fork PR #21: treat fresh camera
+  cinematics and native generic-animation state 29 as noninteractive, while
+  explicitly exempting grapple routing/phases and swarms. Drop queued/fallback
+  player input and filter native melee action events before their feedback
+  audio; cancel a pre-existing mouse touch so it cannot span the cutscene.
+  Preserve normal fighting, menu routing and existing cinematic skip, without
+  stealing grapple input as a skip. Expanded synthetic policies and both builds
+  pass; actual movie audio and grapple/QTE regression checks remain user-led.
+  See `docs/NONINTERACTIVE_CINEMATICS.md`. No quit-crash fix is implied.
 - Exit crash remains open, separate from currency positioning: the user used
   Escape -> Quit -> Yes during gameplay. The retained log/dump are consistent
   with an invalid animation-track reference during native boss-scene teardown.
