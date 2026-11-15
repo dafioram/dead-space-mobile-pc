@@ -38,6 +38,9 @@ void release_all();
 // True while gameplay controls are active (mouse captured; not in a menu).
 void press_back();  // the Android back key: goes back in menus; on the main menu, asks whether to exit
 bool controls_active();
+// Native mouse-as-touch gestures must not span a noninteractive cinematic.
+// Menus and interactive grapple/swarm sequences are excluded.
+bool blocks_gameplay_pointer();
 
 // ---- rebindable controls (used by the Options menu)
 // An input code is an SDL scancode (1..511) or kMouseCode + SDL mouse button.

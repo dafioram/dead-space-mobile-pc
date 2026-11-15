@@ -506,6 +506,39 @@ void test_scripted_input_ownership() {
     require(!input::queued_gameplay_input_allowed(true, 0xffffffffu, 0), "epoch wrap must not accept an old event");
 }
 
+void test_noninteractive_cinematic_input() {
+    using input::HudInputRoute;
+    for (bool cinematic : {false, true})
+        for (bool grabbed : {false, true})
+            for (int route = 0; route < 4; ++route)
+                for (int state = 0; state < 32; ++state) {
+                    const bool blocked = input::noninteractive_cinematic_input(cinematic, state, route, grabbed);
+                    const bool expected = !grabbed && route != int(HudInputRoute::grapple) && (cinematic || state == 29);
+                    require(blocked == expected, "only noninteractive cinematics/generic animation block input");
+                    if (grabbed || route == int(HudInputRoute::grapple))
+                        require(!blocked, "grapples, swarm taps and between-phase grapple routing must stay interactive");
+                }
+    require(input::noninteractive_cinematic_input(false, 29, int(HudInputRoute::player), false),
+            "Cinematic2 generic animation must block even without a GameObjectCinematic update");
+    require(input::noninteractive_cinematic_input(false, 29, int(HudInputRoute::object), false),
+            "noninteractive animation must not become mobile touch input through an object-owned route");
+    for (int combat_state : {0, 4, 6, 9, 10, 11, 18, 25})
+        require(!input::noninteractive_cinematic_input(false, combat_state, int(HudInputRoute::player), false),
+                "ordinary melee, aiming, combat, zero-G and kinesis must not be classified as a cutscene");
+    require(input::recent_cinematic(true, 100, 100), "a native update is visible before the next host frame");
+    require(input::recent_cinematic(true, 299, 100), "recent camera-only cinematics retain ownership");
+    require(!input::recent_cinematic(true, 300, 100), "stale cinematic signal expires");
+    require(!input::recent_cinematic(false, 100, 100), "a finished cinematic cannot retain control");
+    require(input::recent_cinematic(true, 20, 0xfffffff0u), "cinematic expiry handles tick wrap");
+
+    // A queued click before generic animation must be discarded, not delivered
+    // after the cutscene. The existing reset epoch still handles restoration.
+    const bool blocked = input::noninteractive_cinematic_input(false, 29, 0, false);
+    require(!input::queued_gameplay_input_allowed(!blocked, 5, 5), "queued gameplay cannot enter a generic cutscene");
+    require(!input::queued_gameplay_input_allowed(true, 5, 6), "old clicks cannot replay after a native reset");
+    require(input::queued_gameplay_input_allowed(true, 6, 6), "fresh input resumes after the cutscene");
+}
+
 }  // namespace
 
 int main() {
@@ -521,6 +554,7 @@ int main() {
         test_main_menu_bar();
         test_death_input_ownership();
         test_scripted_input_ownership();
+        test_noninteractive_cinematic_input();
         test_menu_widget_safety();
         std::cout << "Asset-file, settings, geometry, widget safety, input ownership and floor-snap policy checks passed.\n";
         return 0;

@@ -11,6 +11,18 @@ inline bool gameplay_input_allowed(bool current_player, bool alive, bool paused,
 
 // Names describe the recovered behaviour, not original enum spellings.
 enum class HudInputRoute { player = 0, grapple = 1, object = 2, hidden = 3 };
+
+inline bool recent_cinematic(bool present, std::uint32_t now, std::uint32_t updated) {
+    return present && now - updated < 200;
+}
+
+inline bool noninteractive_cinematic_input(bool cinematic, int player_state, int hud_route, bool grabbed) {
+    // doGenericAnim selects state 29, including GameObjectCinematic2 sequences.
+    // Grapple/swarm gestures are interactive even if an animation/camera signal
+    // still says cinematic, or the native grapple route is between phases.
+    return !grabbed && hud_route != int(HudInputRoute::grapple) && (cinematic || player_state == 29);
+}
+
 inline bool hud_routes_player_input(int route, bool hidden_passthrough) {
     return route == int(HudInputRoute::player) || route == int(HudInputRoute::grapple) ||
            (route == int(HudInputRoute::hidden) && hidden_passthrough);
