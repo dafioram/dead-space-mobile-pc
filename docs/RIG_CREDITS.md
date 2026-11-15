@@ -35,7 +35,9 @@ change. Original assets are not rewritten: the layout is augmented in memory.
 The user confirmed the first build's balance, but reported an oversized currency
 texture covering the node counter. The first bounded-image revision was too
 small and too far left. The current revision enlarges it and puts it immediately
-right of the unchanged number; its appearance needs another check.
+right of the unchanged number. The user confirmed this final layout is perfect
+on Windows.
+Linux appearance remains untested; automated Linux builds are not visual proof.
 
 Synthetic `rig_credits` tests cover schema/template rejection without mutation,
 preservation of the original entities, matching font/colour/anchors, the separate
@@ -44,7 +46,7 @@ preserved amount position, noninteractive entity types, left-of-nodes placement,
 idempotency and SBIN round-tripping. An offline private-copy check also applied the patch to
 the supplied layouts without launching the game or changing the original asset.
 
-Visual and live-wallet confirmation remain user-led. With `--no-save`, check:
+Further live-wallet/platform confirmation remains user-led. With `--no-save`, check:
 
 1. Open Tab: the credits tile and nodes are readable, aligned and do not overlap.
 2. Close/reopen the RIG and enter/exit pause/options; no stale tile remains in
