@@ -73,6 +73,11 @@ boss/corpse inspection, long lists, controller use or all script/grapple
 boundaries. Those remain user-led checks. No save/load reliability or scene-cache
 fix is implied by this smoke test.
 
+Subsequent user confirmation: `/restore` refills oxygen to full as desired.
+That confirms the user's tested oxygen case, not every suit/module or native
+eligibility state. All further interactive playtesting is reserved for the user;
+the agent should build/run synthetic checks without launching or driving gameplay.
+
 Live checks should use a disposable profile:
 
 1. Set credits and nodes individually, checking RIG/store/bench values. Run
