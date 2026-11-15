@@ -117,9 +117,16 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   allowlisted in portable packages, and this diagnostic build also lists
   `--trace-grapple` in help. Source snapshots/links and cleanup limits are
   documented in the guide.
-- The Mesa shader fix remains unresolved (waiting for the upstream contributor).
-  Other reported terminals
-  and the original asset set still need validation.
+- `fix/glsl-reserved-identifier` / fork PR #19: rename the AO shader's reserved
+  GLSL local `packed` to `packed_distance`, without changing its math. The
+  original compile failure was reproduced on AMD Windows OpenGL. All nine
+  embedded shaders now compile and the scene/six post-processing programs link
+  on AMD Windows and Linux Mesa llvmpipe; both application builds and eight
+  test suites pass. Normal-play visual confirmation remains user-led. This is
+  not a confirmed stretched-geometry or suit-upgrade fix. RC3 remains unchanged.
+- Production main through RC3 (`9a0c461`) is integrated; PRs #16, #17 and #18
+  are merged, not pending. Other reported terminals and the original asset set
+  still need validation.
 
 `.github/workflows/playtest-boundary.yml` fails if a PR from `playtest` targets
 `main`. This is an additional warning, not a substitute for repository branch
