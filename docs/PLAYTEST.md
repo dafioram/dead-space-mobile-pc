@@ -133,6 +133,12 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   on-disk assets. Synthetic layout tests and an offline private-copy layout check
   pass; live wallet, appearance and navigation confirmation remain user-led.
   See `docs/RIG_CREDITS.md`. RC3 remains unchanged.
+- RIG credits follow-up `0a06124`: the user confirmed the balance but found the
+  currency image covering the nodes. `IMAGE` draws at intrinsic texture size;
+  the currency/background now use two-corner `STRETCH` bounds. The icon is 36x14
+  layout units and left of the number, whose position is unchanged. Regression
+  tests check the actual draw bounds and separation; revised appearance remains
+  user-led and unconfirmed.
 - Other reported terminals and the original asset set still need validation.
 
 `.github/workflows/playtest-boundary.yml` fails if a PR from `playtest` targets
