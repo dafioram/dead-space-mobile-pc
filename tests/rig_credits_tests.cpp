@@ -88,7 +88,7 @@ struct Fixture {
     sbin::Database db;
     size_t entities = 0;
     Bytes original;
-    Fixture(bool missing_align = false, bool missing_icon = false, bool bad_vertex = false)
+    Fixture(bool missing_align = false, bool missing_icon = false, bool bad_vertex = false, float node_width = 81.0f)
         : db(schema(missing_align)) {
         auto entry = [&](const char* name, const char* type, const char* image, float x, float width) {
             Bytes points(16);
@@ -110,7 +110,7 @@ struct Fixture {
             e[24] = 1;
             original.insert(original.end(), e.begin(), e.end());
         };
-        entry("NODE_BACKGROUND", "IMAGE", "rig/rig_node_bg.tif", 3.0f, 81.0f);
+        entry("NODE_BACKGROUND", "IMAGE", "rig/rig_node_bg.tif", 3.0f, node_width);
         if (!missing_icon) entry("ICON NODE", "IMAGE", "synthetic/node.tif", 41.0f, 29.0f);
         entry("NODE_AMMOUNT", "MUTABLETEXT", "", 25.0f, 0.0f);
         entities = db.add_array(16, 1, uint32_t(original.size() / size_t(db.struct_size(1))), original);
@@ -147,21 +147,25 @@ void test_counter() {
     require(f.string_at(5, 6) == "RIGHT|TOP", "align the amount beside its currency icon");
     require(f.db.array_count(f.points(3)) == 2 && f.db.array_count(f.points(4)) == 2,
             "native STRETCH images need two explicit draw-bound vertices");
-    require(get<float>(f.point(4, 1)) - get<float>(f.point(4)) == 36.0f &&
-            get<float>(f.point(4, 1) + 4) - get<float>(f.point(4) + 4) == 14.0f,
-            "currency image is bounded to a small wide icon, not its intrinsic texture size");
+    require(get<float>(f.point(4, 1)) - get<float>(f.point(4)) == 56.0f &&
+            get<float>(f.point(4, 1) + 4) - get<float>(f.point(4) + 4) == 28.0f,
+            "currency icon is larger but still explicitly bounded, not intrinsic texture size");
     require(get<float>(f.entry(4) + 12) == 0 && get<float>(f.entry(4) + 16) == 0,
             "do not rely on ignored IMAGE width/height metadata for draw sizing");
     require(get<float>(f.point(3, 1)) < get<float>(f.point(0)),
             "credits tile stays left of the node tile with a gap");
-    require(get<float>(f.point(4)) > get<float>(f.point(3)) &&
-            get<float>(f.point(4, 1)) < get<float>(f.point(5)) - 80.0f,
-            "icon stays left of the full ten-digit amount and inside its tile");
+    require(get<float>(f.point(4)) == get<float>(f.point(5)) + 6.0f &&
+            get<float>(f.point(4, 1)) <= get<float>(f.point(3, 1)),
+            "icon sits immediately right of the number, inside its tile, like the node counter");
+    require(get<float>(f.point(3)) < get<float>(f.point(5)) - 80.0f,
+            "reserve room to the left for the full ten-digit right-aligned amount");
+    require(get<float>(f.point(4, 1)) <= get<float>(f.point(0)) - 2.0f,
+            "larger currency graphic must never overlap the node panel");
     require(get<float>(f.point(5)) == 25.0f - 160.0f + 150.0f - 81.0f - 8.0f,
             "keep the user-confirmed amount position unchanged");
     require(get<float>(f.point(4) + 4) > get<float>(f.point(3) + 4) &&
             get<float>(f.point(4, 1) + 4) < get<float>(f.point(3, 1) + 4),
-            "smaller currency icon is vertically inset in its panel");
+            "currency icon is vertically inset in its panel");
     for (size_t i = 3; i < 6; ++i) {
         if (i != 4) require(get<float>(f.point(i) + 4) == 7.0f, "preserve panel/text baseline");
         require(get<float>(f.point(i) + 8) == 0.25f && get<float>(f.point(i) + 12) == 0.75f,
@@ -177,6 +181,21 @@ void test_counter() {
     sbin::Database round_trip;
     require(round_trip.parse(once), "patched data must round-trip");
     require(round_trip.array_count(f.entities) == 6, "round-trip preserves added entities");
+}
+
+void test_narrow_icon_space() {
+    Fixture f(false, false, false, 60.0f);
+    require(rig_credits::patch_layout(f.db), "template with less space beside the amount must be supported");
+    require(get<float>(f.point(4)) == get<float>(f.point(5)) + 6.0f,
+            "narrow variant must keep the requested amount-to-icon gap");
+    require(get<float>(f.point(4, 1)) - get<float>(f.point(4)) == 48.0f,
+            "limit width to available space rather than intruding into the node counter");
+    require(get<float>(f.point(4, 1)) == get<float>(f.point(0)) - 2.0f,
+            "retain a gap before nodes even when icon width needs limiting");
+    Fixture impossible(false, false, false, 0.0f);
+    const auto before = impossible.db.serialize();
+    require(!rig_credits::patch_layout(impossible.db), "reject a template with no space for an icon");
+    require(impossible.db.serialize() == before, "no-space rejection must not mutate the input");
 }
 
 void test_fail_closed() {
@@ -197,6 +216,7 @@ void test_fail_closed() {
 int main() {
     try {
         test_counter();
+        test_narrow_icon_space();
         test_fail_closed();
         std::cout << "RIG credits synthetic layout tests passed\n";
         return 0;

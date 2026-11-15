@@ -1,5 +1,7 @@
 #include "rig_credits.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -73,19 +75,23 @@ bool patch_layout(sbin::Database& db) {
                           db.array_elem_type(size_t(a)), db.array_struct(size_t(a)), n, step});
     }
 
-    // Keep the accepted amount position, but put a small currency icon on its
-    // left. Reserve space for ten digits and keep the tile clear of the nodes.
+    // Keep the accepted amount position. As on the nodes counter, the icon sits
+    // immediately right of the number; explicit bounds keep it clear of nodes.
     constexpr float panel_shift = -160.0f, panel_width = 150.0f;
-    constexpr float icon_width = 36.0f, icon_height = 14.0f, amount_width = 80.0f, gap = 8.0f;
+    constexpr float icon_height = 28.0f, amount_width = 80.0f, gap = 8.0f, icon_gap = 6.0f;
     const char* names[] = {"PORT_CREDIT_BACKGROUND", "PORT_CREDIT_ICON", "PORT_CREDIT_AMOUNT"};
     const float node_width = read<float>(background.data() + width);
     const float amount_dx = panel_shift + panel_width - node_width - gap;
     const float amount_right = read<float>(copies[2].points.data() + x) + amount_dx;
-    const float icon_left = amount_right - amount_width - gap - icon_width;
-    const float panel_left = icon_left - gap;
-    const float panel_right = read<float>(copies[0].points.data() + x) + panel_shift + panel_width;
+    const float node_left = read<float>(copies[0].points.data() + x);
+    const float icon_left = amount_right + icon_gap;
+    const float icon_width = std::min(56.0f, node_left - 2.0f - icon_left);
+    const float panel_left = amount_right - amount_width - gap;
+    const float panel_right = icon_left + icon_width;
     const float panel_top = read<float>(copies[0].points.data() + y);
     const float panel_height = read<float>(background.data() + height);
+    if (!std::isfinite(amount_right) || !std::isfinite(node_left) || !std::isfinite(panel_top) ||
+        !std::isfinite(panel_height) || icon_width <= 0 || panel_height < icon_height) return false;
     for (size_t i = 0; i < copies.size(); ++i) {
         auto& copy = copies[i];
         auto* e = copy.entity.data();

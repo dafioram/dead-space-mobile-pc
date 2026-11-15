@@ -3,7 +3,8 @@
 The Tab/controller RIG screen gains a read-only credits tile immediately left of
 the power-node counter. It uses the existing RIG node-panel background, font,
 colour, baseline and fade/visibility, with the game's existing credits item icon.
-The icon is a small 36-by-14 layout-unit image to the left of the amount. Both
+The icon is up to 56-by-28 layout units immediately right of the amount, like
+the node counter (width is limited if the template leaves less space). Both
 graphic entities use native `STRETCH` rectangles with two explicit vertices:
 `IMAGE` uses the texture's intrinsic dimensions, not its width/height metadata.
 The amount position is preserved from the user's first balance check.
@@ -32,12 +33,13 @@ change. Original assets are not rewritten: the layout is augmented in memory.
 ## Validation
 
 The user confirmed the first build's balance, but reported an oversized currency
-texture covering the node counter. The bounded-image revision corrects the draw
-type as well as moving/shrinking the icon; its appearance needs another check.
+texture covering the node counter. The first bounded-image revision was too
+small and too far left. The current revision enlarges it and puts it immediately
+right of the unchanged number; its appearance needs another check.
 
 Synthetic `rig_credits` tests cover schema/template rejection without mutation,
 preservation of the original entities, matching font/colour/anchors, the separate
-currency icon, explicit two-corner draw sizing, icon-left-of-amount separation,
+currency icon, explicit two-corner draw sizing, icon-right-of-amount separation,
 preserved amount position, noninteractive entity types, left-of-nodes placement,
 idempotency and SBIN round-tripping. An offline private-copy check also applied the patch to
 the supplied layouts without launching the game or changing the original asset.
