@@ -38,6 +38,11 @@ target_include_directories(profile_tests PRIVATE ../src)
 add_test(NAME temporary_profile COMMAND profile_tests)
 set_tests_properties(temporary_profile PROPERTIES TIMEOUT 60)
 
+add_executable(rig_credits_tests rig_credits_tests.cpp ../src/rig_credits_layout.cpp ../src/sbin.cpp)
+target_include_directories(rig_credits_tests PRIVATE ../src)
+add_test(NAME rig_credits COMMAND rig_credits_tests)
+set_tests_properties(rig_credits PROPERTIES TIMEOUT 60)
+
 if (DEADSPACE_BUILD_APP)
     add_test(NAME cli_help COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_cli_help.py"
         --executable "$<TARGET_FILE:deadspace>" -v)
