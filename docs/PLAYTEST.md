@@ -17,6 +17,10 @@ PR from it.** Its integration-only files are not production changes.
 - Build artifacts must identify the exact integration commit and contain no APK,
   game assets, saves or texture dumps. Keep real-data playtesting local.
 
+**Current testing boundary:** all further interactive gameplay/playtesting is
+reserved for the user. Agent validation is builds, asset-free/synthetic tests,
+read-only inspection and packaging; do not launch, drive or stop game sessions.
+
 The initial baseline is `08f849e`, which already includes the asset guardrails,
 asset-free test harness and Windows/Linux CI via their individual PRs. The Mesa
 shader and terminal-interaction fixes are not part of this initial baseline.
@@ -233,6 +237,25 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   user-led. No enemy killing, saving-reliability or scene-cache change is
   included. See `docs/DEBUG_CONSOLE_TOOLS.md`. Main through `590b7d2`, including
   merged store PR #26, is integrated; production changes still use themed PRs.
+- Debug-tool follow-up `150ed5c`: the user confirms `/restore` refills oxygen to
+  full as desired. Other native eligibility states and suits/modules remain
+  separate checks; this is not a save/lifetime crash confirmation.
+- `fix/scene-cache-lifetime` / PR #28 / source `8765c7a`: native world/node
+  generations, construction readiness and pre-destruction retirement for host
+  scene/fade/fixture/fog observations, including address reuse and ParticleEffect.
+  Custom node writes require live owner/node tokens, supported type/layout and
+  current child-parent membership. Native transform queries balance temporary
+  references without holding the registry lock across transforms/releases.
+  Existing fade/light settings and all native animation/free/cleanup operations
+  remain intact. Bounded read-only model/Object3D/IndexBuffer diagnostics retain
+  evidence if crashes persist. Windows/Linux themed builds pass all 10 suites;
+  a clean app-disabled Linux build passes 9 suites, and the production handler
+  adapter passes ASan/UBSan. Hook sites were inspected read-only, not executed.
+  Combined test registration retains both `scene_cache` and `console_debug`.
+  No gameplay was launched or driven: the user owns chapter transitions, level
+  jumps, normal exit and visual confirmation. The reported crashes are not yet
+  confirmed fixed, and the dark/see-through store remains separate. See
+  `docs/SCENE_CACHE_LIFETIME.md`. Save reliability is not included.
 - Android-origin save compatibility: the user's four original save files use
   SBIN v2, pass all chunk checksums and match the comparison port save's common
   campaign/player/weapon/inventory/metadata/achievement field types. Android

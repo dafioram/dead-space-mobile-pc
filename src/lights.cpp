@@ -13,9 +13,11 @@
 #include <SDL.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <unordered_map>
 #include <string>
 
@@ -25,6 +27,7 @@
 #include "log.h"
 #include "memory.h"
 #include "objects.h"
+#include "scene_cache_lifetime.h"
 
 namespace lights {
 namespace {
@@ -39,7 +42,7 @@ struct Src {
 };
 std::vector<Src> g_src;
 std::map<u32, std::array<float, 3>> g_weapon_color;  // weapon object -> colour of its last shot
-int g_trace = 0;
+std::atomic<int> g_trace = 0;
 
 float f32(u32 a) {
     u32 v = mem::r32(a);
@@ -117,28 +120,110 @@ void on_explode(cpu::Ctx& c) {
 }
 
 // ---- level scene nodes (m3g): flares the level registers with the world
+using scene_cache::NodeRef;
+using scene_cache::Token;
+std::recursive_mutex g_scene_mutex;
+scene_cache::LifetimesByOwner g_lifetimes;
+Token g_scene_world;
+bool g_lifetime_ready = false;
+u32 fn_retain = 0, fn_release = 0;
+std::array<u32, 7> g_node_vtables{};  // Node, Camera, Group, World, Mesh, SkinnedMesh, ParticleEffect
+u32 g_fade_tick = 0;
+unsigned g_rejected = 0, g_teardown_budget = 0, g_write_budget = 0, g_bad_header_budget = 0;
+u32 g_teardown_world = 0;
+
+bool mapped(u32 address, u32 size) {
+    if (!address || !size || uint64_t(address) + size > (uint64_t(1) << 32)) return false;
+    for (uint64_t a = address & ~uint64_t(mem::PAGE_SIZE - 1); a < uint64_t(address) + size; a += mem::PAGE_SIZE)
+        if (!mem::is_mapped(u32(a))) return false;
+    return true;
+}
+
+// All *_locked helpers require g_scene_mutex. Type/layout/mapping checks supplement
+// native lifetime tokens; none of them can establish a lifetime on their own.
+int node_kind_locked(NodeRef ref) {
+    if (!g_lifetime_ready || ref.world != g_scene_world || !g_lifetimes.contains(ref) || !mapped(ref.node.address, 0x13c)) return -1;
+    u32 vt = mem::r32(ref.node.address);
+    for (size_t i = 0; i < g_node_vtables.size(); i++)
+        if (vt == g_node_vtables[i]) return int(i);
+    return -1;
+}
+
+void rejected_locked(NodeRef ref) {
+    if (g_rejected++ < 8)
+        LOGW("[scene-cache] rejected stale/unsupported node %08x generation=%llu world=%08x generation=%llu",
+             ref.node.address, (unsigned long long)ref.node.generation, ref.world.address, (unsigned long long)ref.world.generation);
+}
+
+NodeRef reference_locked(u32 node) { return g_lifetimes.reference(g_scene_world, node); }
+bool group_kind(int kind) { return kind == 2 || kind == 3; }
+bool mesh_kind(int kind) { return kind == 4 || kind == 5; }
+
+std::vector<NodeRef> children_locked(NodeRef parent, u32 limit) {
+    std::vector<NodeRef> children;
+    if (!group_kind(node_kind_locked(parent)) || !mapped(parent.node.address, 0x148)) return children;
+    u32 b = mem::r32(parent.node.address + 0x13c), e = mem::r32(parent.node.address + 0x140);
+    if (!scene_cache::vector_layout(b, e, e, 4)) { rejected_locked(parent); return children; }
+    u32 count = std::min((e - b) / 4, limit);
+    if (count && !mapped(b, count * 4)) { rejected_locked(parent); return children; }
+    for (u32 i = 0; i < count; i++) {
+        NodeRef child = reference_locked(mem::r32(b + i * 4));
+        if (node_kind_locked(child) >= 0 && mem::r32(child.node.address + 0x128) == parent.node.address)
+            children.push_back(child);
+        else if (child.node.address) rejected_locked(child);
+    }
+    return children;
+}
+
+std::vector<NodeRef> ancestors_locked(NodeRef ref) {
+    std::vector<NodeRef> chain;
+    while (ref.node.address && chain.size() < 64) {
+        if (node_kind_locked(ref) < 0 || std::find(chain.begin(), chain.end(), ref) != chain.end()) return {};
+        chain.push_back(ref);
+        u32 parent = mem::r32(ref.node.address + 0x128);
+        if (!parent) return chain;
+        ref = reference_locked(parent);
+        if (!ref) return {};
+    }
+    return {};  // cyclic or overlong parent chain: never call into it
+}
+
 struct SceneNode {
-    u32 node;
+    NodeRef ref;
     int kind;  // 0 direction flare, 1 side flare, 2 animated
 };
 std::vector<SceneNode> g_nodes;
-u32 g_nodes_world = 0, fn_transform_to = 0, g_xf = 0;
+struct NodeTransform { NodeRef ref; std::array<float, 16> matrix; };
+std::unordered_map<u32, NodeTransform> g_previous_transforms;
+u32 fn_transform_to = 0;
+void clear_scene_locked();
+
+bool select_world_locked(u32 world) {
+    Token token = g_lifetimes.worlds.current(world);
+    if (!g_lifetime_ready || !token) return false;
+    if (token != g_scene_world) {
+        clear_scene_locked();
+        g_scene_world = token;
+    }
+    return true;
+}
 
 void note_node(u32 world, u32 node, int kind) {
-    if (world != g_nodes_world) {
-        g_nodes.clear();
-        g_nodes_world = world;
-    }
-    if (node) g_nodes.push_back({node, kind});
+    std::lock_guard lock(g_scene_mutex);
+    if (!select_world_locked(world)) return;
+    NodeRef ref = reference_locked(node);
+    if (node_kind_locked(ref) < 0) { rejected_locked(ref); return; }
+    if (std::none_of(g_nodes.begin(), g_nodes.end(), [&](const SceneNode& n) { return n.ref == ref && n.kind == kind; }))
+        g_nodes.push_back({ref, kind});
 }
-std::vector<u32> g_fade_nodes;  // GameWorld::registerProximityFade: effects the game hides when the player is close
-u32 g_fade_world = 0;
+std::vector<NodeRef> g_fade_nodes;  // native registrations, qualified by world AND node lifetime
 // The game fades these effects (fog banks, light shafts) out by distance as the player walks into them,
 // over a band about two metres wide: at a run that is an instant. Here the fade is spread over time.
 // Each frame, after the game has set an effect's opacity (m3g::Node +0x130, 16.16; +0x12c = drawn at
 // all) and before it is drawn, the value actually used moves toward the game's value at a limited
 // speed, both ways.
 struct FadeState {
+    NodeRef ref;
     float shown = -1;  // opacity in use (-1: not started)
     u32 wrote_alpha = 0xffffffffu;
     u8 wrote_en = 0xff;
@@ -149,24 +234,29 @@ constexpr float kFadeSeconds = 1.4f;  // from fully shown to gone, or back
 
 // Position data of the fog banks' meshes (m3g::Mesh: VertexBuffer +0x160, its positions array +0x44,
 // that array's data +0x48): the renderer recognises their draws by it.
-std::vector<u32> g_fog_data;
+struct FogData { NodeRef ref; u32 data; };
+std::vector<FogData> g_fog_data;
 void note_fog_mesh(u32 node) {
-    if (cpu::symbolize(mem::r32(node)).find("Mesh") == std::string::npos) return;
+    if (!mesh_kind(node_kind_locked(reference_locked(node))) || !mapped(node, 0x164)) return;
     u32 vb = mem::r32(node + 0x160);
-    u32 va = vb > 0x10000 ? mem::r32(vb + 0x44) : 0;
-    u32 data = va > 0x10000 ? mem::r32(va + 0x48) : 0;
-    if (data > 0x10000 && std::find(g_fog_data.begin(), g_fog_data.end(), data) == g_fog_data.end()) g_fog_data.push_back(data);
+    u32 va = mapped(vb, 0x48) ? mem::r32(vb + 0x44) : 0;
+    u32 data = mapped(va, 0x4c) ? mem::r32(va + 0x48) : 0;
+    if (data > 0x10000 && std::none_of(g_fog_data.begin(), g_fog_data.end(), [&](const FogData& f) { return f.data == data; }))
+        g_fog_data.push_back({reference_locked(node), data});
 }
 
 void smooth_fades(cpu::Ctx& c) {
-    if (c.reg(0) != g_fade_world || g_fade_nodes.empty()) return;
+    std::lock_guard lock(g_scene_mutex);
+    if (!g_lifetimes.worlds.contains(g_scene_world) || c.reg(0) != g_scene_world.address) return;
     g_fog_data.clear();
-    static u32 last = 0;
     u32 now = SDL_GetTicks();
-    float dt = last && now - last < 250 ? float(now - last) / 1000.0f : 0.0f;
-    last = now;
-    auto one = [&](u32 node) {
+    float dt = g_fade_tick && now - g_fade_tick < 250 ? float(now - g_fade_tick) / 1000.0f : 0.0f;
+    g_fade_tick = now;
+    auto one = [&](NodeRef ref) {
+        if (node_kind_locked(ref) < 0) { rejected_locked(ref); return; }
+        u32 node = ref.node.address;
         FadeState& st = g_fade_state[node];
+        if (st.ref != ref) st = FadeState{ref};
         u32 a = mem::r32(node + 0x130);
         u8 en = mem::r8(node + 0x12c);
         // what the game wants: its own value, unless what is there is still what was written last frame
@@ -178,101 +268,151 @@ void smooth_fades(cpu::Ctx& c) {
         st.wrote_en = st.shown > 0.004f ? 1 : 0;
         mem::w32(node + 0x130, st.wrote_alpha);
         mem::w8(node + 0x12c, st.wrote_en);
+        if (g_trace && g_write_budget++ < 8)
+            LOGI("[scene-cache] fade write node=%08x generation=%llu world-generation=%llu alpha=%08x enabled=%u",
+                 node, (unsigned long long)ref.node.generation, (unsigned long long)ref.world.generation, st.wrote_alpha, unsigned(st.wrote_en));
+        note_fog_mesh(node);
     };
-    for (u32 n : g_fade_nodes) {
-        if (cpu::symbolize(mem::r32(n)).find("Group") == std::string::npos) {
+    for (NodeRef n : g_fade_nodes) {
+        int kind = node_kind_locked(n);
+        if (kind < 0) { rejected_locked(n); continue; }
+        if (!group_kind(kind)) {
             one(n);
-            note_fog_mesh(n);
             continue;
         }
-        u32 cb = mem::r32(n + 0x13c), ce = mem::r32(n + 0x140);
-        for (u32 q = cb; q < ce && q < cb + 4 * 32; q += 4)
-            if (u32 ch = mem::r32(q)) one(ch), note_fog_mesh(ch);
+        for (NodeRef child : children_locked(n, 32)) one(child);
     }
 }
 
 void on_reg_fade(cpu::Ctx& c) {
-    if (c.reg(0) != g_fade_world) g_fade_nodes.clear(), g_fade_state.clear(), g_fog_data.clear(), g_fade_world = c.reg(0);
-    if (c.reg(1)) g_fade_nodes.push_back(c.reg(1));
+    std::lock_guard lock(g_scene_mutex);
+    if (!select_world_locked(c.reg(0))) return;
+    NodeRef ref = reference_locked(c.reg(1));
+    if (node_kind_locked(ref) < 0) { rejected_locked(ref); return; }
+    if (std::find(g_fade_nodes.begin(), g_fade_nodes.end(), ref) == g_fade_nodes.end()) g_fade_nodes.push_back(ref);
 }
 void on_reg_dir_flare(cpu::Ctx& c) { note_node(c.reg(0), c.reg(2), 0); }
 void on_reg_side_flare(cpu::Ctx& c) { note_node(c.reg(0), c.reg(1), 1); }
 void on_reg_animate(cpu::Ctx& c) { note_node(c.reg(0), c.reg(2), 2); }
 
 // m3g::Node: parent +0x128, rendering enabled +0x12c (byte), alpha factor +0x130 (int, 16.16)
-bool node_shown(u32 node) {
-    for (int i = 0; node && i < 64; i++, node = mem::r32(node + 0x128))
-        if (!mem::r8(node + 0x12c)) return false;
+bool node_shown(NodeRef ref) {
+    std::lock_guard lock(g_scene_mutex);
+    auto chain = ancestors_locked(ref);
+    if (chain.empty()) return false;
+    for (NodeRef n : chain)
+        if (!mem::r8(n.node.address + 0x12c)) return false;
     return true;
 }
 // Column-major world matrix of a scene node (m3g::Node::getTransformTo its root).
-bool node_world(u32 node, float m[16]) {
+bool node_world(NodeRef ref, float m[16]) {
     if (!fn_transform_to) return false;
-    u32 root = node;
-    for (int i = 0; i < 64 && mem::r32(root + 0x128); i++) root = mem::r32(root + 0x128);
-    if (!g_xf) g_xf = mem::data_alloc(0x80);
+    std::vector<NodeRef> chain;
+    {
+        std::lock_guard lock(g_scene_mutex);
+        chain = ancestors_locked(ref);
+        if (chain.empty()) return false;
+        for (NodeRef n : chain) {
+            u32 refs = mem::r32(n.node.address + 4);
+            if (!refs || refs >= 0x7fffffffu) return false;
+        }
+        // Verified native leaf: increments the reference only, with no locks,
+        // callbacks or destructor dispatch. Never keep strong refs in a cache.
+        for (NodeRef n : chain) cpu::call(fn_retain, {n.node.address});
+    }
+    // No registry mutex across native transforms/DECREF: they acquire native
+    // locks and can invoke destructors. Temporary native refs protect the chain.
+    thread_local u32 xf = mem::data_alloc(0x80);
     for (u32 i = 0; i < 16; i++) {
         float v = (i % 5 == 0) ? 1.0f : 0.0f;
         u32 b;
         std::memcpy(&b, &v, 4);
-        mem::w32(g_xf + 8 + i * 4, b);
+        mem::w32(xf + 8 + i * 4, b);
     }
-    cpu::call(fn_transform_to, {node, root, g_xf});
-    for (u32 i = 0; i < 16; i++) m[i] = f32(g_xf + 8 + i * 4);
-    return std::isfinite(m[12] + m[13] + m[14]);
+    bool transformed = (cpu::call(fn_transform_to, {ref.node.address, chain.back().node.address, xf}) & 0xff) != 0;
+    for (u32 i = 0; i < 16; i++) m[i] = f32(xf + 8 + i * 4);
+    for (NodeRef n : chain) cpu::call(fn_release, {n.node.address});
+    std::lock_guard lock(g_scene_mutex);
+    return transformed && node_kind_locked(ref) >= 0 && std::isfinite(m[12] + m[13] + m[14]);
 }
 
-void probe_tree(u32 node, int depth) {
-    std::string cls = cpu::symbolize(mem::r32(node));
+void probe_tree(NodeRef ref, int depth) {
+    if (depth > 8) return;
     float m[16] = {};
-    node_world(node, m);
-    LOGI("[lights] %*s%08x %s at %.2f %.2f %.2f shown %d", depth * 2, "", node, cls.c_str(), m[12], m[13], m[14], mem::r8(node + 0x12c));
-    if (cls.find("Group") != std::string::npos) {
-        u32 b = mem::r32(node + 0x13c), e = mem::r32(node + 0x140);
-        for (u32 q = b; q < e && q < b + 4 * 40; q += 4) probe_tree(mem::r32(q), depth + 1);
-    } else if (cls.find("Mesh") != std::string::npos) {
-        u32 vb = mem::r32(node + 0x160), va = vb ? mem::r32(vb + 0x44) : 0;
-        LOGI("[lights] %*s  vb %08x scale %.6f bias %.3f %.3f %.3f va %08x", depth * 2, "", vb, vb ? f32(vb + 0x48) : 0, vb ? f32(vb + 0x4c) : 0, vb ? f32(vb + 0x50) : 0,
-             vb ? f32(vb + 0x54) : 0, va);
-        if (va)
-            LOGI("[lights] %*s  va: %08x %08x %08x %08x %08x %08x %08x %08x %08x", depth * 2, "", mem::r32(va + 0x3c), mem::r32(va + 0x40), mem::r32(va + 0x44),
-                 mem::r32(va + 0x48), mem::r32(va + 0x4c), mem::r32(va + 0x50), mem::r32(va + 0x54), mem::r32(va + 0x58), mem::r32(va + 0x5c));
+    if (!node_world(ref, m)) return;
+    std::vector<NodeRef> children;
+    {
+        std::lock_guard lock(g_scene_mutex);
+        if (node_kind_locked(ref) < 0) return;
+        LOGI("[lights] %*s%08x %s at %.2f %.2f %.2f shown %d", depth * 2, "", ref.node.address,
+             cpu::symbolize(mem::r32(ref.node.address)).c_str(), m[12], m[13], m[14], mem::r8(ref.node.address + 0x12c));
+        children = children_locked(ref, 40);
+        if (mesh_kind(node_kind_locked(ref)) && mapped(ref.node.address, 0x164)) {
+            u32 vb = mem::r32(ref.node.address + 0x160);
+            u32 va = mapped(vb, 0x58) ? mem::r32(vb + 0x44) : 0;
+            if (mapped(vb, 0x58))
+                LOGI("[lights] %*s  vb %08x scale %.6f bias %.3f %.3f %.3f va %08x", depth * 2, "", vb,
+                     f32(vb + 0x48), f32(vb + 0x4c), f32(vb + 0x50), f32(vb + 0x54), va);
+            if (mapped(va, 0x60))
+                LOGI("[lights] %*s  va: %08x %08x %08x %08x %08x %08x %08x %08x %08x", depth * 2, "",
+                     mem::r32(va + 0x3c), mem::r32(va + 0x40), mem::r32(va + 0x44), mem::r32(va + 0x48),
+                     mem::r32(va + 0x4c), mem::r32(va + 0x50), mem::r32(va + 0x54), mem::r32(va + 0x58), mem::r32(va + 0x5c));
+        }
     }
+    for (NodeRef child : children) probe_tree(child, depth + 1);
+}
+
+std::vector<NodeRef> quarantine_nodes() {
+    std::lock_guard lock(g_scene_mutex);
+    std::vector<NodeRef> nodes;
+    if (!g_lifetimes.worlds.contains(g_scene_world) || !mapped(g_scene_world.address, 0x230)) return nodes;
+    u32 qb = mem::r32(g_scene_world.address + 0x228), qe = mem::r32(g_scene_world.address + 0x22c);
+    if (!scene_cache::vector_layout(qb, qe, qe, 4) || qe - qb > 4 * 2000 || (qe != qb && !mapped(qb, qe - qb))) return nodes;
+    for (u32 q = qb; q < qe; q += 4) {
+        NodeRef ref = reference_locked(mem::r32(q));
+        if (node_kind_locked(ref) >= 0) nodes.push_back(ref);
+    }
+    return nodes;
+}
+
+std::vector<SceneNode> scene_nodes() {
+    std::lock_guard lock(g_scene_mutex);
+    return g_nodes;
 }
 
 void trace_nodes(objs::Vec3 p) {
-    static std::map<u32, std::array<float, 16>> prev;
-    u32 w = g_nodes_world, qb = mem::r32(w + 0x228), qe = mem::r32(w + 0x22c);
-    LOGI("[lights] %u quarantine nodes", (qe - qb) / 4);
-    auto under_q = [&](u32 node) {
-        for (int i = 0; node && i < 64; i++, node = mem::r32(node + 0x128))
-            for (u32 q = qb; q < qe; q += 4)
-                if (mem::r32(q) == node) return true;
-        return false;
-    };
+    auto quarantine = quarantine_nodes();
+    LOGI("[lights] %zu quarantine nodes", quarantine.size());
     int shown = 0;
-    for (u32 q = qb; q < qe && shown < 60; q += 4) {
+    for (NodeRef ref : quarantine) {
+        if (shown >= 60) break;
         float m[16];
-        u32 n = mem::r32(q);
-        if (!node_world(n, m)) continue;
+        if (!node_world(ref, m)) continue;
         float d = std::sqrt((m[12] - p.x) * (m[12] - p.x) + (m[14] - p.z) * (m[14] - p.z));
         shown++;
-        LOGI("[lights] qnode %08x shown %d at %.2f %.2f %.2f (%.1f m)", n, node_shown(n), m[12], m[13], m[14], d);
-        if (shown <= 2) probe_tree(n, 1);
+        LOGI("[lights] qnode %08x shown %d at %.2f %.2f %.2f (%.1f m)", ref.node.address, node_shown(ref), m[12], m[13], m[14], d);
+        if (shown <= 2) probe_tree(ref, 1);
     }
     int moving = 0;
-    for (const SceneNode& n : g_nodes) {
+    for (const SceneNode& n : scene_nodes()) {
         float m[16];
-        if (!node_world(n.node, m)) continue;
-        std::array<float, 16> a;
-        std::memcpy(a.data(), m, sizeof m);
-        auto it = prev.find(n.node);
-        bool changed = it != prev.end() && std::memcmp(it->second.data(), m, sizeof m) != 0;
-        prev[n.node] = a;
+        if (!node_world(n.ref, m)) continue;
+        std::lock_guard lock(g_scene_mutex);
+        if (node_kind_locked(n.ref) < 0) continue;
+        auto it = g_previous_transforms.find(n.ref.node.address);
+        bool changed = it != g_previous_transforms.end() && it->second.ref == n.ref && std::memcmp(it->second.matrix.data(), m, sizeof m) != 0;
+        NodeTransform previous{n.ref, {}};
+        std::memcpy(previous.matrix.data(), m, sizeof m);
+        g_previous_transforms[n.ref.node.address] = previous;
         if (!changed || moving++ > 10) continue;
+        auto chain = ancestors_locked(n.ref);
+        bool under_q = std::any_of(chain.begin(), chain.end(), [&](NodeRef ancestor) {
+            return std::find(quarantine.begin(), quarantine.end(), ancestor) != quarantine.end();
+        });
         float d = std::sqrt((m[12] - p.x) * (m[12] - p.x) + (m[14] - p.z) * (m[14] - p.z));
-        LOGI("[lights] moving node %08x kind %d underq %d shown %d at %.2f %.2f %.2f (%.1f m) x %.2f %.2f %.2f y %.2f %.2f %.2f z %.2f %.2f %.2f", n.node, n.kind,
-             under_q(n.node), node_shown(n.node), m[12], m[13], m[14], d, m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]);
+        LOGI("[lights] moving node %08x generation=%llu kind=%d underq=%d shown=%d at %.2f %.2f %.2f (%.1f m) x %.2f %.2f %.2f y %.2f %.2f %.2f z %.2f %.2f %.2f",
+             n.ref.node.address, (unsigned long long)n.ref.node.generation, n.kind, under_q, node_shown(n.ref), m[12], m[13], m[14], d,
+             m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]);
     }
 }
 
@@ -288,26 +428,38 @@ struct Fixture {
     float w = 1.0f;          // brightness (lamps merged into this one)
 };
 std::vector<Fixture> g_fixtures;
-u32 g_fixtures_world = 0;
+bool g_fixtures_ready = false;
+std::vector<NodeRef> g_fixture_sources;
 
-void collect_fixtures(u32 node, int depth) {
-    if (!node || depth > 6) return;
-    std::string cls = cpu::symbolize(mem::r32(node));
-    if (cls.find("m3g::Group") != std::string::npos) {
-        u32 b = mem::r32(node + 0x13c), e = mem::r32(node + 0x140);
-        for (u32 q = b; q < e && q < b + 4 * 64; q += 4) collect_fixtures(mem::r32(q), depth + 1);
-        return;
+void collect_fixtures(NodeRef ref, int depth, std::vector<Fixture>& fixtures, std::vector<NodeRef>& sources) {
+    if (depth > 6) return;
+    std::vector<NodeRef> children;
+    std::vector<std::array<float, 3>> vertices;
+    {
+        std::lock_guard lock(g_scene_mutex);
+        int kind = node_kind_locked(ref);
+        if (kind < 0) return;
+        sources.push_back(ref);
+        if (group_kind(kind)) children = children_locked(ref, 64);
+        else {
+            if (!mesh_kind(kind) || !mapped(ref.node.address, 0x164)) return;
+            // Copy positions before the native call; retain no raw buffer/data pointer.
+            u32 vb = mem::r32(ref.node.address + 0x160);
+            u32 va = mapped(vb, 0x58) ? mem::r32(vb + 0x44) : 0;
+            if (!mapped(va, 0x58)) return;
+            u32 count = mem::r32(va + 0x3c), comps = mem::r32(va + 0x40), type = mem::r32(va + 0x44);
+            u32 data = mem::r32(va + 0x48), stride = mem::r32(va + 0x54);
+            if (!count || count > 20000 || comps != 3 || type != 2 || stride < 6 || stride > 64 || !mapped(data, count * stride)) return;
+            float scale = f32(vb + 0x48), bias[3] = {f32(vb + 0x4c), f32(vb + 0x50), f32(vb + 0x54)};
+            vertices.resize(count);
+            for (u32 i = 0; i < count; i++)
+                for (u32 k = 0; k < 3; k++) vertices[i][k] = float(int16_t(mem::r16(data + i * stride + k * 2))) * scale + bias[k];
+        }
     }
-    if (cls.find("m3g::Mesh") == std::string::npos) return;
-    // Mesh +0x160 VertexBuffer: +0x44 positions (VertexArray), +0x48 scale, +0x4c bias[3]
-    // VertexArray: +0x3c vertex count, +0x40 components, +0x44 type (2 = short), +0x48 data, +0x54 stride
-    u32 vb = mem::r32(node + 0x160), va = vb ? mem::r32(vb + 0x44) : 0;
-    if (!va) return;
-    u32 count = mem::r32(va + 0x3c), comps = mem::r32(va + 0x40), type = mem::r32(va + 0x44), data = mem::r32(va + 0x48), stride = mem::r32(va + 0x54);
-    if (count == 0 || count > 20000 || comps != 3 || type != 2 || !data || stride < 6 || stride > 64) return;
+    for (NodeRef child : children) collect_fixtures(child, depth + 1, fixtures, sources);
+    if (vertices.empty()) return;
     float m[16];
-    if (!node_world(node, m)) return;
-    float scale = f32(vb + 0x48), bias[3] = {f32(vb + 0x4c), f32(vb + 0x50), f32(vb + 0x54)};
+    if (!node_world(ref, m)) return;
     // quads that belong to one fixture lie close together: group vertices within 0.9 m
     struct Cluster {
         float sum[3];
@@ -316,9 +468,7 @@ void collect_fixtures(u32 node, int depth) {
         int nv;
     };
     std::vector<Cluster> cl;
-    for (u32 i = 0; i < count; i++) {
-        float o[3];
-        for (u32 k = 0; k < 3; k++) o[k] = float(int16_t(mem::r16(data + i * stride + k * 2))) * scale + bias[k];
+    for (const auto& o : vertices) {
         float w[3];
         for (int r = 0; r < 3; r++) w[r] = m[r] * o[0] + m[4 + r] * o[1] + m[8 + r] * o[2] + m[12 + r];
         Cluster* hit = nullptr;
@@ -341,7 +491,7 @@ void collect_fixtures(u32 node, int depth) {
         hit->n++;
     }
     for (const Cluster& c : cl) {
-        if (g_fixtures.size() >= 4000) break;
+        if (fixtures.size() >= 4000) break;
         Fixture f{{c.sum[0] / float(c.n), c.sum[1] / float(c.n), c.sum[2] / float(c.n)}};
         // the lamp's plane: the largest cross product among its first vertices
         float best = 0;
@@ -355,33 +505,43 @@ void collect_fixtures(u32 node, int depth) {
             }
         if (best > 1e-6f)
             for (float& x : f.n) x /= best;
-        g_fixtures.push_back(f);
+        fixtures.push_back(f);
     }
 }
 
 void update_fixtures(u32 world) {
-    if (world == g_fixtures_world) return;
-    g_fixtures_world = world;
-    g_fixtures.clear();
-    u32 qb = mem::r32(world + 0x228), qe = mem::r32(world + 0x22c);
-    if (!qb || qe < qb || qe - qb > 4 * 2000) return;
-    for (u32 q = qb; q < qe; q += 4) collect_fixtures(mem::r32(q), 0);
+    Token owner;
+    {
+        std::lock_guard lock(g_scene_mutex);
+        if (!select_world_locked(world) || g_fixtures_ready) return;
+        owner = g_scene_world;
+    }
+    auto roots = quarantine_nodes();
+    std::vector<Fixture> fixtures;
+    std::vector<NodeRef> sources;
+    for (NodeRef ref : roots) collect_fixtures(ref, 0, fixtures, sources);
     // lamps a hand apart (the two rows of one strip) become one light: fewer, steadier lights
-    size_t before = g_fixtures.size();
-    for (size_t i = 0; i < g_fixtures.size(); i++)
-        for (size_t j = i + 1; j < g_fixtures.size();) {
-            Fixture &a = g_fixtures[i], &b = g_fixtures[j];
+    size_t before = fixtures.size();
+    for (size_t i = 0; i < fixtures.size(); i++)
+        for (size_t j = i + 1; j < fixtures.size();) {
+            Fixture &a = fixtures[i], &b = fixtures[j];
             float dx = a.p[0] - b.p[0], dy = a.p[1] - b.p[1], dz = a.p[2] - b.p[2];
             if (dx * dx + dy * dy + dz * dz < 0.8f * 0.8f) {
                 for (int r = 0; r < 3; r++) a.p[r] = (a.p[r] * a.w + b.p[r]) / (a.w + 1.0f);
                 a.w += 1.0f;
-                g_fixtures.erase(g_fixtures.begin() + long(j));
+                fixtures.erase(fixtures.begin() + long(j));
             } else {
                 j++;
             }
         }
+    std::lock_guard lock(g_scene_mutex);
+    if (g_scene_world != owner || !g_lifetimes.worlds.contains(owner)) return;
+    if (std::any_of(sources.begin(), sources.end(), [](NodeRef ref) { return node_kind_locked(ref) < 0; })) return;
+    g_fixtures = std::move(fixtures);
+    g_fixture_sources = std::move(sources);
+    g_fixtures_ready = true;
     LOGI("lights: %zu lamps merged into %zu lights", before, g_fixtures.size());
-    LOGI("lights: %zu strip light fixtures in %u lockdown sections", g_fixtures.size(), (qe - qb) / 4);
+    LOGI("lights: %zu strip light fixtures in %zu lockdown sections", g_fixtures.size(), roots.size());
 }
 
 // ---- the RIG on the player's back
@@ -489,12 +649,161 @@ void on_player_post_camera(cpu::Ctx& c) {
         }
     }
     static int n = 0;
-    if (g_trace && (n % 60) == 0 && g_nodes_world == input::world()) {
-        LOGI("[lights] %zu scene nodes", g_nodes.size());
+    if (g_trace && (n % 60) == 0) {
+        LOGI("[lights] %zu scene nodes", scene_nodes().size());
         trace_nodes(p);
     }
     if (g_trace && (n++ % 60) == 0) LOGI("[lights] nav lights %d, slash %d", nav, now < g_slash_until);
     if (g_trace && (n % 60) == 1) LOGI("[lights] rig: health %.0f/%.0f stasis %.0f/%.0f kinesis %d", health, hmax, g_stasis, smax, tk);
+}
+
+void clear_scene_locked() {
+    g_scene_world = {};
+    g_nodes.clear();
+    g_previous_transforms.clear();
+    g_fade_nodes.clear();
+    g_fade_state.clear();
+    g_fog_data.clear();
+    g_fixtures.clear();
+    g_fixture_sources.clear();
+    g_fixtures_ready = false;
+    g_fade_tick = 0;
+    g_rejected = g_write_budget = 0;
+}
+
+void retire_node_locked(u32 address) {
+    std::erase_if(g_nodes, [&](const SceneNode& n) { return n.ref.node.address == address; });
+    std::erase_if(g_fade_nodes, [&](NodeRef n) { return n.node.address == address; });
+    g_fade_state.erase(address);
+    g_previous_transforms.erase(address);
+    if (std::any_of(g_fixture_sources.begin(), g_fixture_sources.end(), [&](NodeRef n) { return n.node.address == address; })) {
+        g_fixtures.clear();
+        g_fixture_sources.clear();
+        g_fixtures_ready = false;
+    }
+    std::erase_if(g_fog_data, [&](const FogData& f) { return f.ref.node.address == address; });
+    g_lifetimes.nodes.retire(address);
+}
+
+void on_world_constructed(cpu::Ctx& c) {
+    std::lock_guard lock(g_scene_mutex);
+    if (g_scene_world.address == c.reg(0)) clear_scene_locked();
+    Token token = g_lifetimes.worlds.begin(c.reg(0));
+    g_teardown_world = 0;
+    g_teardown_budget = 0;
+    g_bad_header_budget = 0;
+    LOGI("[scene-cache] world constructed %08x generation=%llu", token.address, (unsigned long long)token.generation);
+}
+
+void on_world_destroyed(cpu::Ctx& c) {
+    std::lock_guard lock(g_scene_mutex);
+    Token token = g_lifetimes.worlds.current(c.reg(0));
+    g_teardown_world = c.reg(0);
+    g_teardown_budget = 0;
+    LOGI("[scene-cache] world retiring %08x generation=%llu cached-nodes=%zu fade-roots=%zu fade-states=%zu fixtures=%zu",
+         token.address, (unsigned long long)token.generation, g_nodes.size(), g_fade_nodes.size(), g_fade_state.size(), g_fixtures.size());
+    if (g_scene_world == token) clear_scene_locked();
+    g_lifetimes.worlds.retire(c.reg(0));
+}
+
+void on_node_constructed(cpu::Ctx& c) {
+    std::lock_guard lock(g_scene_mutex);
+    retire_node_locked(c.reg(0));  // also discard an old observation if an address is reused
+    g_lifetimes.nodes.begin(c.reg(0), false);
+}
+
+void on_node_initialized(cpu::Ctx& c) {
+    std::lock_guard lock(g_scene_mutex);
+    g_lifetimes.nodes.publish(c.reg(4));  // common Node constructor return: r4=this
+}
+
+void on_node_destroyed(cpu::Ctx& c) {
+    std::lock_guard lock(g_scene_mutex);
+    retire_node_locked(c.reg(0));  // before the derived destructor releases children/buffers
+}
+
+void on_object_destroyed(cpu::Ctx& c) {
+    std::lock_guard lock(g_scene_mutex);
+    u32 object = c.reg(0);
+    if (g_lifetimes.nodes.current(object)) retire_node_locked(object);
+    if (!mapped(object, 0x3c)) return;
+    u32 tracks = mem::r32(object + 8), tracks_end = mem::r32(object + 0xc), tracks_cap = mem::r32(object + 0x10);
+    u32 data = mem::r32(object + 0x24), end = mem::r32(object + 0x28), cap = mem::r32(object + 0x2c);
+    // The string storage uses two-byte elements (including the shared empty
+    // string's begin==end, capacity==begin+2), not pointer-vector alignment.
+    bool sane = scene_cache::vector_layout(tracks, tracks_end, tracks_cap, 4) && scene_cache::vector_layout(data, end, cap, 2);
+    if (!sane && g_bad_header_budget++ < 8)
+        LOGW("[scene-cache] INVALID Object3D header object=%08x tracks=%08x/%08x/%08x storage=%08x/%08x/%08x teardown-world=%08x; native cleanup continues",
+             object, tracks, tracks_end, tracks_cap, data, end, cap, g_teardown_world);
+    // Read-only header evidence, never a reason to skip native destruction/free.
+    if ((!sane || g_trace || g_teardown_world) && g_teardown_budget++ < 32)
+        LOGI("[scene-cache] %s object=%08x vtable=%08x tracks=%08x/%08x/%08x storage=%08x/%08x/%08x headers=%s teardown-world=%08x",
+             cpu::current_hle_name(c).c_str(), object, mem::r32(object), tracks, tracks_end, tracks_cap,
+             data, end, cap, sane ? "ordered" : "INVALID", g_teardown_world);
+}
+
+void on_model_unload(cpu::Ctx& c) {
+    std::lock_guard lock(g_scene_mutex);
+    if ((g_trace || g_teardown_world) && g_teardown_budget++ < 32)
+        LOGI("[scene-cache] model unload=%08x teardown-world=%08x", c.reg(0), g_teardown_world);
+}
+
+bool install_scene_lifetimes() {
+    const struct {
+        const char* symbol;
+        u32 image_offset, offset, first, second;
+        cpu::HleFn handler;
+    } hooks[] = {
+        {"_ZN9GameWorldC1EP15btDynamicsWorld", 0x22b7a4, 0, 0xe92d45f0, 0xed2d8b02, on_world_constructed},
+        {"_ZN9GameWorldD1Ev", 0x22518c, 0xc, 0xe2833008, 0xe1a04000, on_world_destroyed},
+        {"_ZN3m3g4NodeC1Ev", 0x367724, 0, 0xe92d4030, 0xe24dd00c, on_node_constructed},
+        {"_ZN3m3g4NodeC2Ev", 0x367818, 0, 0xe92d4030, 0xe24dd00c, on_node_constructed},
+        {"_ZN3m3g4NodeC1Ev", 0x367724, 0x58, 0xe1a00004, 0xe28dd00c, on_node_initialized},
+        {"_ZN3m3g4NodeC2Ev", 0x367818, 0x58, 0xe1a00004, 0xe28dd00c, on_node_initialized},
+        {"_ZN3m3g4NodeD1Ev", 0x367fc8, 8, 0xe5905138, 0xe1a04000, on_node_destroyed},
+        {"_ZN3m3g4NodeD2Ev", 0x368028, 8, 0xe5905138, 0xe1a04000, on_node_destroyed},
+        {"_ZN3m3g4NodeD0Ev", 0x368088, 8, 0xe5905138, 0xe1a04000, on_node_destroyed},
+        {"_ZN3m3g5GroupD1Ev", 0x3624cc, 8, 0xe590413c, 0xe5905140, on_node_destroyed},
+        {"_ZN3m3g5GroupD2Ev", 0x362400, 8, 0xe590413c, 0xe5905140, on_node_destroyed},
+        {"_ZN3m3g5GroupD0Ev", 0x36290c, 8, 0xe590413c, 0xe5905140, on_node_destroyed},
+        {"_ZN3m3g4MeshD1Ev", 0x366280, 8, 0xe1a06000, 0xe5900160, on_node_destroyed},
+        {"_ZN3m3g4MeshD2Ev", 0x3663f4, 8, 0xe1a06000, 0xe5900160, on_node_destroyed},
+        {"_ZN3m3g11SkinnedMeshD1Ev", 0x369918, 8, 0xe1a05000, 0xe3a07000, on_node_destroyed},
+        {"_ZN9particles14ParticleEffectD1Ev", 0x32d0f4, 8, 0xe5902178, 0xe1a04000, on_node_destroyed},
+        {"_ZN3m3g6CameraD1Ev", 0x361b7c, 0x18, 0xe1a04000, 0xe3a01000, on_node_destroyed},
+        {"_ZN3m3g6CameraD0Ev", 0x361d64, 0x18, 0xe1a04000, 0xe3a01000, on_node_destroyed},
+        {"_ZN3m3g5WorldD1Ev", 0x36f254, 8, 0xe1a04000, 0xe590014c, on_node_destroyed},
+        {"_ZN3m3g5WorldD0Ev", 0x36f334, 8, 0xe1a04000, 0xe590014c, on_node_destroyed},
+        {"_ZN3m3g8Object3DD1Ev", 0x369170, 8, 0xe5905038, 0xe1a04000, on_object_destroyed},
+        {"_ZN3m3g8Object3DD2Ev", 0x369238, 8, 0xe5905038, 0xe1a04000, on_object_destroyed},
+        {"_ZN3m3g11IndexBufferD1Ev", 0x3649dc, 8, 0xe1a04000, 0xe590006c, on_object_destroyed},
+        {"_ZN3m3g11IndexBufferD0Ev", 0x364bfc, 8, 0xe1a04000, 0xe590006c, on_object_destroyed},
+        {"_ZN5Model6unloadEv", 0x5e520, 0, 0xe92d4030, 0xe5903004, on_model_unload},
+    };
+    // Validate the complete set before patching anything. Hooks placed after
+    // PC-relative prologues still see r0=this and precede native cleanup.
+    for (const auto& hook : hooks) {
+        u32 fn = elf::find(hook.symbol);
+        if (fn != mem::ELF_BASE + hook.image_offset || mem::r32(fn + hook.offset) != hook.first || mem::r32(fn + hook.offset + 4) != hook.second) {
+            LOGE("[scene-cache] unsupported lifecycle site %s; custom scene caches unavailable", hook.symbol);
+            return false;
+        }
+    }
+    fn_retain = elf::find("_ZNK4midp16ReferenceCounted7_incRefEv");
+    fn_release = elf::find("_ZN4midp6DECREFEPKNS_16ReferenceCountedE");
+    if (fn_retain != mem::ELF_BASE + 0x36f5f4 || mem::r32(fn_retain) != 0xe5903004 || mem::r32(fn_retain + 4) != 0xe2833001 ||
+        mem::r32(fn_retain + 8) != 0xe5803004 || mem::r32(fn_retain + 12) != 0xe12fff1e || fn_release != mem::ELF_BASE + 0x3da64) return false;
+    const char* types[] = {"_ZTVN3m3g4NodeE", "_ZTVN3m3g6CameraE", "_ZTVN3m3g5GroupE", "_ZTVN3m3g5WorldE", "_ZTVN3m3g4MeshE", "_ZTVN3m3g11SkinnedMeshE", "_ZTVN9particles14ParticleEffectE"};
+    for (size_t i = 0; i < g_node_vtables.size(); i++) {
+        u32 vt = elf::find(types[i]);
+        if (!vt) return false;
+        g_node_vtables[i] = vt + 8;
+    }
+    for (const auto& hook : hooks)
+        if (!cpu::hook_entry(mem::ELF_BASE + hook.image_offset + hook.offset, hook.symbol, hook.handler)) return false;
+    g_lifetime_ready = true;
+    LOGI("[scene-cache] native world/node generations and pre-destruction retirement installed");
+    return true;
 }
 
 }  // namespace
@@ -555,26 +864,34 @@ void eye_space(std::vector<render::Light>& out) {
 }
 
 std::string debug_fade_nodes(float x, float y, float z) {
-    std::string out = std::to_string(g_fade_nodes.size()) + " proximity-fade nodes";
+    std::vector<NodeRef> roots;
+    {
+        std::lock_guard lock(g_scene_mutex);
+        roots = g_fade_nodes;
+    }
+    std::string out = std::to_string(roots.size()) + " proximity-fade nodes";
     struct E {
         float d;
         std::string s;
     };
     std::vector<E> v;
-    for (u32 n : g_fade_nodes) {
+    for (NodeRef ref : roots) {
         float m[16];
-        if (!node_world(n, m)) continue;
+        if (!node_world(ref, m)) continue;
+        std::lock_guard lock(g_scene_mutex);
+        int kind = node_kind_locked(ref);
+        if (kind < 0) continue;
+        u32 n = ref.node.address;
         float d = std::sqrt((m[12] - x) * (m[12] - x) + (m[13] - y) * (m[13] - y) + (m[14] - z) * (m[14] - z));
         char b[160];
         std::snprintf(b, sizeof b, " | %08x %s at %.2f %.2f %.2f (%.1f m) enabled %d alpha %08x shown %d", n, cpu::symbolize(mem::r32(n)).c_str(), m[12], m[13], m[14], d,
-                      mem::r8(n + 0x12c), mem::r32(n + 0x130), node_shown(n));
+                       mem::r8(n + 0x12c), mem::r32(n + 0x130), node_shown(ref));
         std::string line = b;
-        if (cpu::symbolize(mem::r32(n)).find("Group") != std::string::npos) {
-            u32 cb = mem::r32(n + 0x13c), ce = mem::r32(n + 0x140);
-            for (u32 q = cb; q < ce && q < cb + 24; q += 4) {
-                u32 ch = mem::r32(q);
+        if (group_kind(kind)) {
+            for (NodeRef child : children_locked(ref, 6)) {
+                u32 ch = child.node.address;
                 char cbuf[96];
-                std::snprintf(cbuf, sizeof cbuf, " [child %08x %s en %d a %08x]", ch, cpu::symbolize(mem::r32(ch)).substr(11, 14).c_str(), mem::r8(ch + 0x12c), mem::r32(ch + 0x130));
+                std::snprintf(cbuf, sizeof cbuf, " [child %08x %s en %d a %08x]", ch, cpu::symbolize(mem::r32(ch)).c_str(), mem::r8(ch + 0x12c), mem::r32(ch + 0x130));
                 line += cbuf;
             }
         }
@@ -587,31 +904,36 @@ std::string debug_fade_nodes(float x, float y, float z) {
 
 int debug_show_nodes(float x, float z, float radius) {
     int n = 0;
-    for (const SceneNode& sn : g_nodes) {
+    for (const SceneNode& sn : scene_nodes()) {
         float m[16];
-        if (!node_world(sn.node, m)) continue;
+        if (!node_world(sn.ref, m)) continue;
         if (std::fabs(m[12] - x) > radius || std::fabs(m[14] - z) > radius) continue;
-        u32 node = sn.node;
-        for (int i = 0; node && i < 64; i++, node = mem::r32(node + 0x128))
+        std::lock_guard lock(g_scene_mutex);
+        auto chain = ancestors_locked(sn.ref);
+        for (size_t i = 0; i < chain.size(); i++) {
+            u32 node = chain[i].node.address;
             if (!mem::r8(node + 0x12c)) {
-                LOGI("[lights] showing node %08x (level %d above %08x, kind %d)", node, i, sn.node, sn.kind);
+                LOGI("[lights] showing node %08x (level %zu above %08x, kind %d)", node, i, sn.ref.node.address, sn.kind);
                 mem::w8(node + 0x12c, 1);
                 n++;
             }
+        }
     }
     return n;
 }
 
 float lockdown_level() {
+    std::lock_guard lock(g_scene_mutex);
     u32 world = input::world();
-    if (!world) return 0;
+    if (!world || g_lifetimes.worlds.current(world) != g_scene_world || !g_scene_world || !mapped(world, 0x290)) return 0;
     float level = f32(world + 0x28c);
     return std::isfinite(level) ? std::clamp(level, 0.0f, 1.0f) : 0.0f;
 }
 
 void fixtures_world(const float at[3], std::vector<render::Light>& out) {
+    std::lock_guard lock(g_scene_mutex);
     u32 world = input::world();
-    if (!world || world != g_fixtures_world) return;
+    if (!world || !g_fixtures_ready || !g_scene_world || g_lifetimes.worlds.current(world) != g_scene_world) return;
     float level = lockdown_level();
     static const float kNormal[3] = {0.34f, 0.38f, 0.42f}, kLockdown[3] = {0.95f, 0.10f, 0.07f};
     const float kRange = 34.0f;  // the camera's far plane is at 30 m
@@ -660,8 +982,9 @@ void debug_list(std::vector<DebugLight>& out) {
         out.push_back(d);
     }
     // every other strip light fixture of the level (not lit: too far from the camera, or over the limit)
+    std::lock_guard lock(g_scene_mutex);
     u32 world = input::world();
-    if (world && world == g_fixtures_world) {
+    if (world && g_scene_world && g_fixtures_ready && g_lifetimes.worlds.current(world) == g_scene_world && mapped(world, 0x290)) {
         float level = std::clamp(f32(world + 0x28c), 0.0f, 1.0f);
         for (const Fixture& f : g_fixtures) {
             bool is_lit = false;
@@ -703,6 +1026,7 @@ bool camera_matrix(float view[16], float target[3]) {
 }
 
 void install() {
+    if (!install_scene_lifetimes()) LOGE("[scene-cache] lifetime tracking unavailable; no custom cached-node access will run");
     fn_transform_to = elf::find("_ZNK3m3g4Node14getTransformToEPKS0_PNS_9TransformE");
     fn_health_max = elf::find("_ZNK18GameObjectPlayable12getHealthMaxEv");
     fn_stasis_max = elf::find("_ZNK18GameObjectPlayable12getStasisMaxEv");
@@ -736,6 +1060,10 @@ void install() {
     }
 }
 
-bool is_fog_vertices(u32 guest_addr) { return std::find(g_fog_data.begin(), g_fog_data.end(), guest_addr) != g_fog_data.end(); }
+bool is_fog_vertices(u32 guest_addr) {
+    std::lock_guard lock(g_scene_mutex);
+    return g_lifetimes.worlds.contains(g_scene_world) &&
+           std::any_of(g_fog_data.begin(), g_fog_data.end(), [&](const FogData& f) { return f.data == guest_addr && node_kind_locked(f.ref) >= 0; });
+}
 
 }  // namespace lights
