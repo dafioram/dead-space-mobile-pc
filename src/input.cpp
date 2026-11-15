@@ -35,6 +35,7 @@
 #include "hle/timing.h"
 #include "jni/jni.h"
 #include "log.h"
+#include "locator_input.h"
 #include "memory.h"
 #include "movement_handoff.h"
 #include "settings.h"
@@ -43,7 +44,7 @@ namespace input {
 
 namespace {
 
-enum EventKind { EV_MOVE, EV_LOOK, EV_ACTION, EV_INTERACT, EV_HUD, EV_WEAPON };
+enum EventKind { EV_MOVE, EV_LOOK, EV_ACTION, EV_INTERACT, EV_HUD, EV_WEAPON, EV_LOCATOR };
 struct Event {
     EventKind kind;
     int a = 0;            // action id / weapon index
@@ -494,6 +495,31 @@ bool player_owns_input(u32 player) {
     return gameplay_input_allowed(true, player_is_alive(player), paused, noninteractive_sequence(player), dialog_open());
 }
 
+struct LocatorHud {
+    u32 player, hud;
+
+    bool current() const {
+        return player && hud && player == g_player && hud == g_hud && g_frames_without_player < 10;
+    }
+    bool owns_gameplay() const { return current() && player_owns_input(player); }
+    bool owns_rig() const {
+        if (!current() || !player_is_alive(player) || dialog_open()) return false;
+        // isInRig also recognises pause menus. Only HUD state 1 / player route 0
+        // is the actual weapons/locator panel accepted by native canUseLocator.
+        return mem::r32(hud + 0x298) == 1 && mem::r32(hud + 0x2a4) == 0 &&
+               !interactive_scripted_input(false, s32(mem::r32(player + 0x210)), 0, grab_state(player) != 0) &&
+               !noninteractive_sequence(player);
+    }
+    void rig_button() const { hud_button(hud, "BTN_RIG"); }
+    void marker_button() const { hud_button(hud, "BTN_MARKER"); }
+};
+
+bool activate_locator(bool rig_only = false) {
+    LocatorHud hud{g_player, g_hud};
+    if (rig_only && !hud.owns_rig()) return false;
+    return request_locator(hud);
+}
+
 void release_port_movement(u32 player, const char* reason) {
     if (!g_movement_handoff.active(player)) return;
     const u32 hud = g_hud;
@@ -753,6 +779,9 @@ void on_player_update(cpu::Ctx& c) {
         }
         case EV_HUD:
             if (hud) hud_button(hud, e.id);
+            break;
+        case EV_LOCATOR:
+            activate_locator();
             break;
         case EV_WEAPON: {
             u32 slot = mem::r32(player + 0x2d4 + 4 * u32(e.a));  // owned weapons
@@ -1167,10 +1196,7 @@ void press_action(int b) {
     case B_ALT_FIRE: action(7); break;  // switch fire mode
     case B_JUMP: action(12); break;     // zero-G jump
     case B_RIG: push({EV_HUD, 0, 0, 0, 0, "BTN_RIG"}); break;
-    case B_LOCATOR:  // the HUD only takes BTN_MARKER while the RIG is open: open it, then press it
-        push({EV_HUD, 0, 0, 0, 0, "BTN_RIG"});
-        push({EV_HUD, 0, 0, 0, 0, "BTN_MARKER"});
-        break;
+    case B_LOCATOR: push({EV_LOCATOR}); break;
     default: break;  // movement and run are polled each frame
     }
 }
@@ -1279,6 +1305,7 @@ void pad_button(int code, bool down) {
             break;
         default:
             if (in_rig && code == g_padbind[P_RIG]) hud_button(g_hud, "BTN_RIG");
+            else if (code == g_padbind[P_LOCATOR]) activate_locator(true);
             break;
         }
         return;
@@ -1433,6 +1460,10 @@ bool event(const SDL_Event& e, SDL_Window* win) {
         }
         return true;
     }
+    // A locator binding may also activate the native marker in an already-open
+    // RIG. Other menus/dialogs stay outside this narrow native-menu shortcut.
+    if (e.type == SDL_KEYDOWN && !e.key.repeat && int(e.key.keysym.scancode) == g_bind[B_LOCATOR] &&
+        activate_locator(true)) return true;
     // the RIG key closes the RIG menu (it is a menu: gameplay keys are not handled while it is open)
     if (e.type == SDL_KEYDOWN && !e.key.repeat && int(e.key.keysym.scancode) == g_bind[B_RIG] && g_hud &&
         fn_in_rig && (cpu::call(fn_in_rig, {g_hud}) & 0xff)) {

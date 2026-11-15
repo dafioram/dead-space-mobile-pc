@@ -14,6 +14,7 @@
 #include "floor_snap_policy.h"
 #include "interaction_geometry.h"
 #include "input_policy.h"
+#include "locator_input.h"
 #include "menu_geometry.h"
 #include "menu_widget_safety.h"
 #include "movement_handoff.h"
@@ -521,6 +522,80 @@ void test_scripted_input_ownership() {
     require(!input::queued_gameplay_input_allowed(true, 0xffffffffu, 0), "epoch wrap must not accept an old event");
 }
 
+void test_direct_locator() {
+    struct Hud {
+        bool gameplay = true, rig = false, valid = true, modal = false;
+        bool open_allowed = true, marker_allowed = true, takeover_on_open = false, takeover_on_marker = false;
+        unsigned epoch = 0;
+        std::string calls;
+        bool owns_gameplay() const { return valid && !modal && gameplay; }
+        bool owns_rig() const { return valid && !modal && rig; }
+        void rig_button() {
+            calls += 'R';
+            if (!rig && !open_allowed) return;
+            rig = !rig;
+            gameplay = !rig;
+            ++epoch;  // handoffs still invalidate ordinary queued gameplay
+            if (takeover_on_open) { modal = true; gameplay = rig = false; }
+        }
+        void marker_button() {
+            require(owns_rig(), "native marker requests must target the actual RIG context");
+            calls += 'M';
+            require(!input::queued_gameplay_input_allowed(owns_gameplay(), 0, epoch),
+                    "the ordinary second queued event is still correctly forbidden after opening RIG");
+            if (marker_allowed) { rig = false; gameplay = true; }
+            if (takeover_on_marker) { modal = true; gameplay = rig = false; }
+        }
+    };
+    Hud hud;
+    require(input::request_locator(hud) && hud.calls == "RM" && !hud.rig,
+            "one locator request must reach the native marker despite opening RIG revoking gameplay ownership");
+    require(hud.gameplay && hud.epoch == 1, "successful native activation closes its panel without another toggle");
+    hud.calls.clear();
+    require(input::request_locator(hud) && hud.calls == "RM", "a later fresh locator press is an independent request");
+
+    for (bool valid : {false, true})
+        for (bool modal : {false, true}) {
+            Hud blocked;
+            blocked.valid = valid;
+            blocked.modal = modal;
+            blocked.gameplay = false;
+            require(!input::request_locator(blocked) && blocked.calls.empty(),
+                    "pause/dialog/death/cinematic/foreign owner contexts must not open or target RIG");
+        }
+    Hud refused_open;
+    refused_open.open_allowed = false;
+    require(input::request_locator(refused_open) && refused_open.calls == "R" && !refused_open.rig,
+            "a native refusal to open RIG must not emit marker input or force HUD state");
+    Hud refused_marker;
+    refused_marker.marker_allowed = false;
+    require(input::request_locator(refused_marker) && refused_marker.calls == "RMR" &&
+                !refused_marker.rig && refused_marker.gameplay,
+            "a disabled/busy/no-route locator must not strand a panel opened by the shortcut");
+
+    Hud already_open;
+    already_open.gameplay = false;
+    already_open.rig = true;
+    require(input::request_locator(already_open) && already_open.calls == "M" && !already_open.rig,
+            "a locator binding in an already-open RIG must activate its marker, not toggle the panel first");
+    Hud already_open_refused;
+    already_open_refused.gameplay = false;
+    already_open_refused.rig = true;
+    already_open_refused.marker_allowed = false;
+    require(input::request_locator(already_open_refused) && already_open_refused.calls == "M" && already_open_refused.rig,
+            "a native marker refusal must leave a manually opened RIG alone");
+
+    Hud replaced;
+    replaced.takeover_on_open = true;
+    require(input::request_locator(replaced) && replaced.calls == "R" && replaced.modal,
+            "a foreign takeover during opening must prevent marker input and cleanup targeting the wrong UI");
+    Hud replaced_after_marker;
+    replaced_after_marker.marker_allowed = false;
+    replaced_after_marker.takeover_on_marker = true;
+    require(input::request_locator(replaced_after_marker) && replaced_after_marker.calls == "RM" && replaced_after_marker.modal,
+            "cleanup must not toggle a different owner that appeared during marker handling");
+}
+
 void test_movement_handoff() {
     using input::MovementHandoff;
     constexpr std::uint32_t player = 0x10000, other = 0x20000;
@@ -701,6 +776,7 @@ int main() {
         test_floor_snap_recovery();
         test_main_menu_bar();
         test_scripted_input_ownership();
+        test_direct_locator();
         test_movement_handoff();
         test_noninteractive_scripted_input();
         test_menu_widget_safety();
