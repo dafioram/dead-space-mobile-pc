@@ -125,8 +125,8 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   test suites pass. Normal-play visual confirmation remains user-led. This is
   not a confirmed stretched-geometry or suit-upgrade fix. RC3 remains unchanged.
 - The user confirmed the shader switch works with this fix. PR #19 is merged;
-  production main through `5ef795e` is integrated, including the merged PRs #16,
-  #17, #18, #20, #21 and #23.
+  production main through `96fca67` is integrated, including the merged PRs #16,
+  #17, #18, #20, #21, #23 and #24.
 - `feat/rig-credits-display` / fork PR #20: add a read-only credits tile left of
   the RIG node counter, reusing its styling and the existing credits icon. Read
   the store's native wallet without adding an item, changing money or touching
@@ -189,6 +189,15 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   door unlocked with a power node. Natural grapple/swarm/scripted-motion
   regressions remain outstanding; this is not exhaustive input validation.
   See `docs/MENU_MOVEMENT_HANDOFF.md`. Other issue #22 items remain separate.
+- `fix/direct-locator` / fork PR #25 addresses issue #22 item 2: B/controller R3
+  now request the native locator as one open-RIG/marker transaction instead of
+  two queued events whose second was rejected by menu ownership. Keep native
+  permissions, line/animation/feedback and ordinary queue/epoch gates; restore
+  only a shortcut-opened RIG if activation is refused. The locator binding also
+  works in an already-open RIG without toggling it away first. Windows/Linux
+  builds and all nine synthetic suites pass on the themed branch; live locator
+  display and menu/interactive regressions remain user-led and unconfirmed.
+  See `docs/DIRECT_LOCATOR.md`; other issue #22 items are not closed by this fix.
 - Android-origin save compatibility: the user's four original save files use
   SBIN v2, pass all chunk checksums and match the comparison port save's common
   campaign/player/weapon/inventory/metadata/achievement field types. Android
