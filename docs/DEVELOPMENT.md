@@ -46,6 +46,11 @@ fixtures from the APK, even when testing a reported game-data bug. Gameplay
 checks requiring real assets or saves stay local and are reported separately
 from public, asset-free tests.
 
+For the preliminary iOS inventory and proposed inspect/unpack work, see
+[IOS_ASSET_IMPORT.md](IOS_ASSET_IMPORT.md). IPA import and iOS runtime support
+are not implemented. The same private-data rules apply to IPAs, extracted iOS
+assets and executables; do not mix them into an existing Android installation.
+
 ## Asset-free tests
 
 The test-only build needs a C++20 compiler, CMake, Python 3.8+ and zlib development
