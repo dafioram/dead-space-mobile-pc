@@ -81,4 +81,9 @@ User-led checks, preferably with `--no-save`:
    gestures must remain usable. Do not call a synthetic/cheated encounter live
    gameplay confirmation.
 
-Live movement/menu and interactive regression confirmation remains outstanding.
+The user confirmed the reported movement fix works, including the bench and a
+sewer door unlocked with a power node: these interactions no longer retained
+walking. This Windows test loaded an Android-origin chapter-2 save, then used a
+console level jump to reach the sewer. It is menu-handoff confirmation, not a
+natural chapter-transition or exhaustive grapple/swarm/scripted-motion check.
+Those broader interactive regressions remain outstanding.
