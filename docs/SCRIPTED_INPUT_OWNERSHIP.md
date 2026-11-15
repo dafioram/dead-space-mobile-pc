@@ -57,6 +57,10 @@ disassembly fixtures and actual game assets remain private and are not packaged.
   and sprint toggle with that reset, even if a complete handoff occurs between
   host frames. Keep the current physical movement keys/stick: held movement can
   resume after the animation, but blocked clicks are not replayed as shots.
+- Menu movement follow-up: cancel previously accepted port movement independently
+  of the blocked event queue, including before native RIG/object handoffs. See
+  `docs/MENU_MOVEMENT_HANDOFF.md` for the separate delivery latch, native movement
+  restrictions and live validation checklist.
 - Refresh the HUD through `GameObject::getHud` on player updates, and retire its
   cached reference/epoch with the player on unload/reload.
 

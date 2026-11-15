@@ -36,6 +36,7 @@
 #include "jni/jni.h"
 #include "log.h"
 #include "memory.h"
+#include "movement_handoff.h"
 #include "settings.h"
 
 namespace input {
@@ -64,7 +65,7 @@ std::atomic<int> g_state{0};
 
 // game functions / vtables
 u32 fn_player_event, fn_hud_event, fn_is_paused, fn_in_rig, fn_in_pause_menu, fn_is_alive;
-u32 fn_get_hud, fn_can_change_facing;
+u32 fn_get_hud, fn_can_change_facing, fn_can_change_position;
 u32 fn_change_weapon, fn_can_change_weapon;
 u32 vt_vector2, vt_action;
 
@@ -283,16 +284,19 @@ void action(int id) { push({EV_ACTION, id}); }
 
 // ---------------------------------------------------------------- game thread
 u32 g_evbuf = 0;
+u32 g_movement_release_event = 0;
+MovementHandoff g_movement_handoff;  // game-thread delivery state, not physical keys/stick
 
-void send_vector2(u32 player, int sub, float x, float y, int flags) {
-    std::memset(mem::host(g_evbuf), 0, 32);
-    mem::w32(g_evbuf, vt_vector2);
-    mem::w32(g_evbuf + 4, 1006);
-    mem::w32(g_evbuf + 8, u32(sub));
-    wf32(g_evbuf + 12, x);
-    wf32(g_evbuf + 16, y);
-    mem::w32(g_evbuf + 20, u32(flags));
-    cpu::call(fn_player_event, {player, g_evbuf});
+bool send_vector2(u32 player, int sub, float x, float y, int flags, u32 event = 0) {
+    if (!event) event = g_evbuf;
+    std::memset(mem::host(event), 0, 32);
+    mem::w32(event, vt_vector2);
+    mem::w32(event + 4, 1006);
+    mem::w32(event + 8, u32(sub));
+    wf32(event + 12, x);
+    wf32(event + 16, y);
+    mem::w32(event + 20, u32(flags));
+    return (cpu::call(fn_player_event, {player, event}) & 0xff) != 0;
 }
 
 void send_action(u32 target_onevent, u32 target, int id) {
@@ -490,9 +494,47 @@ bool player_owns_input(u32 player) {
     return gameplay_input_allowed(true, player_is_alive(player), paused, noninteractive_sequence(player), dialog_open());
 }
 
+void release_port_movement(u32 player, const char* reason) {
+    if (!g_movement_handoff.active(player)) return;
+    const u32 hud = g_hud;
+    const int state = player == g_player ? s32(mem::r32(player + 0x210)) : -1;
+    const int route = hud ? s32(mem::r32(hud + 0x2a4)) : -1;
+    const bool current = player == g_player;
+    const bool eligible = current && movement_release_allowed(true, player_is_alive(player),
+                          fn_can_change_position && (cpu::call(fn_can_change_position, {player}) & 0xff),
+                          state, route, grab_state(player) != 0);
+    // This is a release of our already-delivered intent, not permission for new
+    // gameplay through a menu. Frozen/grapple states keep native motion; never
+    // write physics velocity or player fields to defeat their native checks.
+    const bool released = g_movement_handoff.release(player, eligible, [&] {
+        // A handoff can happen inside an action using g_evbuf. Do not overwrite
+        // that in-flight native event while sending its movement cancellation.
+        if (!g_movement_release_event) g_movement_release_event = mem::data_alloc(32);
+        return send_vector2(player, 1, 0, 0, 0, g_movement_release_event);
+    });
+    if (released) g_free_moving = false;
+    if (g_trace)
+        LOGI("[input] movement handoff %s player=%08x state=%d route=%d eligible=%d released=%d",
+             reason, player, state, route, eligible, released);
+}
+
+void on_hud_state_transition(cpu::Ctx& c) {
+    // Native state 1 opens RIG. Stop before the transition, including mouse/pad
+    // entry points, not just the port's Tab binding.
+    if (c.reg(0) == g_hud && c.reg(1) == 1 && mem::r32(c.reg(0) + 0x298) != 1)
+        release_port_movement(g_player, "before RIG");
+}
+
+void on_object_get_input(cpu::Ctx& c) {
+    // Power-node confirmations, bench/store and other object-owned UI. This
+    // entry precedes the route write/reset, and leaves the original body intact.
+    if (c.reg(0) == g_hud) release_port_movement(g_player, "before object input");
+}
+
 void on_input_reset(cpu::Ctx& c) {
     u32 hud = g_hud;
     if (!hud || c.reg(0) != hud + 0x10) return;
+    release_port_movement(g_player, "native input reset");
     // The native scheme forgets its held gestures on ownership changes. Do the
     // same for direct port input, including events already in a local drain.
     std::lock_guard lk(g_lock);
@@ -586,6 +628,7 @@ void on_player_update(cpu::Ctx& c) {
     int dt_ms = int(c.reg(1));
     if (g_trace && g_player_tick == 100) LOGI("[input] player update dt=%d", dt_ms);
     if (g_player != player) {
+        g_movement_handoff.set_player(player);
         g_floor_snap_recovery.reset();
         LOGI("input: player object %08x", player);
         if (g_give_weapons) {
@@ -637,20 +680,27 @@ void on_player_update(cpu::Ctx& c) {
     for (auto& j : jobs) j(player);
     // A live, updating player need not own input (script, store exit, death UI).
     // Diagnostic jobs still run, but gameplay events must not bypass that owner.
-    if (!player_owns_input(player)) {
+    if (!player_owns_input(player) || !g_mouse_captured) {
+        release_port_movement(player, "gameplay ownership lost");
         reset_free_look();
         g_floor_snap_recovery.reset();
         return;
     }
     for (auto& e : q) {
         // Interact/HUD/actions can hand input away midway through this drain.
-        if (!queued_gameplay_input_allowed(player_owns_input(player), e.epoch, g_input_epoch)) continue;
+        if (!queued_gameplay_input_allowed(player_owns_input(player), e.epoch, g_input_epoch)) {
+            if (!player_owns_input(player)) release_port_movement(player, "ownership changed in event batch");
+            continue;
+        }
         switch (e.kind) {
-        case EV_MOVE:
-            g_free_moving = e.x != 0 || e.y != 0;
+        case EV_MOVE: {
+            const bool moving = e.x != 0 || e.y != 0;
+            g_free_moving = moving;
             if (g_free_moving) snap_free_look(player);
-            send_vector2(player, 1, e.x, e.y, e.flags);
+            const bool accepted = send_vector2(player, 1, e.x, e.y, e.flags);
+            g_movement_handoff.delivered(player, moving, accepted);
             break;
+        }
         case EV_LOOK: {
             if (!player_owns_free_look(player)) {
                 reset_free_look();
@@ -713,6 +763,7 @@ void on_player_update(cpu::Ctx& c) {
         }
     }
     if (!player_owns_input(player)) {
+        release_port_movement(player, "ownership changed after event batch");
         reset_free_look();
         g_floor_snap_recovery.reset();
         return;
@@ -746,6 +797,8 @@ void on_player_event(cpu::Ctx& c) {
     u32 ev = c.reg(1);
     if (!ev) return;
     u32 type = mem::r32(ev + 4);
+    if (type == 1006 && mem::r32(ev + 8) == 1 && ev != g_evbuf && ev != g_movement_release_event)
+        g_movement_handoff.native_movement(c.reg(0));
     // Native onEvent plays the melee sound before startSlash checks permission.
     // Cover native/touch input too, not just actions queued by the port. Do not
     // filter grapple gestures, ordinary combat states or scripted animation events.
@@ -765,6 +818,7 @@ void on_scheme_init(cpu::Ctx& c) { g_world = c.reg(1); }
 // GameObjectPlayable destructor (level change, death reload): forget everything about that player
 void on_player_destroyed(cpu::Ctx& c) {
     if (c.reg(0) != g_player) return;
+    g_movement_handoff.set_player(0);
     g_player = 0;
     g_hud = 0;
     g_paused = true;
@@ -882,8 +936,13 @@ void set_gameplay_capture(bool want) {
              mem::r32(player + 0x1b4), g_input_epoch.load());
     g_mouse_captured = want;
     SDL_ShowCursor(want || g_pad_active ? SDL_DISABLE : SDL_ENABLE);
-    if (!want && g_moving) {
-        push({EV_MOVE});
+    if (!want) {
+        // The old queued stop was rejected once a menu owned input. Cancellation
+        // now uses game-thread delivery state independently of this queue. Also
+        // retire old commands so focus/Alt release cannot replay them afterwards.
+        std::lock_guard lk(g_lock);
+        g_input_epoch++;
+        g_queue.clear();
         g_moving = false;
     }
     clear_pending_gameplay_input();
@@ -1011,13 +1070,14 @@ void install() {
     fn_is_alive = elf::find("_ZNK18GameObjectPlayable7isAliveEv");
     fn_get_hud = elf::find("_ZN10GameObject6getHudEv");
     fn_can_change_facing = elf::find("_ZNK18GameObjectPlayable15canChangeFacingEv");
+    fn_can_change_position = elf::find("_ZNK18GameObjectPlayable17canChangePositionEv");
     fn_change_weapon = elf::find("_ZN18GameObjectPlayable12changeWeaponENS_11WeaponIndexE");
     fn_can_change_weapon = elf::find("_ZNK18GameObjectPlayable15canChangeWeaponEv");
     fn_cine_transition = elf::find("_ZN19GameObjectCinematic15stateTransitionENS_5StateE");
     vt_vector2 = elf::find("_ZTV12Vector2Event") + 8;
     vt_action = elf::find("_ZTV11ActionEvent") + 8;
     if (!fn_player_event || !fn_hud_event || !fn_is_paused || !fn_in_rig || !fn_in_pause_menu || !fn_is_alive ||
-        !fn_get_hud || !fn_can_change_facing || vt_vector2 == 8 ||
+        !fn_get_hud || !fn_can_change_facing || !fn_can_change_position || vt_vector2 == 8 ||
         vt_action == 8) {
         LOGE("input: game functions not found; keyboard/mouse gameplay controls disabled");
         return;
@@ -1031,6 +1091,8 @@ void install() {
         {"_ZN10GameObject11snapToFloorEffa", "GameObject::snapToFloor", on_floor_snap},
         {"_ZN18GameObjectPlayable8onUpdateEi", "GameObjectPlayable::onUpdate", on_player_update},
         {"_ZN3Hud7onEventERKN2im5EventE", "Hud::onEvent", on_hud_event},
+        {"_ZN3Hud15stateTransitionENS_5StateE", "Hud::stateTransition", on_hud_state_transition},
+        {"_ZN3Hud14objectGetInputEP10GameObject", "Hud::objectGetInput", on_object_get_input},
         {"_ZN18GameObjectPlayable7onEventERKN2im5EventE", "GameObjectPlayable::onEvent", on_player_event},
         {"_ZN16InputSchemeBasic4initEP9GameWorld", "InputSchemeBasic::init", on_scheme_init},
         {"_ZN11InputScheme5resetEv", "InputScheme::reset", on_input_reset},
