@@ -219,6 +219,20 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   fixed; ChrisLynn94's original softlock and the independent exit crash remain
   separate. This confirmation does not cover every purchase/controller/grid
   regression scenario.
+- `feat/debug-console-tools` / PR #27 / source `0526c7d`: resource commands set
+  rather than add balances (`/credits`, `/nodes`, `/rich`, default 500,000/200).
+  `/restore` uses native suit health/stasis maxima and requests native oxygen
+  refill; `/enemies [radius]` lists nearby native enemies read-only. Strict
+  parsing, game-thread application, player/world/input-epoch retirement and
+  existing mutation ownership checks prevent invalid amounts and menu/script/
+  grapple writes. Windows/Linux themed builds and all 10 suites pass. A private
+  disposable Windows check verified setters/idempotence, malformed-input and
+  open-RIG refusal with no replay, native health restoration to 200 and a nearby
+  Slasher listing; original userdata hashes were unchanged. Oxygen depletion,
+  other suits/modules and exhaustive actor/controller/sequence cases remain
+  user-led. No enemy killing, saving-reliability or scene-cache change is
+  included. See `docs/DEBUG_CONSOLE_TOOLS.md`. Main through `590b7d2`, including
+  merged store PR #26, is integrated; production changes still use themed PRs.
 - Android-origin save compatibility: the user's four original save files use
   SBIN v2, pass all chunk checksums and match the comparison port save's common
   campaign/player/weapon/inventory/metadata/achievement field types. Android
