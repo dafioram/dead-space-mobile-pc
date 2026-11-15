@@ -16,6 +16,7 @@
 #include "input_policy.h"
 #include "menu_geometry.h"
 #include "menu_widget_safety.h"
+#include "movement_handoff.h"
 #include "settings.h"
 
 namespace fs = std::filesystem;
@@ -520,6 +521,101 @@ void test_scripted_input_ownership() {
     require(!input::queued_gameplay_input_allowed(true, 0xffffffffu, 0), "epoch wrap must not accept an old event");
 }
 
+void test_movement_handoff() {
+    using input::MovementHandoff;
+    constexpr std::uint32_t player = 0x10000, other = 0x20000;
+    MovementHandoff handoff;
+    handoff.set_player(player);
+    int stops = 0;
+    float native_x = 0, native_y = 0;
+    bool native_run = false;
+    auto stop = [&] { ++stops; native_x = native_y = 0; native_run = false; return true; };
+
+    require(!handoff.release(player, true, stop) && stops == 0, "never stop movement the port has not delivered");
+    handoff.delivered(player, true, false);
+    require(!handoff.active(player), "a queued/rejected movement command is not a native movement latch");
+    for (int route : {0, 2, 3}) {
+        for (auto vector : {std::pair{0.0f, 1.0f}, std::pair{0.0f, -1.0f},
+                            std::pair{-1.0f, 0.0f}, std::pair{0.7f, 0.7f}}) {
+            native_x = vector.first;
+            native_y = vector.second;
+            native_run = true;
+            handoff.delivered(player, true, true);
+            // The old stop used the same rejected queue as new gameplay. Cleanup
+            // must succeed even after a RIG/object handoff or epoch invalidation.
+            require(!input::queued_gameplay_input_allowed(false, 7, 8), "new gameplay remains blocked in menus");
+            const bool eligible = input::movement_release_allowed(true, true, true, 0, route, false);
+            require(handoff.release(player, eligible, stop), "cancel delivered movement despite menu ownership");
+            require(native_x == 0 && native_y == 0 && !native_run && !handoff.active(player),
+                    "walk, strafe and sprint intent must all be neutral after the handoff");
+            const int before = stops;
+            require(!handoff.release(player, eligible, stop) && stops == before, "cancel once, not every menu frame");
+            handoff.delivered(player, true, input::queued_gameplay_input_allowed(false, 7, 8));
+            require(!handoff.active(player), "a stale blocked move cannot rearm delivery state after cancellation");
+            // Physical controls are separate: a key/stick released in the menu
+            // sends no new motion; a still-held control can resume after return.
+            require(!handoff.active(player), "releasing controls in a menu must not resurrect old movement");
+            handoff.delivered(player, true, input::queued_gameplay_input_allowed(true, 8, 8));
+            require(handoff.active(player), "fresh polled held input can resume after gameplay ownership returns");
+            handoff.delivered(player, false, true);
+            require(!handoff.active(player), "an ordinary accepted zero command also clears delivery state");
+        }
+    }
+
+    for (int state = 0; state < 32; ++state)
+        for (int route = -1; route < 4; ++route)
+            for (int flags = 0; flags < 16; ++flags) {
+                const bool current = flags & 1, alive = flags & 2, can_move = flags & 4, grabbed = flags & 8;
+                const bool expected = current && alive && can_move && !grabbed && route != 1 &&
+                                      state != 9 && state != 10 && state != 12;
+                require(input::movement_release_allowed(current, alive, can_move, state, route, grabbed) == expected,
+                        "release eligibility must preserve native grapple/swarm/shake-off/freeze/death restrictions");
+            }
+    for (int state : {9, 10, 12, 29}) {
+        handoff.delivered(player, true, true);
+        const int before = stops;
+        require(!handoff.release(player, input::movement_release_allowed(true, true, false, state, 0, false), stop) &&
+                    !handoff.active(player) && stops == before,
+                "native animation ownership retires our latch without sending forced movement or a late stop");
+    }
+    handoff.delivered(player, true, true);
+    require(!handoff.release(player, true, [] { return false; }) && handoff.active(player),
+            "a rejected native stop must not be falsely recorded as accepted");
+    require(handoff.release(player, true, stop), "a rejected stop can be retried at the next valid boundary");
+
+    handoff.delivered(player, true, true);
+    handoff.native_movement(other);
+    require(handoff.active(player) && !handoff.release(other, true, stop), "other players do not own this movement latch");
+    handoff.native_movement(player);
+    require(!handoff.release(player, true, stop), "never cancel movement replaced by a native script/mobile event");
+    handoff.delivered(player, true, true);
+    handoff.set_player(0);
+    handoff.set_player(player);
+    require(!handoff.active(player), "a destroyed/recreated player at the same address must not inherit a stop");
+    handoff.delivered(player, true, true);
+    handoff.set_player(other);
+    require(!handoff.release(player, true, stop) && !handoff.active(other), "replacement players start without old intent");
+
+    handoff.set_player(player);
+    handoff.delivered(player, true, true);
+    require(handoff.release(player, true, [&] {
+        require(!handoff.release(player, true, stop), "native cancellation cannot recursively cancel itself");
+        return true;
+    }), "a re-entrant observation still completes the original release");
+    handoff.delivered(player, true, true);
+    handoff.release(player, true, [&] {
+        handoff.native_movement(player);
+        return false;
+    });
+    require(!handoff.active(player), "a failed callback must not rearm a latch superseded by native input");
+    handoff.delivered(player, true, true);
+    handoff.release(player, true, [&] {
+        handoff.set_player(other);
+        return false;
+    });
+    require(!handoff.active(player) && !handoff.active(other), "a failed callback cannot rearm destroyed-player state");
+}
+
 void test_noninteractive_scripted_input() {
     using input::HudInputRoute;
     for (bool cinematic : {false, true})
@@ -606,6 +702,7 @@ int main() {
         test_main_menu_bar();
         test_death_input_ownership();
         test_scripted_input_ownership();
+        test_movement_handoff();
         test_noninteractive_scripted_input();
         test_menu_widget_safety();
         std::cout << "Asset-file, settings, geometry, widget safety, input ownership and floor-snap policy checks passed.\n";
