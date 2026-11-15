@@ -38,7 +38,7 @@ void release_all();
 // True while gameplay controls are active (mouse captured; not in a menu).
 void press_back();  // the Android back key: goes back in menus; on the main menu, asks whether to exit
 bool controls_active();
-// Native mouse-as-touch gestures must not span a noninteractive cinematic.
+// Native mouse-as-touch gestures must not span a noninteractive scripted sequence.
 // Menus and interactive grapple/swarm sequences are excluded.
 bool blocks_gameplay_pointer();
 
