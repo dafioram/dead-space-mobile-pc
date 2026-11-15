@@ -1,10 +1,19 @@
-// Main-menu bottom-bar geometry, in the game's layout units (480 x 320 minimum).
+// Main-menu bottom-bar visual references and geometry (480 x 320 minimum).
 #pragma once
 
 #include <algorithm>
 #include <array>
+#include <string_view>
 
 namespace menu_nav {
+
+inline const char* main_menu_child_layout(std::string_view original, bool extras) {
+    if (original == "UI_BUTTON_MAIN_OFF")
+        return extras ? "UI_BUTTON_MAIN_PORT_EXTRAS_OFF" : "UI_BUTTON_MAIN_PORT_OFF";
+    if (original == "UI_BUTTON_MAIN_ON")
+        return extras ? "UI_BUTTON_MAIN_PORT_EXTRAS_ON" : "UI_BUTTON_MAIN_PORT_ON";
+    return nullptr;
+}
 
 struct MenuRect {
     float x, y, w, h;
