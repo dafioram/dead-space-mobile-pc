@@ -125,8 +125,8 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   test suites pass. Normal-play visual confirmation remains user-led. This is
   not a confirmed stretched-geometry or suit-upgrade fix. RC3 remains unchanged.
 - The user confirmed the shader switch works with this fix. PR #19 is merged;
-  production main through `44a8e40` is integrated, including the merged PRs #16,
-  #17 and #18.
+  production main through `83d94d0` is integrated, including the merged PRs #16,
+  #17, #18 and #20.
 - `feat/rig-credits-display` / fork PR #20: add a read-only credits tile left of
   the RIG node counter, reusing its styling and the existing credits icon. Read
   the store's native wallet without adding an item, changing money or touching
@@ -154,6 +154,15 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   stealing grapple input as a skip. Expanded synthetic policies and both builds
   pass; actual movie audio and grapple/QTE regression checks remain user-led.
   See `docs/NONINTERACTIVE_CINEMATICS.md`. No quit-crash fix is implied.
+- Follow-up `8220c5f` extends PR #21 after the user could still trigger the
+  sound during a scripted boss sequence. Boss camera handoffs use native
+  frozen-idle state 1 and return through `endIdleFrozen` to normal state 0;
+  this was not covered by the initial movie/generic-animation check. Also cover
+  known tram/collection/store/suit locks and full native freezes, but not partial
+  freezes or arbitrary combat/camera states. Exempt native grapple/swarm states
+  9/10, interactive shake-off state 12 and object-owned store/bench UI. Scripted
+  locks do not gain cinematic skipping. Expanded synthetic coverage passes;
+  boss sequence silence and interactive regressions still need user confirmation.
 - Exit crash remains open, separate from currency positioning: the user used
   Escape -> Quit -> Yes during gameplay. The retained log/dump are consistent
   with an invalid animation-track reference during native boss-scene teardown.
