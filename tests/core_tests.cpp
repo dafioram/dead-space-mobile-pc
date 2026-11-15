@@ -17,6 +17,7 @@
 #include "locator_input.h"
 #include "menu_geometry.h"
 #include "menu_widget_safety.h"
+#include "menu_window_cache.h"
 #include "movement_handoff.h"
 #include "settings.h"
 
@@ -470,6 +471,76 @@ void test_menu_widget_safety() {
             "validate every page, including intermediate pages, of a guest span");
 }
 
+void test_menu_window_cache() {
+    using menu_nav::WindowCache;
+    using menu_nav::WindowRef;
+    using menu_nav::WindowView;
+    // Synthetic host-only snapshots: no guest code, assets or dump fixtures.
+    WindowCache cache;
+    require(cache.observe(0, 10) == WindowRef{}, "null window has no lifetime");
+    auto store = cache.observe(0x30000, 10);
+    require(!cache.find(store, 10), "a panel event without a native draw cannot supply geometry");
+    WindowView drawn{store, 10, {-12, 20, 400, 240}, 0, -30, 0x40000, 0x50000};
+    require(cache.capture(drawn), "capture the real native draw's rectangle and owner");
+    require(cache.find(store, 10)->rect == drawn.rect && cache.find(store, 10)->scroll_y == -30,
+            "retain native clipping and signed scroll without recomputing guest geometry");
+    require(cache.observe(store.address, 10) == store, "draw-before-first-panel-event keeps the same owner");
+    require(cache.find(store, 11) && !cache.find(store, 12) && !cache.find(store, 9),
+            "only current/previous draw frames may participate in navigation");
+
+    auto bench = cache.observe(0x60000, 10);
+    WindowView across{bench, 10, {5, 6, 270, 80}, -138, std::numeric_limits<int32_t>::min(), 0x70000, 0x80000};
+    require(cache.capture(across), "horizontal lists preserve the native inactive-axis sentinel");
+    require(cache.find(store, 10)->rect != cache.find(bench, 10)->rect,
+            "simultaneous/nested windows do not share one global item viewport");
+    require(!cache.find({store.address, bench.generation}, 10), "a generation from another owner is not valid");
+
+    cache.retire(store.address);
+    require(!cache.find(store, 10), "destruction retires geometry immediately within the same frame");
+    require(!cache.capture(drawn), "a late old draw cannot resurrect a destroyed owner");
+    auto replacement = cache.observe(store.address, 10);
+    require(replacement != store && !cache.find(replacement, 10),
+            "reused mapped window address starts a distinct lifetime with no inherited geometry");
+    drawn.owner = replacement;
+    require(cache.capture(drawn) && !cache.find(store, 10) && cache.find(replacement, 10),
+            "new item records cannot make old references target the reused window");
+
+    for (int field = 0; field < 4; ++field) {
+        for (float bad : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
+            WindowView invalid = drawn;
+            invalid.rect[field] = bad;
+            require(!cache.capture(invalid) && !cache.find(replacement, 10),
+                    "invalid native geometry invalidates the previous snapshot instead of fabricating a rectangle");
+            require(cache.capture(drawn), "a subsequent valid draw restores navigation");
+        }
+    }
+    for (int dimension : {2, 3}) {
+        auto invalid = drawn;
+        invalid.rect[dimension] = 0;
+        require(!cache.capture(invalid), "not-yet-visible zero-sized windows supply no item geometry");
+        invalid.rect[dimension] = -1;
+        require(!cache.capture(invalid), "negative native dimensions are not a usable viewport");
+    }
+    auto detached = drawn;
+    detached.panel = 0;
+    require(!cache.capture(detached), "detached native panels are not navigable");
+    detached = drawn;
+    detached.vtable = 0;
+    require(!cache.capture(detached), "missing native object identity is not navigable");
+    require(cache.capture(drawn), "reattached native window can be drawn again");
+
+    cache.prune(13);
+    require(!cache.find(replacement, 13) && !cache.find(bench, 13), "expired screens lose their cached owners");
+    require(cache.observe(store.address, 13) != replacement, "a reobserved expired screen gets a fresh generation");
+    for (uint64_t frame = 20; frame < 200; ++frame) {
+        auto owner = cache.observe(0x90000, frame);
+        WindowView view{owner, frame, {0, 0, 300, 200}, 0, 0, 0xa0000, 0xb0000};
+        require(cache.capture(view) && cache.find(owner, frame), "repeated store entries can acquire native snapshots");
+        cache.retire(owner.address);
+        require(!cache.find(owner, frame), "every repeated exit retires the previous instance");
+    }
+}
+
 void test_scripted_input_ownership() {
     using input::HudInputRoute;
     const int player = int(HudInputRoute::player);
@@ -781,6 +852,7 @@ int main() {
         test_movement_handoff();
         test_noninteractive_scripted_input();
         test_menu_widget_safety();
+        test_menu_window_cache();
         std::cout << "Asset-file, settings, geometry, widget safety, input ownership and floor-snap policy checks passed.\n";
         return 0;
     } catch (const std::exception& error) {

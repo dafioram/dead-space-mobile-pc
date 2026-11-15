@@ -387,12 +387,19 @@ highlighted one. Words in a command are joined with _ (spaces work too).
 - /spawn_NAME or /spawn_NAME_COUNT: spawns COUNT (1-20) of that enemy in front of you, e.g.
   /spawn_slasher_4. NAME: slasher, lurker, brute, exploder, pregnant, swarm, boss
 - /give_all: gives every weapon
+- /credits_AMOUNT and /nodes_AMOUNT: **set**, never add, the selected balance
+- /rich: **sets** 500000 credits and 200 nodes; /rich_CREDITS_NODES sets both explicitly
+- /restore: restores native health/stasis maxima and requests the normal oxygen refill; does not revive
+- /enemies or /enemies_RADIUS: read-only nearest 10 native enemies (default 30 metres)
 - /god: toggles god mode (no damage)
 - /bandana: toggles infinite ammo
 - /level_MAP: loads a level, e.g. /level_03_water_01 (type /level_ to list them). Uses the game's
   developer level select, which also moves the current save profile to that level.
 - /kill: kills the player (normal death and Continue screen)
 - /help, /clear
+
+Resource/restore commands can affect autosaves; use `--no-save` to keep them temporary.
+See [the debug guide](docs/debug_menu.md) for limits, ownership checks and oxygen behavior.
 
 ### How E picks
 A box in front of Isaac (1.8 m deep, 1.4 m wide, floor to above head height) points where the

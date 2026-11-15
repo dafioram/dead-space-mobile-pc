@@ -42,3 +42,7 @@ Live testing remains user-led: open a bench, select an item, enter/back out of
 the node grid with Escape or controller B, purchase an upgrade if convenient,
 then exit and re-enter. Also check ordinary menu and controller navigation.
 There is no need to force a purchase solely to reproduce an unobserved bug.
+
+The subsequently reproduced store-entry crash involved list-window geometry,
+not the guarded LayoutButton query. See [STORE_LIST_LIFETIME.md](STORE_LIST_LIFETIME.md)
+for its separate ownership/draw-snapshot fix and confirmation limits.

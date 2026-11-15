@@ -17,6 +17,16 @@ target_include_directories(apk_import_probe PRIVATE ../src)
 target_link_libraries(apk_import_probe PRIVATE ZLIB::ZLIB)
 
 add_test(NAME core COMMAND core_tests)
+add_executable(console_debug_tests console_debug_tests.cpp)
+target_include_directories(console_debug_tests PRIVATE ../src)
+add_test(NAME console_debug COMMAND console_debug_tests)
+set_tests_properties(console_debug PROPERTIES TIMEOUT 60)
+add_executable(scene_cache_tests scene_cache_tests.cpp)
+target_include_directories(scene_cache_tests PRIVATE stubs/scene_cache ../src)
+find_package(Threads REQUIRED)
+target_link_libraries(scene_cache_tests PRIVATE Threads::Threads)
+add_test(NAME scene_cache COMMAND scene_cache_tests)
+set_tests_properties(scene_cache PROPERTIES TIMEOUT 60)
 add_test(NAME apk_import COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_apk_import.py" --importer "$<TARGET_FILE:apk_import_probe>")
 add_test(NAME asset_policy COMMAND "${Python3_EXECUTABLE}" -m unittest discover
