@@ -125,8 +125,8 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   test suites pass. Normal-play visual confirmation remains user-led. This is
   not a confirmed stretched-geometry or suit-upgrade fix. RC3 remains unchanged.
 - The user confirmed the shader switch works with this fix. PR #19 is merged;
-  production main through `83d94d0` is integrated, including the merged PRs #16,
-  #17, #18 and #20.
+  production main through `479c7f7` is integrated, including the merged PRs #16,
+  #17, #18, #20 and #21.
 - `feat/rig-credits-display` / fork PR #20: add a read-only credits tile left of
   the RIG node counter, reusing its styling and the existing credits icon. Read
   the store's native wallet without adding an item, changing money or touching
@@ -170,6 +170,13 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   movie clicks; synthetic tests cover both sides of that boundary.
 - The user confirmed the extended scripted-input fix works. This does not imply
   exhaustive natural grapple/swarm/shake-off regression coverage.
+- `fix/main-menu-info-label` / fork PR #23: the user found that the third button
+  displayed Extras but still correctly opened Info. Separate Extras' OFF/ON
+  visual child layouts from the regular wrapper's mutable captions/icons;
+  preserve native localisation, action IDs, geometry and the Extras-owned Quit
+  fade child. Windows/Linux builds and all nine suites pass; the private offline
+  layout probe checks independent caption arrays and existing routing references
+  at three resolutions. Live appearance/transition confirmation remains user-led.
 - The user completed the campaign and successfully started New Game+ in the
   same save slot. Completion also unlocks Hard for fresh games in other slots;
   this is separate from the completed slot's New Game+ restart. Item-by-item
