@@ -123,7 +123,10 @@ struct Fixture {
         return db.body(entities) + i * db.array_stride(entities);
     }
     std::string string_at(size_t i, size_t offset) { return db.string(get<uint16_t>(entry(i) + offset)); }
-    const uint8_t* point(size_t i) { return db.body(size_t(get<int32_t>(entry(i) + 20))); }
+    size_t points(size_t i) { return size_t(get<int32_t>(entry(i) + 20)); }
+    const uint8_t* point(size_t i, size_t p = 0) {
+        return db.body(points(i)) + p * db.array_stride(points(i));
+    }
 };
 
 void test_counter() {
@@ -135,21 +138,37 @@ void test_counter() {
     require(f.string_at(3, 0) == "PORT_CREDIT_BACKGROUND", "unique background name");
     require(f.string_at(4, 0) == "PORT_CREDIT_ICON", "unique icon name");
     require(f.string_at(5, 0) == "PORT_CREDIT_AMOUNT", "unique text name");
-    require(f.string_at(3, 2) == "IMAGE" && f.string_at(4, 2) == "IMAGE" && f.string_at(5, 2) == "MUTABLETEXT",
+    require(f.string_at(3, 2) == "STRETCH" && f.string_at(4, 2) == "STRETCH" && f.string_at(5, 2) == "MUTABLETEXT",
             "no button or actionable inventory item is created");
     require(f.string_at(3, 4) == "rig/rig_node_bg.tif", "reuse node background artwork");
     require(f.string_at(4, 4) == "items/item_credit.tif", "use existing credits artwork");
     require(f.string_at(5, 8) == "SYNTHETIC_FONT" && f.string_at(5, 10) == "SYNTHETIC_TINT",
             "inherit template font and colour rather than hardcoding a font");
     require(f.string_at(5, 6) == "RIGHT|TOP", "align the amount beside its currency icon");
-    require(get<float>(f.entry(3) + 12) == 150.0f, "wider credits panel fits a full wallet");
-    require(get<float>(f.point(3)) + get<float>(f.entry(3) + 12) < get<float>(f.point(0)),
+    require(f.db.array_count(f.points(3)) == 2 && f.db.array_count(f.points(4)) == 2,
+            "native STRETCH images need two explicit draw-bound vertices");
+    require(get<float>(f.point(4, 1)) - get<float>(f.point(4)) == 36.0f &&
+            get<float>(f.point(4, 1) + 4) - get<float>(f.point(4) + 4) == 14.0f,
+            "currency image is bounded to a small wide icon, not its intrinsic texture size");
+    require(get<float>(f.entry(4) + 12) == 0 && get<float>(f.entry(4) + 16) == 0,
+            "do not rely on ignored IMAGE width/height metadata for draw sizing");
+    require(get<float>(f.point(3, 1)) < get<float>(f.point(0)),
             "credits tile stays left of the node tile with a gap");
-    require(get<float>(f.point(5)) < get<float>(f.point(4)), "text ends before its icon");
+    require(get<float>(f.point(4)) > get<float>(f.point(3)) &&
+            get<float>(f.point(4, 1)) < get<float>(f.point(5)) - 80.0f,
+            "icon stays left of the full ten-digit amount and inside its tile");
+    require(get<float>(f.point(5)) == 25.0f - 160.0f + 150.0f - 81.0f - 8.0f,
+            "keep the user-confirmed amount position unchanged");
+    require(get<float>(f.point(4) + 4) > get<float>(f.point(3) + 4) &&
+            get<float>(f.point(4, 1) + 4) < get<float>(f.point(3, 1) + 4),
+            "smaller currency icon is vertically inset in its panel");
     for (size_t i = 3; i < 6; ++i) {
-        require(get<float>(f.point(i) + 4) == 7.0f, "preserve row baseline");
+        if (i != 4) require(get<float>(f.point(i) + 4) == 7.0f, "preserve panel/text baseline");
         require(get<float>(f.point(i) + 8) == 0.25f && get<float>(f.point(i) + 12) == 0.75f,
                 "preserve native anchors");
+        if (i != 5)
+            require(get<float>(f.point(i, 1) + 8) == 0.25f && get<float>(f.point(i, 1) + 12) == 0.75f,
+                    "both corners keep identical native anchors");
         require(f.entry(i)[24] == 1, "preserve template visibility");
     }
     auto once = f.db.serialize();
