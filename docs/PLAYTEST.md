@@ -125,8 +125,8 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   test suites pass. Normal-play visual confirmation remains user-led. This is
   not a confirmed stretched-geometry or suit-upgrade fix. RC3 remains unchanged.
 - The user confirmed the shader switch works with this fix. PR #19 is merged;
-  production main through `479c7f7` is integrated, including the merged PRs #16,
-  #17, #18, #20 and #21.
+  production main through `5ef795e` is integrated, including the merged PRs #16,
+  #17, #18, #20, #21 and #23.
 - `feat/rig-credits-display` / fork PR #20: add a read-only credits tile left of
   the RIG node counter, reusing its styling and the existing credits icon. Read
   the store's native wallet without adding an item, changing money or touching
@@ -177,6 +177,16 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   fade child. Windows/Linux builds and all nine suites pass; the private offline
   layout probe checks independent caption arrays and existing routing references
   at three resolutions. Live appearance/transition confirmation remains user-led.
+- `fix/menu-movement-release` / fork PR #24 addresses issue #22 item 3: the
+  ordinary queued stop could be discarded once RIG/object UI owned input,
+  retaining the player's last delivered movement. Track accepted port movement
+  separately and cancel it through the native zero-movement event before menu
+  handoff, with independent reset/update cleanup. Keep menu ownership checks,
+  native movement restrictions, grapple/swarm/shake-off motion and physical key/
+  stick tracking. No player physics/freeze-field writes or save changes. Both
+  application builds and nine synthetic test suites pass on the themed branch;
+  live RIG/power-node and interactive regressions still need user confirmation.
+  See `docs/MENU_MOVEMENT_HANDOFF.md`. Other issue #22 items remain separate.
 - The user completed the campaign and successfully started New Game+ in the
   same save slot. Completion also unlocks Hard for fresh games in other slots;
   this is separate from the completed slot's New Game+ restart. Item-by-item
