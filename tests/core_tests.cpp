@@ -506,6 +506,77 @@ void test_scripted_input_ownership() {
     require(!input::queued_gameplay_input_allowed(true, 0xffffffffu, 0), "epoch wrap must not accept an old event");
 }
 
+void test_noninteractive_scripted_input() {
+    using input::HudInputRoute;
+    for (bool cinematic : {false, true})
+        for (bool grabbed : {false, true})
+            for (int route = 0; route < 4; ++route)
+                for (int state = 0; state < 32; ++state)
+                    for (unsigned freeze : {0u, 1u, 2u, 3u, 0x43u, 0xffffffffu}) {
+                        const bool blocked = input::noninteractive_scripted_input(cinematic, state, route, grabbed, freeze);
+                        const bool interactive = grabbed || route == int(HudInputRoute::grapple) ||
+                                                 state == 9 || state == 10 || state == 12 ||
+                                                  (route == int(HudInputRoute::object) &&
+                                                   ((state >= 19 && state <= 24) ||
+                                                    (!cinematic && state != 27 && state != 29 && state != 30)));
+                        const bool locked = state == 1 || (state >= 19 && state <= 24) ||
+                                            state == 27 || state == 29 || state == 30 || (freeze & 3) == 3;
+                        require(blocked == (!interactive && (cinematic || locked)),
+                                "only known noninteractive scripted sequences block input");
+                        if (interactive)
+                            require(!blocked, "grapples, swarms, shake-off and object-owned menus must remain interactive");
+                        require(input::cinematic_skip_allowed(cinematic, blocked) == (cinematic && blocked),
+                                "only a tracked noninteractive movie may consume an existing skip binding");
+                    }
+    require(input::noninteractive_scripted_input(false, 1, 0, false, 0),
+            "boss camera frozen-idle must block without a cinematic update or explicit freeze flags");
+    require(!input::noninteractive_scripted_input(false, 0, 0, false, 0),
+            "endIdleFrozen must restore ordinary boss combat input immediately");
+    for (int state : {19, 20, 21, 22, 23, 24, 27, 29, 30})
+        require(input::noninteractive_scripted_input(false, state, 0, false, 0),
+                "known store/suit/tram/generic/weapon-collection animations are noninteractive");
+    require(input::noninteractive_scripted_input(false, 29, int(HudInputRoute::player), false, 0),
+            "Cinematic2 generic animation must block even without a GameObjectCinematic update");
+    require(input::noninteractive_scripted_input(false, 29, int(HudInputRoute::object), false, 0),
+            "noninteractive animation must not become mobile touch input through an object-owned route");
+    for (int combat_state : {0, 4, 6, 8, 11, 13, 14, 15, 16, 17, 18, 25, 26, 28, 31})
+        require(!input::noninteractive_scripted_input(false, combat_state, int(HudInputRoute::player), false, 0),
+                "ordinary combat/aiming/zero-G/kinesis and unknown states must not become scripted locks");
+    for (unsigned partial : {1u, 2u})
+        require(!input::noninteractive_scripted_input(false, 0, 0, false, partial),
+                "partial facing/position freezes must not turn ordinary gameplay into a movie");
+    require(input::noninteractive_scripted_input(false, 0, 0, false, 3),
+            "full native freeze covers scripted reveals without a special player state");
+    for (int interactive_state : {9, 10, 12})
+        require(!input::noninteractive_scripted_input(true, interactive_state, 0, false, 0xffffffffu),
+                "native grapple/swarm/shake-off states outrank cinematic/freeze signals in the new guard");
+    for (int menu_state = 19; menu_state <= 24; ++menu_state)
+        require(!input::noninteractive_scripted_input(true, menu_state, int(HudInputRoute::object), false, 3),
+                "object-owned store/bench UI must not depend on a recent menu heartbeat to accept clicks");
+    for (int body_state : {0, 1})
+        require(!input::noninteractive_scripted_input(false, body_state, int(HudInputRoute::object), false, 3),
+                "a frozen player must not block an interactive object's pointer");
+    for (int animation_state : {27, 29, 30})
+        require(input::noninteractive_scripted_input(false, animation_state, int(HudInputRoute::object), false, 0),
+                "object routing alone must not reopen an explicitly noninteractive animation");
+    require(input::noninteractive_scripted_input(true, 1, int(HudInputRoute::object), false, 3),
+            "object routing alone must not reopen a live movie");
+    require(!input::cinematic_skip_allowed(false, true),
+            "boss camera, tram and pickup locks must not introduce a new cinematic skip");
+    require(input::recent_cinematic(true, 100, 100), "a native update is visible before the next host frame");
+    require(input::recent_cinematic(true, 299, 100), "recent camera-only cinematics retain ownership");
+    require(!input::recent_cinematic(true, 300, 100), "stale cinematic signal expires");
+    require(!input::recent_cinematic(false, 100, 100), "a finished cinematic cannot retain control");
+    require(input::recent_cinematic(true, 20, 0xfffffff0u), "cinematic expiry handles tick wrap");
+
+    // A queued click before frozen-idle must be discarded, not delivered
+    // after the cutscene. The existing reset epoch still handles restoration.
+    const bool blocked = input::noninteractive_scripted_input(false, 1, 0, false, 0);
+    require(!input::queued_gameplay_input_allowed(!blocked, 5, 5), "queued gameplay cannot enter a scripted camera handoff");
+    require(!input::queued_gameplay_input_allowed(true, 5, 6), "old clicks cannot replay after a native reset");
+    require(input::queued_gameplay_input_allowed(true, 6, 6), "fresh input resumes after the cutscene");
+}
+
 }  // namespace
 
 int main() {
@@ -521,6 +592,7 @@ int main() {
         test_main_menu_bar();
         test_death_input_ownership();
         test_scripted_input_ownership();
+        test_noninteractive_scripted_input();
         test_menu_widget_safety();
         std::cout << "Asset-file, settings, geometry, widget safety, input ownership and floor-snap policy checks passed.\n";
         return 0;

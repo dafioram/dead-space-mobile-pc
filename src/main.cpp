@@ -491,6 +491,12 @@ int main(int argc, char** argv) {
         SDL_GL_GetDrawableSize(win, &win_w, &win_h);
         run_script(frames + 1);
         dev::frame();
+        if (mouse_down && input::blocks_gameplay_pointer()) {
+            // End a touch already held before a noninteractive scripted sequence. Merely
+            // swallowing its release would leave a stale press to replay later.
+            mouse_down = false;
+            send_touch(g_touch.cancel, 0, 0, 0);
+        }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             float gx, gy;
