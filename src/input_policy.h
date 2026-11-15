@@ -32,14 +32,18 @@ inline bool full_player_freeze(unsigned freeze_flags) {
     return (freeze_flags & freeze_facing_and_position) == freeze_facing_and_position;
 }
 
-inline bool interactive_scripted_input(int player_state, int hud_route, bool grabbed) {
+inline bool interactive_scripted_input(bool cinematic, int player_state, int hud_route, bool grabbed) {
     // isGrappling(false) recognises states 9/10, including handoff frames before
     // a gesture phase is recorded. doDementiaShakeOff selects interactive state 12.
-    // An object-owned bench/store UI must keep its pointer, independently of the
-    // body's animation lock; it still does not grant direct player control.
+    // An object-owned UI must keep its pointer despite a frozen player body.
+    // Cinematics also use objectGetInput: route 2 alone is not an exemption for
+    // a live movie or an explicit tram/generic/collection animation. Bench/store
+    // UI remains interactive independently of a recent camera observation.
+    const bool object_input = hud_route == int(HudInputRoute::object) &&
+                              (bench_store_sequence(player_state) ||
+                               (!cinematic && player_state != 27 && player_state != 29 && player_state != 30));
     return grabbed || hud_route == int(HudInputRoute::grapple) ||
-           player_state == 9 || player_state == 10 || player_state == 12 ||
-           (hud_route == int(HudInputRoute::object) && bench_store_sequence(player_state));
+           player_state == 9 || player_state == 10 || player_state == 12 || object_input;
 }
 
 inline bool scripted_player_sequence(int player_state, unsigned freeze_flags) {
@@ -52,7 +56,7 @@ inline bool scripted_player_sequence(int player_state, unsigned freeze_flags) {
 
 inline bool noninteractive_scripted_input(bool cinematic, int player_state, int hud_route,
                                          bool grabbed, unsigned freeze_flags) {
-    return !interactive_scripted_input(player_state, hud_route, grabbed) &&
+    return !interactive_scripted_input(cinematic, player_state, hud_route, grabbed) &&
            (cinematic || scripted_player_sequence(player_state, freeze_flags));
 }
 

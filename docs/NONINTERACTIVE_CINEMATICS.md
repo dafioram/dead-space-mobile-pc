@@ -28,6 +28,11 @@ are recognised by native `isGrappling(false)`; `doDementiaShakeOff` selects
 interactive state 12. Unknown states and ordinary combat animations are not
 guessed to be movies, nor is the whole boss fight or every non-player camera mode.
 
+Native `Hud::objectGetInput` is called by store, bench, power-node lock prompts
+and cinematics. Therefore a frozen player body must not disable an object's UI,
+but object routing alone must not reopen a live movie or explicit tram/generic/
+collection animation. Store/bench UI keeps its existing explicit exemption.
+
 The native player action-event handler can play feedback audio for action 14
 before calling `startSlash`, whose permission checks reject the action in these
 locked states. Thus an audible slash does not, by itself, prove a slash animation/damage
@@ -42,8 +47,9 @@ unwanted sound, rather than muting sounds globally or altering combat checks.
   immediately and expires if it stops updating.
 - Native grapple routing, active grapple phases/attached swarms, native grapple/
   swarm states 9/10, and interactive shake-off state 12 explicitly exclude a
-  sequence from the new classification. Object-owned bench/store UI also keeps
-  its pointer independently of the body's animation lock. Existing native pause,
+  sequence from the new classification. Object-owned UI also keeps its pointer
+  despite frozen-idle/full-freeze body locks when no movie or explicit scripted
+  animation owns input; bench/store UI retains its explicit exemption. Native pause,
   liveness, object-ownership and freeze checks still apply independently.
 - The existing native player-event observation hook rejects melee action events
   before their body during these scenes, covering native/touch fallback as well
