@@ -516,7 +516,9 @@ void test_noninteractive_scripted_input() {
                         const bool blocked = input::noninteractive_scripted_input(cinematic, state, route, grabbed, freeze);
                         const bool interactive = grabbed || route == int(HudInputRoute::grapple) ||
                                                  state == 9 || state == 10 || state == 12 ||
-                                                 (route == int(HudInputRoute::object) && state >= 19 && state <= 24);
+                                                  (route == int(HudInputRoute::object) &&
+                                                   ((state >= 19 && state <= 24) ||
+                                                    (!cinematic && state != 27 && state != 29 && state != 30)));
                         const bool locked = state == 1 || (state >= 19 && state <= 24) ||
                                             state == 27 || state == 29 || state == 30 || (freeze & 3) == 3;
                         require(blocked == (!interactive && (cinematic || locked)),
@@ -551,6 +553,14 @@ void test_noninteractive_scripted_input() {
     for (int menu_state = 19; menu_state <= 24; ++menu_state)
         require(!input::noninteractive_scripted_input(true, menu_state, int(HudInputRoute::object), false, 3),
                 "object-owned store/bench UI must not depend on a recent menu heartbeat to accept clicks");
+    for (int body_state : {0, 1})
+        require(!input::noninteractive_scripted_input(false, body_state, int(HudInputRoute::object), false, 3),
+                "a frozen player must not block an interactive object's pointer");
+    for (int animation_state : {27, 29, 30})
+        require(input::noninteractive_scripted_input(false, animation_state, int(HudInputRoute::object), false, 0),
+                "object routing alone must not reopen an explicitly noninteractive animation");
+    require(input::noninteractive_scripted_input(true, 1, int(HudInputRoute::object), false, 3),
+            "object routing alone must not reopen a live movie");
     require(!input::cinematic_skip_allowed(false, true),
             "boss camera, tram and pickup locks must not introduce a new cinematic skip");
     require(input::recent_cinematic(true, 100, 100), "a native update is visible before the next host frame");
