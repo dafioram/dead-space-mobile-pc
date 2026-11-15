@@ -54,6 +54,7 @@ add_executable(deadspace
     src/texpack.cpp
     src/debugview.cpp
     src/console.cpp
+    src/console_debug.cpp
     src/menu_nav.cpp
     src/render/native.cpp
     src/guest_util.cpp
