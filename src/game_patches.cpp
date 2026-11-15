@@ -21,6 +21,7 @@
 #include "menu_geometry.h"
 #include "objects.h"
 #include "render/native.h"
+#include "rig_credits.h"
 #include "sbin.h"
 #include "settings.h"
 
@@ -140,6 +141,7 @@ template <class T> void put(u8* p, T v) { std::memcpy(p, &v, sizeof v); }
 //   - "Anti-Aliasing" under "Invert Y Axis" on page 3
 //   - the port rows on pages 4+ (pages are 480 units apart, rows 60 apart)
 bool g_main_menu_quit_added = false;
+bool g_rig_credits_ready = false;
 
 bool patch_layouts(sbin::Database& db) {
     int s_layout = db.find_struct("Layout"), s_entity = db.find_struct("Entity"), s_vertex = db.find_struct("Vertex");
@@ -407,6 +409,10 @@ bool patch_layouts(sbin::Database& db) {
     }
     LOGI("menu patch: anti-aliasing and %zu port rows (%d pages) added to %d options panes", port_rows().size(),
          page_count(), added);
+    if (g_rig_credits_ready && rig_credits::patch_layout(db)) {
+        rig_credits::layout_added();
+        LOGI("menu patch: read-only RIG credits counter added beside power nodes");
+    }
     return added > 0;
 }
 
@@ -1213,6 +1219,7 @@ std::shared_ptr<const std::vector<u8>> asset(const std::string& path) {
 }
 
 void install() {
+    g_rig_credits_ready = rig_credits::install();
     // GameObjectPlayable::onUpdate shows the navigation line by itself after the player has been idle for
     // a while (which also tilts the camera down). Skip that: the line only appears when asked for.
     if (!patch_insn(0x19b9b0, 0xda000014, 0xea000014)) LOGW("idle navigation line: not patched");

@@ -44,6 +44,8 @@ add_executable(deadspace
     src/crash.cpp
     src/sbin.cpp
     src/game_patches.cpp
+    src/rig_credits.cpp
+    src/rig_credits_layout.cpp
     src/input.cpp
     src/devmode.cpp
     src/objects.cpp
