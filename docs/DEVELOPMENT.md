@@ -80,6 +80,13 @@ corners and distances, reflected/invalid marker axes, strict box overlap, empty
 corners of enclosing AABBs, and skew edge-edge separation. Selection and the debug
 overlay use the same oriented boxes; separate markers are not joined by a union.
 
+`scene_cache` compiles the production light/cache handlers with declaration-only
+SDL/GL headers, synthetic memory and native-call stand-ins. It checks world/node
+retirement and address reuse, construction readiness, live type/ownership gates,
+normal fade timing, fixture/fog invalidation, temporary-reference balance, cyclic
+parents, lock release around native transforms/releases, and read-only teardown
+diagnostics. It executes no game instructions and requires no SDL/GL packages.
+
 This is a baseline regression suite, not a claim that the importer handles every
 malformed archive safely. CRC verification and comprehensive importer hardening
 remain separate work. Tests do not launch the JIT, render, or validate gameplay.
