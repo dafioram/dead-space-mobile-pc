@@ -59,6 +59,9 @@ set_tests_properties(core apk_import asset_policy starttest_exit_status PROPERTI
 add_test(NAME build_staging COMMAND "${Python3_EXECUTABLE}" -m unittest discover
     -s "${CMAKE_CURRENT_SOURCE_DIR}" -p test_staging.py -v)
 set_tests_properties(build_staging PROPERTIES TIMEOUT 60)
+add_test(NAME gameplay_cpu_capture COMMAND "${Python3_EXECUTABLE}" -m unittest discover
+    -s "${CMAKE_CURRENT_SOURCE_DIR}" -p test_cpu_capture.py -v)
+set_tests_properties(gameplay_cpu_capture PROPERTIES TIMEOUT 60)
 
 add_test(NAME release_packaging COMMAND "${Python3_EXECUTABLE}" -m unittest discover
     -s "${CMAKE_CURRENT_SOURCE_DIR}" -p test_release_package.py -v)
