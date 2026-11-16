@@ -43,6 +43,8 @@ add_executable(deadspace
     src/main.cpp
     src/log.cpp
     src/apk.cpp
+    src/apk_cli.cpp
+    src/sha256.cpp
     src/asset_file.cpp
     src/settings.cpp
     src/temporary_profile.cpp

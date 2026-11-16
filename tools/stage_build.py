@@ -55,6 +55,10 @@ def main():
     geometry_guide = root / "docs" / "GEOMETRY_DIAGNOSTICS.md"
     if geometry_guide.exists():
         files[geometry_guide] = "docs/GEOMETRY_DIAGNOSTICS.md"
+    for name in ("APK_IMPORT.md", "ANDROID_ASSET_SUPPORT.md"):
+        guide = root / "docs" / name
+        if guide.exists():
+            files[guide] = "docs/" + name
     for source, destination in BUNDLED_NOTICES.items():
         files[root / "external" / "dynarmic" / source] = "licenses/" + destination
     if args.platform == "windows-x86_64":

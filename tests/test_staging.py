@@ -81,6 +81,16 @@ class StagingTests(unittest.TestCase):
             self.stage()
         self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
 
+    def test_apk_guides_are_allowlisted_but_private_cases_are_not(self):
+        for name in ("APK_IMPORT.md", "ANDROID_ASSET_SUPPORT.md"):
+            (self.root / "docs" / name).write_text("synthetic APK guide", encoding="utf-8")
+        (self.build / "test-A").mkdir()
+        (self.build / "test-A/import.log").write_text("synthetic private log", encoding="utf-8")
+        self.stage()
+        self.assertTrue((self.output / "docs/APK_IMPORT.md").is_file())
+        self.assertTrue((self.output / "docs/ANDROID_ASSET_SUPPORT.md").is_file())
+        self.assertFalse((self.output / "test-A").exists())
+
     def test_missing_binary_fails_before_staging(self):
         (self.build / "deadspace").unlink()
         with self.assertRaises(SystemExit):

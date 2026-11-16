@@ -13,6 +13,8 @@ target_link_libraries(core_tests PRIVATE profile_io)
 add_executable(apk_import_probe
     apk_import_probe.cpp
     ../src/apk.cpp
+    ../src/apk_cli.cpp
+    ../src/sha256.cpp
     ../src/log.cpp
 )
 target_include_directories(apk_import_probe PRIVATE ../src)
@@ -48,6 +50,9 @@ add_test(NAME geometry_diagnostics COMMAND geometry_tests)
 set_tests_properties(geometry_diagnostics PROPERTIES TIMEOUT 120)
 add_test(NAME apk_import COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_apk_import.py" --importer "$<TARGET_FILE:apk_import_probe>")
+add_test(NAME apk_test_preparation COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/test_prepare_apk.py" --probe "$<TARGET_FILE:apk_import_probe>")
+set_tests_properties(apk_import apk_test_preparation PROPERTIES TIMEOUT 120)
 add_test(NAME asset_policy COMMAND "${Python3_EXECUTABLE}" -m unittest discover
     -s "${CMAKE_CURRENT_SOURCE_DIR}" -p test_asset_policy.py -v)
 add_test(NAME starttest_exit_status COMMAND "${Python3_EXECUTABLE}" -m unittest discover
@@ -74,6 +79,9 @@ add_test(NAME rig_credits COMMAND rig_credits_tests)
 set_tests_properties(rig_credits PROPERTIES TIMEOUT 60)
 
 if (DEADSPACE_BUILD_APP)
+    add_test(NAME apk_cli COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_apk_cli.py"
+        --executable "$<TARGET_FILE:deadspace>")
+    set_tests_properties(apk_cli PROPERTIES TIMEOUT 120)
     add_test(NAME cli_help COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_cli_help.py"
         --executable "$<TARGET_FILE:deadspace>" -v)
     set_tests_properties(cli_help PROPERTIES TIMEOUT 60)
