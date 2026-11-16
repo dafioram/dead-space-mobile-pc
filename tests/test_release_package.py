@@ -69,6 +69,14 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.verify_stage(self.stage, "windows-x86_64", self.commit, self.tag)
 
+    def test_optional_frame_wait_guide_round_trip(self):
+        self.populate()
+        (self.stage / "docs").mkdir()
+        (self.stage / "docs/FRAME_WAIT_PLAYTEST.md").write_text("synthetic wait guide", encoding="utf-8")
+        self.checksums()
+        archive = release.package(self.stage, self.root / "out", "windows-x86_64", self.commit, self.tag)
+        release.verify_archive(archive, "windows-x86_64", self.commit, self.tag)
+
     def test_linux_zip_retains_executable_permissions(self):
         self.populate("linux-x86_64")
         archive = release.package(self.stage, self.root / "out", "linux-x86_64", self.commit, self.tag)
