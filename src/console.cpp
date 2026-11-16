@@ -112,6 +112,7 @@ const Command kCommands[] = {
     {"/restore", "", "restore native health/stasis maxima and request oxygen refill; can autosave"},
     {"/enemies", "[_RADIUS]", "read-only nearest enemies; default 30 m, maximum 500 m"},
     {"/geom", "[_on|mark|status|focus_N|off]", "read-only geometry capture, both renderers; F4 marks while armed"},
+    {"/perf", "[_status|_mark_LABEL]", "performance status/marker; requires startup --perf"},
     {"/debug_lights", "", "toggle the light placement view (F6)"},
     {"/debug_hitboxes", "", "toggle the hitbox view (F7)"},
     {"/debug_interact", "", "toggle the interaction box view (F10)"},
@@ -237,6 +238,7 @@ void run(const std::string& raw) {
         return;
     }
     if (line == "/geom" || line.rfind("/geom_", 0) == 0) return print(geometry::capture().command(line));
+    if(line=="/perf" || line.rfind("/perf_",0)==0)return print(perf::command(line));
     auto debug = console_debug::parse(line);
     if (debug.kind != console_debug::Kind::none) {
         std::string error;

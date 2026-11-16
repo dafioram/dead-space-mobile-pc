@@ -324,6 +324,7 @@ void register_java_classes() {
         while (SDL_GetQueuedAudioSize(g_audio.dev) > g_audio.max_queued && !g_quit)
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         SDL_QueueAudio(g_audio.dev, mem::host(arr->data + off * es), n * es);
+        if(perf::enabled())perf::audio_observe(SDL_GetQueuedAudioSize(g_audio.dev),g_audio.max_queued,underruns);
         if (++writes % 1000 == 0) {
             LOGI("audio: %llu underruns so far, game mixes a %u-sample buffer in %.2f ms on average",
                  (unsigned long long)underruns, n, busy * 1000.0 / SDL_GetPerformanceFrequency() / 1000);

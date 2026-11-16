@@ -14,8 +14,18 @@ add_library(profile_io STATIC src/save_io.cpp src/save_validation.cpp)
 target_include_directories(profile_io PUBLIC src)
 add_library(geometry_diagnostics STATIC src/geometry_diagnostics.cpp src/geometry_capture.cpp)
 target_include_directories(geometry_diagnostics PUBLIC src)
+find_package(Threads REQUIRED)
+add_library(performance_diagnostics STATIC src/performance.cpp src/performance_platform.cpp)
+target_include_directories(performance_diagnostics PUBLIC src)
+target_link_libraries(performance_diagnostics PUBLIC Threads::Threads)
+if (WIN32)
+    target_link_libraries(performance_diagnostics PUBLIC psapi)
+endif()
 
 if (BUILD_TESTING)
+    if (DEADSPACE_BUILD_APP)
+        find_package(SDL2 REQUIRED)  # visible to the asset-free runtime adapter test
+    endif()
     add_subdirectory(tests)
 endif()
 
@@ -41,6 +51,7 @@ find_package(ZLIB REQUIRED)
 
 add_executable(deadspace
     src/main.cpp
+    src/performance_runtime.cpp
     src/log.cpp
     src/apk.cpp
     src/apk_cli.cpp
@@ -83,7 +94,7 @@ add_executable(deadspace
     src/jni/java_classes.cpp
 )
 target_include_directories(deadspace PRIVATE src)
-target_link_libraries(deadspace PRIVATE dynarmic OpenGL::GL profile_io geometry_diagnostics)
+target_link_libraries(deadspace PRIVATE dynarmic OpenGL::GL profile_io geometry_diagnostics performance_diagnostics)
 execute_process(COMMAND git rev-parse --short=12 HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_VARIABLE DEADSPACE_BUILD_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 if (NOT DEADSPACE_BUILD_REVISION)

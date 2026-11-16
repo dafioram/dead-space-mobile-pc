@@ -1,0 +1,7 @@
+#pragma once
+#include "performance.h"
+namespace perf {
+// Main/render thread only, at a completed frame. No GPU queries or guest calls.
+void runtime_frame(Frame frame, uint32_t window_flags, int effective_cap, bool fast_forward, bool turbo);
+void runtime_finish();
+}

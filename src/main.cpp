@@ -18,6 +18,7 @@
 #include "apk.h"
 #include "cli_help.h"
 #include "cli_arguments.h"
+#include "performance_runtime.h"
 #include "config.h"
 #include "crash.h"
 #include "settings.h"
@@ -216,6 +217,7 @@ int main(int argc, char** argv) {
     TemporaryProfile temporary_profile;
     save_io::ProfileLock profile_lock;
     bool no_save = false;
+    bool performance = false;
     std::string assets, lib, data, logfile, shot_dir, apk_path, dev_dir, game_dir;
     bool file_option_error = false;
     std::vector<u64> shot_frames;
@@ -238,6 +240,7 @@ int main(int argc, char** argv) {
         else if (a == "--dump-audio") jni::audio_dump(next().c_str());
         else if (a == "--data") data = next();
         else if (a == "--no-save") no_save = true;
+        else if (a == "--perf") performance = true;
         else if (a == "--log") logfile = next();
         else if (a == "--width") g_config.screen_w = std::stoi(next()), res_set = true;
         else if (a == "--height") g_config.screen_h = std::stoi(next()), res_set = true;
@@ -311,6 +314,10 @@ int main(int argc, char** argv) {
     SDL_free(base_c);
     if (logfile.empty()) logfile = base + "deadspace.log";
     logging::open_file(logfile.c_str());
+    if(performance) {
+        perf::enable();
+        LOGI("[perf] startup opt-in cap_override=%d (-1=use setting); no cache flushing or pacing changes",fps_arg);
+    }
     crash::install(base);
     if (crash_test) *static_cast<volatile int*>(nullptr) = 1;  // debug: verify crash reporting
 
@@ -523,6 +530,8 @@ int main(int argc, char** argv) {
         return hle::present_map(win_w, win_h, x * sx, y * sy, gx, gy);
     };
     while (!g_quit) {
+        const auto perf_start=perf::stamp();
+        uint64_t perf_sleep=0,perf_spin=0;
         SDL_GL_GetDrawableSize(win, &win_w, &win_h);
         run_script(frames + 1);
         dev::frame();
@@ -534,6 +543,17 @@ int main(int argc, char** argv) {
         }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            if (performance && e.type == SDL_WINDOWEVENT) {
+                const char* state = nullptr;
+                switch (e.window.event) {
+                case SDL_WINDOWEVENT_MINIMIZED: state = "minimized"; break;
+                case SDL_WINDOWEVENT_RESTORED: state = "restored"; break;
+                case SDL_WINDOWEVENT_FOCUS_GAINED: state = "focus-gained"; break;
+                case SDL_WINDOWEVENT_FOCUS_LOST: state = "focus-lost"; break;
+                default: break;
+                }
+                if (state) perf::event("window", state);
+            }
             float gx, gy;
             if (console::event(e)) continue;
             // F4 is diagnostic-only while explicitly armed. Do not steal game
@@ -621,6 +641,7 @@ int main(int argc, char** argv) {
             cpu::set_gl_trace(true);
             render::trace_next_frame();
         }
+        const auto perf_game_start=perf::stamp();
         render::begin_frame();
         geometry::capture().begin_frame();
         native(kRenderer, "NativeOnDrawFrame", "()V", renderer);
@@ -660,6 +681,7 @@ int main(int argc, char** argv) {
             SDL_GL_SetSwapInterval(settings::get_int("vsync", 1) ? 1 : 0);
             turbo_vsync_off = false;
         }
+        const auto perf_game_end=perf::stamp();
         if (int grab = input::grab()) {
             // grabbed: the button prompt, in place of the game's swipe / tap instructions
             std::string key = input::action_label("melee", input::using_pad());
@@ -716,7 +738,9 @@ int main(int argc, char** argv) {
             }
         patches::frame();
         hle::present_end(win_w, win_h);
+        const auto perf_swap_start=perf::stamp();
         SDL_GL_SwapWindow(win);
+        const auto perf_swap_end=perf::stamp();
         if (frames % 600 == 0) LOGI("frame %llu", (unsigned long long)frames);
         if (exit_frame && frames >= exit_frame) g_quit = true;
 
@@ -728,14 +752,27 @@ int main(int argc, char** argv) {
             u64 now = SDL_GetPerformanceCounter();
             if (now < next_tick) {
                 u64 ms = (next_tick - now) * 1000 / freq;
-                if (ms > 1) SDL_Delay(u32(ms - 1));
+                if (ms > 1) {
+                    auto t=perf::stamp();
+                    SDL_Delay(u32(ms - 1));
+                    if(performance)perf_sleep+=perf::stamp()-t;
+                }
+                const auto spin_start=perf::stamp();
                 while (SDL_GetPerformanceCounter() < next_tick) {}
+                if(performance)perf_spin+=perf::stamp()-spin_start;
             } else if (now - next_tick > freq / u64(fps_limit)) {
                 next_tick = now;  // more than a frame behind: resync instead of running fast to catch up
             }
         }
+        if(performance) {
+            const auto end=perf::stamp();
+            perf::runtime_frame({end-perf_start,perf_swap_start-perf_start,perf_game_end-perf_game_start,
+                                 perf_swap_end-perf_swap_start,perf_sleep,perf_spin},SDL_GetWindowFlags(win),
+                                 fps_limit,input::fast_forwarding(),dev::turbo()!=0);
+        }
     }
 
+    perf::runtime_finish();
     LOGI("shutting down");
     geometry::capture().finish();
     geometry::capture_log(true);

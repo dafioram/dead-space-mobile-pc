@@ -343,6 +343,23 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   a runtime-compatibility claim. No release/tag was created or moved, and geometry
   diagnostics remain playtest-only. See `docs/APK_IMPORT.md` for reusable commands.
 
+- `feat/performance-diagnostics` / source `ea29913`: startup-only `--perf` adds
+  bounded once-per-second process/guest-heap/cache/JIT/thread/audio telemetry and
+  frame-loop work/swap/sleep/spin timing. `/perf status` and `/perf mark LABEL`
+  provide read-only status/annotations. Level-load, world-lifetime and window
+  events correlate repeated-load and minimized tests. No cache flushing,
+  allocation strategy, native cleanup, frame pacing, physics, audio or gameplay
+  behavior is changed. Graphics dimensions are explicitly RGBA-equivalent
+  metadata, not measured VRAM; no GPU query, forced synchronization or dump is
+  added. Main-based Windows/Linux builds pass 16 suites each; app-disabled Linux
+  ASan/UBSan passes 14. Tests include the real allocator with synthetic allocations,
+  event/frame limits, OS query lifetime/generations and production report adapters
+  without SDL/GL initialization or guest execution. Combined user testing remains
+  user-led; use a separate EXE folder and disposable profile, with matching
+  diagnostic-on/off launchers. See `docs/PERFORMANCE_DIAGNOSTICS.md` for the test
+  sequence and interpretation limits. This is measurement, not a leak/performance
+  fix or release. Keep logs private and geometry capture off for the first baseline.
+
 `.github/workflows/playtest-boundary.yml` fails if a PR from `playtest` targets
 `main`. This is an additional warning, not a substitute for repository branch
 protection or careful review. No such PR should be opened.

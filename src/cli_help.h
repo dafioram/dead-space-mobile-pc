@@ -41,6 +41,9 @@ Display and graphics:
 Logging:
   -v, --verbose             Verbose logging.
   --log FILE                Main log destination (default: beside executable).
+  --perf                    Opt-in CPU/frame/memory/cache diagnostics, once/second.
+                             /perf mark LABEL annotates the private log. No dumps,
+                             cache flushing, gameplay changes or GPU timing claims.
   --trace-input             Trace native player/HUD input events.
   --trace-grapple           Trace grapple transitions, hit requests and HP changes.
 

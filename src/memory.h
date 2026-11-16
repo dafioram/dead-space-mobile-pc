@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include "performance.h"
 
 using u8 = std::uint8_t;
 using u16 = std::uint16_t;
@@ -67,5 +68,7 @@ u32 heap_strdup(const char* s);
 // Page-granular regions (mmap, stacks).
 u32 map_alloc(u32 size);
 void map_free(u32 addr, u32 size);
+// O(1) counters under existing locks; does not walk guest heap contents.
+void performance_snapshot(perf::Metrics& out);
 
 }  // namespace mem

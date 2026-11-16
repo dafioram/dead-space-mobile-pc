@@ -20,6 +20,7 @@ u8* g_base = nullptr;
 std::array<u8*, (1u << 20)>* g_page_table = nullptr;
 
 static std::mutex g_commit_lock;
+static uint64_t g_perf_committed = 0;
 
 bool init() {
 #ifdef _WIN32
@@ -54,12 +55,20 @@ void commit(u32 addr, u32 size) {
         std::abort();
     }
 #endif
-    for (u64 a = start; a < end; a += PAGE_SIZE) (*g_page_table)[a >> PAGE_BITS] = g_base + a;
+    const bool track = perf::enabled();
+    for (u64 a = start; a < end; a += PAGE_SIZE) {
+        if (track && !(*g_page_table)[a >> PAGE_BITS]) g_perf_committed += PAGE_SIZE;
+        (*g_page_table)[a >> PAGE_BITS] = g_base + a;
+    }
 }
 
 static void decommit(u32 addr, u32 size) {
     std::lock_guard lk(g_commit_lock);
-    for (u64 a = addr; a < u64(addr) + size; a += PAGE_SIZE) (*g_page_table)[a >> PAGE_BITS] = nullptr;
+    const bool track = perf::enabled();
+    for (u64 a = addr; a < u64(addr) + size; a += PAGE_SIZE) {
+        if (track && (*g_page_table)[a >> PAGE_BITS]) g_perf_committed -= PAGE_SIZE;
+        (*g_page_table)[a >> PAGE_BITS] = nullptr;
+    }
 #ifdef _WIN32
     VirtualFree(g_base + addr, size, MEM_DECOMMIT);
 #else
@@ -108,6 +117,7 @@ std::vector<u32> g_small_free[SMALL_MAX / GRAIN + 1];
 std::map<u32, u32> g_large_free;                 // addr -> size
 std::multimap<u32, u32> g_large_by_size;         // size -> addr
 std::unordered_map<u32, u32> g_alloc_size;       // addr -> block size
+perf::AllocationGauge g_perf_heap;
 
 u32 bump(u32 size) {
     u32 a = g_brk;
@@ -189,10 +199,12 @@ u32 heap_alloc(u32 size, u32 align) {
             a = bump(size);
         }
         g_alloc_size[a] = size;
+        if (perf::enabled()) g_perf_heap.add(size);
         return a;
     }
     a = large_alloc(size);
     g_alloc_size[a] = std::max(g_alloc_size[a], size);
+    if (perf::enabled()) g_perf_heap.add(g_alloc_size[a]);
     return a;
 }
 
@@ -205,6 +217,7 @@ void heap_free(u32 addr) {
         return;
     }
     u32 size = it->second;
+    if (perf::enabled()) g_perf_heap.remove(size);
     g_alloc_size.erase(it);
     if (size <= SMALL_MAX)
         g_small_free[size / GRAIN].push_back(addr);
@@ -283,4 +296,25 @@ void map_free(u32 addr, u32 size) {
     }
 }
 
+void performance_snapshot(perf::Metrics& out) {
+    {
+        std::lock_guard lock(g_heap_lock);
+        const uint64_t committed = uint64_t(g_committed) - HEAP_BASE;
+        out.push_back({"heap_live_block_bytes", g_perf_heap.bytes});
+        out.push_back({"heap_live_blocks", g_perf_heap.blocks});
+        out.push_back({"heap_peak_live_bytes", g_perf_heap.peak_bytes});
+        out.push_back({"heap_committed_bytes", committed});
+        out.push_back({"heap_reusable_or_unused_bytes", committed >= g_perf_heap.bytes ? committed-g_perf_heap.bytes : 0});
+        out.push_back({"heap_counter_errors", g_perf_heap.errors});
+    }
+    {
+        std::lock_guard lock(g_commit_lock);
+        out.push_back({"all_guest_mapped_bytes", g_perf_committed});
+    }
+    {
+        std::lock_guard lock(g_data_lock);
+        out.push_back({"permanent_hle_used_bytes", uint64_t(g_data_top)-DATA_BASE});
+    }
+    out.push_back({"guest_address_reservation_bytes", 1ull<<32});
+}
 }  // namespace mem
