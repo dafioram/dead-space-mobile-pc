@@ -1,4 +1,5 @@
 #include "render/native.h"
+#include "geometry_capture.h"
 
 #include <SDL.h>
 
@@ -3533,6 +3534,7 @@ void set_lshade(float v) { g_lshade = std::clamp(v, 0.0f, 1.0f); }
 void set_fanshade(float v) { g_fanshade = std::clamp(v, 0.0f, 2.0f); }  // (2 = debug view)
 bool light_shadows() { return g_light_shadows; }
 void scene_changed() {
+    geometry::capture().scene_changed();
     g_sverts.clear();
     g_sidx.clear();
     g_smesh.clear();
@@ -3793,5 +3795,38 @@ void end_frame() {
     }
 }
 void trace_next_frame() { g_trace_next = true; }
+geometry::State geometry_state() {
+    geometry::State state;
+    std::copy_n(g_mv.top().m, 16, state.modelview.begin());
+    std::copy_n(g_proj.top().m, 16, state.projection.begin());
+    std::copy_n(g_st.vp, 4, state.viewport.begin());
+    for (int i = 0; i < 2; i++) {
+        state.texture[i] = g_st.unit[i].tex;
+        state.texture_enabled[i] = g_st.unit[i].enabled;
+        state.texture_env[i] = g_st.unit[i].env;
+    }
+    std::copy_n(g_st.color, 4, state.color.begin());
+    std::copy_n(g_st.sc, 4, state.scissor.begin());
+    state.scissor_on = g_st.scissor_on;
+    state.polygon_offset = g_st.poly_offset;
+    state.lighting = g_st.lighting;
+    state.polygon_factor = g_st.po_factor;
+    state.polygon_units = g_st.po_units;
+    state.native = enabled();
+    state.blend = g_st.blend;
+    state.depth_test = g_st.depth_test;
+    state.depth_write = g_st.depth_write;
+    state.cull = g_st.cull;
+    state.alpha_test = g_st.alpha_test;
+    state.fog = g_st.fog;
+    state.blend_src = g_st.blend_src;
+    state.blend_dst = g_st.blend_dst;
+    state.depth_func = g_st.depth_func;
+    state.cull_mode = g_st.cull_mode;
+    state.front_face = g_st.front;
+    state.alpha_func = g_st.alpha_fn;
+    state.alpha_ref = g_st.alpha_ref;
+    return state;
+}
 
 }  // namespace render

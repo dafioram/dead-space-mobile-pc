@@ -12,6 +12,7 @@
 // the first one.
 #include "console.h"
 #include "console_debug.h"
+#include "geometry_capture.h"
 #include "debugview.h"
 #include "render/native.h"
 
@@ -110,6 +111,7 @@ const Command kCommands[] = {
     {"/rich", "[_CREDITS_NODES]", "set wallet; default 500000 credits / 200 nodes; can autosave"},
     {"/restore", "", "restore native health/stasis maxima and request oxygen refill; can autosave"},
     {"/enemies", "[_RADIUS]", "read-only nearest enemies; default 30 m, maximum 500 m"},
+    {"/geom", "[_on|mark|status|focus_N|off]", "read-only geometry capture, both renderers; F4 marks while armed"},
     {"/debug_lights", "", "toggle the light placement view (F6)"},
     {"/debug_hitboxes", "", "toggle the hitbox view (F7)"},
     {"/debug_interact", "", "toggle the interaction box view (F10)"},
@@ -234,6 +236,7 @@ void run(const std::string& raw) {
         g_log.clear();
         return;
     }
+    if (line == "/geom" || line.rfind("/geom_", 0) == 0) return print(geometry::capture().command(line));
     auto debug = console_debug::parse(line);
     if (debug.kind != console_debug::Kind::none) {
         std::string error;
@@ -262,6 +265,7 @@ void run(const std::string& raw) {
         return print(names[render::vertex_color_debug()]);
     }
     if (line == "/debug_off") {
+        geometry::capture().command("/geom_off");
         render::set_vertex_color_debug(0);
         debugview::set_lights(false);
         debugview::set_hitboxes(false);

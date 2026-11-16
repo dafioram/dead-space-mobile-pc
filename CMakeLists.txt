@@ -12,6 +12,8 @@ include(CTest)
 
 add_library(profile_io STATIC src/save_io.cpp src/save_validation.cpp)
 target_include_directories(profile_io PUBLIC src)
+add_library(geometry_diagnostics STATIC src/geometry_diagnostics.cpp src/geometry_capture.cpp)
+target_include_directories(geometry_diagnostics PUBLIC src)
 
 if (BUILD_TESTING)
     add_subdirectory(tests)
@@ -79,7 +81,7 @@ add_executable(deadspace
     src/jni/java_classes.cpp
 )
 target_include_directories(deadspace PRIVATE src)
-target_link_libraries(deadspace PRIVATE dynarmic OpenGL::GL profile_io)
+target_link_libraries(deadspace PRIVATE dynarmic OpenGL::GL profile_io geometry_diagnostics)
 execute_process(COMMAND git rev-parse --short=12 HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_VARIABLE DEADSPACE_BUILD_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 if (NOT DEADSPACE_BUILD_REVISION)
