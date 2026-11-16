@@ -2,8 +2,10 @@
 
 Status: **read-only survey**, not a new importer or runtime compatibility patch.
 Maintained on `feat/android-asset-support`, based on production main `9ede69c`.
-Three of the user's four proposed Android APKs have been assessed so far. Do not
-infer the architecture or game-core version of the remaining APK from its filename.
+All four supplied Android APKs have now been assessed. **Every supplied APK
+contains an ARM32 game core; no ARM64 game core or launcher was found.** All four
+share one identical game-asset collection. Their filenames and Android SDK
+metadata are not native-architecture or compatibility identifiers.
 
 No APK, extracted library, asset, save, screenshot, recording, dump, log or private
 inspection fixture belongs in this branch, tests or release packages. This document
@@ -18,10 +20,13 @@ interactive gameplay/persistence testing is reserved for the user.
 | A | 1.2.0 / 1200; `com.eamobile.deadspace_full_azn` | ELF32 ARM (`EM_ARM=40`), `lib/armeabi/libDeadSpace.so` | Group A, 1,731 files; identical to installed baseline | Library A; identical to installed baseline | Existing baseline data/layout, not an additional asset-support target |
 | B | 1.2.0 / 1200; same package | ELF32 ARM (`EM_ARM=40`), same path; no ARM64 library found | Group A; all 1,731 files match APK A by SHA-256 | Library B; same layout/symbols, nine changed bytes in CPU detection | Same asset support; native-library variant is a static-layout-compatible candidate, **not independently runtime-tested** |
 | C | 1.2.0 / 1200; same package | ELF32 ARM (`EM_ARM=40`), same path; no ARM64 library found | Group A; all 1,731 files match APK A by SHA-256 | Library A; identical to installed baseline | Same game-core/asset support as baseline; Android Java/manifest/resource changes are separate from PC runtime support |
+| D — Remastered | 1.2.0 / 1200; same package | ELF32 ARM (`EM_ARM=40`), same path; scan of all ZIP members found no other ELF header | Group A; all 1,731 files match APK A by SHA-256 | Library A; identical to installed baseline | Same game core/assets; Android frontend changes, **not an ARM64 core or remastered game-asset variant** |
 
 APKs A/B report minimum SDK 7 and target SDK 14, with `.DeadSpaceActivity`.
 APK C retains minimum SDK 7 and that activity but targets SDK 25 and adds Android
 maximum-aspect metadata; its compile/platform metadata also identifies SDK 25.
+APK D reports minimum SDK 7, target SDK 14, compile/platform SDK 23 and maximum-
+aspect metadata. A newer compile/target SDK does not make native code 64-bit.
 The package name and Amazon-related entries identify an Amazon-distribution
 variant; that is **not** a verification of vendor authenticity, original signing,
 license status or freedom from modification. Matching Android version metadata
@@ -34,10 +39,11 @@ does not mean two libraries are byte-identical.
 | A | 295,945,024 | `0a13b873e19bdf9cd3bfb91537064d1320bcd6c3590253c8e38e6136722def6b` |
 | B | 296,056,215 | `88dc0e3d022c5770435a0dc9dd85eb06a5223004f9b4f8d0f7765910037c49f3` |
 | C | 325,769,461 | `5167a7491aacbda89e315a7cabb932d8db785440abccb3c0b78a36a21e2a8320` |
+| D | 325,731,113 | `f3fcad7ea08a762d9f863888901fd31ab8238652494e9f8c02e4d7af138b4bc4` |
 
 | Native library | Size (bytes) | SHA-256 |
 | --- | ---: | --- |
-| A / C (installed baseline) | 6,672,749 | `2fc87e9a5afa1028d91a9770d23ffd04b45fb5dbc8d3800ed6b31e34223a490b` |
+| A / C / D (installed baseline) | 6,672,749 | `2fc87e9a5afa1028d91a9770d23ffd04b45fb5dbc8d3800ed6b31e34223a490b` |
 | B | 6,672,749 | `11d718cdf87ed319cd4214dc26284cab422756561683bfb777b61b5a2c1d3b11` |
 
 These hashes identify exact private input copies; they do not authenticate a vendor
@@ -46,7 +52,7 @@ release. APK filenames alone should never select a compatibility profile.
 ## Asset group A
 
 The full set contains **1,731 files / 328,192,023 uncompressed bytes**. Every
-decompressed `assets/` file was SHA-256 compared: APKs B/C match APK A, and APK A
+decompressed `assets/` file was SHA-256 compared: APKs B/C/D match APK A, and APK A
 matches the installed baseline. No differing or missing asset was found in those
 comparisons. ZIP compression/signing/container changes are not asset changes.
 
@@ -67,7 +73,7 @@ Selected inventory counts:
 - Other particle textures, data, localization, font and layout resources are also
   present. Count/resource names alone do not establish working gameplay features.
 
-All three copies include `.m3g` resources for `fx_linegun_beam`, `lurker_projectile`,
+All four copies include `.m3g` resources for `fx_linegun_beam`, `lurker_projectile`,
 `fx_stasis` and `fx_corer_secondary_fire_beam`. Corresponding `.bin` lookup warnings
 therefore do not, by themselves, establish that the entire effect is unavailable.
 Whether a particular lookup is an expected fallback or a broken path remains a
@@ -116,6 +122,32 @@ comment for some other fan-fixed packages. A filename containing "Fixes" is not
 enough to choose an importer or texture mode. No new extraction, mesh, renderer,
 save or fixed-address-hook implementation is indicated by this APK comparison.
 
+## APK D: "Remastered" package, ARM32 baseline game core
+
+APK D (Remastered) contains one native ELF:
+`lib/armeabi/libDeadSpace.so`, ELF32 ARM, 6,672,749 bytes. A first-header scan of
+every non-directory ZIP member found no other ELF, including no AArch64 library
+or 64-bit native launcher. The package has no `assets/guest_libs` payload or
+alternate native-ABI directory. The native game library is byte-identical to
+library A / the installed PC baseline.
+
+All 1,731 decompressed game assets also match group A by SHA-256. There is no
+changed mesh, texture, sound, scene or localization file under `assets/`, and no
+expanded game-asset collection. The larger archive uses 954 stored / 796 deflated
+members, as APK C does; APK size is not evidence of higher-resolution game assets.
+
+Compared with APK A, Android manifest, Java DEX, resource tables/layouts, drawable-
+directory names and signing content differ. Compared with APK C, the manifest,
+DEX, resource tables/layouts and signing content differ; signing filenames use
+`CERT.RSA` / `.SF` rather than C's `RAFALAMA` names. This supports a modified
+Android frontend/package, not identification of the modifier or authentication
+of a particular fan release. Java behavior and Android-side fixes were not
+executed or exhaustively reconstructed.
+
+No new PC importer path, guest architecture, texture collection, mesh format or
+fixed-address-hook profile is indicated by this copy. This conclusion concerns
+the exact supplied APK, not every download advertised as "Remastered".
+
 ## Current importer boundary
 
 `src/apk.cpp` currently looks for an ELF32 ARM game core in this order:
@@ -124,9 +156,9 @@ save or fixed-address-hook implementation is indicated by this APK comparison.
 2. `lib/armeabi/libDeadSpace.so`
 3. `lib/armeabi-v7a/libDeadSpace.so`
 
-All three surveyed APKs use the second layout, with supported stored/deflated ZIP
+All four surveyed APKs use the second layout, with supported stored/deflated ZIP
 entries. Static inspection therefore finds no need for a new extraction-path
-rule or asset variant for these three copies. No actual import was run for the
+rule or asset variant for these four copies. No actual import was run for the
 survey. The port's existing original-layout texture-mode policy remains unchanged;
 this document is not an independent texture-format audit.
 
@@ -135,14 +167,21 @@ APK containing only an AArch64 game core would be a different runtime problem.
 Inspect every contained ELF and any guest-library payload before calling an APK
 a "64-bit game" or assuming it is unsupported/supported.
 
-## Next entries and support decisions
+## Survey outcome and future support decisions
 
-For each remaining supplied APK, append a row with package/version, every native
-ABI/core candidate, full APK/library hashes, asset-content group, format/layout
-differences, and separate static/import/runtime validation status. Keep Java or
-launcher changes separate from native-core changes and asset changes. Do not mix
-libraries/assets between versions, overwrite current installations or announce
-support solely because filenames or version strings match.
+The four supplied copies reduce to **one identical asset group and two native
+library hashes**: A/C/D match the installed baseline; B differs only at the
+nine-byte CPU-detection change documented above. There is no newly discovered
+ARM64 port, remastered texture set or alternative campaign collection in this
+set. Existing baseline-content compatibility must still be distinguished from
+independent runtime/audio validation of library B or Android frontend behavior.
+
+For future APKs, append package/version, every native ABI/core candidate, full
+APK/library hashes, asset-content group, format/layout differences, and separate
+static/import/runtime validation status. Keep Java or launcher changes separate
+from native-core changes and asset changes. Do not mix libraries/assets between
+versions, overwrite current installations or announce support solely because
+filenames or version strings match.
 
 Potential importer/hook changes require their own scoped implementation and
 synthetic tests, followed by user-led runtime checks. This inventory authorizes
