@@ -52,6 +52,9 @@ def main():
     debug_guide = root / "docs" / "debug_menu.md"
     if debug_guide.exists():
         files[debug_guide] = "docs/debug_menu.md"
+    geometry_guide = root / "docs" / "GEOMETRY_DIAGNOSTICS.md"
+    if geometry_guide.exists():
+        files[geometry_guide] = "docs/GEOMETRY_DIAGNOSTICS.md"
     for source, destination in BUNDLED_NOTICES.items():
         files[root / "external" / "dynarmic" / source] = "licenses/" + destination
     if args.platform == "windows-x86_64":

@@ -94,6 +94,12 @@ Fixtures/fuzz mutations are synthetic; no retail code, assets or saves are
 executed or distributed. See `SAVE_LOAD_RELIABILITY.md` for guarantees and limits.
 Helpers deliberately terminate only themselves, never a game process.
 
+`geometry_diagnostics` tests the production shared geometry decoder and bounded
+capture/highlight policy using synthetic arrays and 30,000 generated mutations.
+It needs no SDL/GL or game data and never executes retail instructions. The
+observer is opt-in (`/geom on`, F4 marker); it does not suppress anomalous draws.
+See `GEOMETRY_DIAGNOSTICS.md` for private-capture policy and limitations.
+
 This is a baseline regression suite, not a claim that the importer handles every
 malformed archive safely. CRC verification and comprehensive importer hardening
 remain separate work. Tests do not launch the JIT, render, or validate gameplay.

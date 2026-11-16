@@ -66,6 +66,13 @@ class StagingTests(unittest.TestCase):
         self.assertEqual((self.output / "docs/debug_menu.md").read_text(encoding="utf-8"), "synthetic guide")
         self.assertFalse((self.output / "docs/private.log").exists())
 
+    def test_geometry_instructions_are_allowlisted_not_captures(self):
+        (self.root / "docs/GEOMETRY_DIAGNOSTICS.md").write_text("synthetic instructions", encoding="utf-8")
+        (self.root / "docs/geometry-capture.txt").write_text("synthetic private capture", encoding="utf-8")
+        self.stage()
+        self.assertEqual((self.output / "docs/GEOMETRY_DIAGNOSTICS.md").read_text(encoding="utf-8"), "synthetic instructions")
+        self.assertFalse((self.output / "docs/geometry-capture.txt").exists())
+
     def test_existing_output_is_never_deleted(self):
         self.output.mkdir()
         marker = self.output / "keep.txt"

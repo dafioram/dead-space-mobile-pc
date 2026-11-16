@@ -406,6 +406,11 @@ Failures and selected load files are logged as `[save-io]` / `[save-load]`; norm
 remains enabled. See [save/load reliability](docs/SAVE_LOAD_RELIABILITY.md) for limits
 and recovery cautions. Do not run older/newer builds against the same profile together.
 
+For user-led wall-streak investigation, `/geom on` arms bounded shared geometry
+diagnostics and **F4** marks a capture. It observes both renderers without hiding
+draws; `/geom off` disables it. See [the diagnostic guide](docs/GEOMETRY_DIAGNOSTICS.md)
+for candidate outlines, privacy and sampling limits. It is not a rendering fix.
+
 ### How E picks
 A box in front of Isaac (1.8 m deep, 1.4 m wide, floor to above head height) points where the
 camera looks. Every usable object has a zone: its 3D bounding box, padded to at least 0.5 m; objects

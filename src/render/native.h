@@ -12,6 +12,7 @@
 #include <SDL_opengl.h>
 
 #include "memory.h"
+#include "geometry_diagnostics.h"
 
 namespace render {
 
@@ -156,5 +157,8 @@ void draw_arrays(GLenum mode, int first, int count);
 void begin_frame();
 void end_frame();
 void trace_next_frame();  // debug: log every native draw of the next frame
+// Original GLES state mirror, BEFORE native reversed-Z/lighting/post adjustments.
+// Read-only and available with either renderer; no GL queries or guest dereferences.
+geometry::State geometry_state();
 
 }  // namespace render
