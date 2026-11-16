@@ -62,6 +62,9 @@ def main():
     performance_guide = root / "docs" / "PERFORMANCE_DIAGNOSTICS.md"
     if performance_guide.exists():
         files[performance_guide] = "docs/PERFORMANCE_DIAGNOSTICS.md"
+    frame_wait_guide = root / "docs" / "FRAME_WAIT_PLAYTEST.md"
+    if frame_wait_guide.exists():
+        files[frame_wait_guide] = "docs/FRAME_WAIT_PLAYTEST.md"
     for source, destination in BUNDLED_NOTICES.items():
         files[root / "external" / "dynarmic" / source] = "licenses/" + destination
     if args.platform == "windows-x86_64":

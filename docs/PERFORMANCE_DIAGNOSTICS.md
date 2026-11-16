@@ -1,5 +1,9 @@
 # CPU and memory diagnostics (opt-in, not an optimization)
 
+For the separate limiter-wait A/B experiment, see `FRAME_WAIT_PLAYTEST.md`.
+Both A/B modes use diagnostics; the independent `--frame-wait` option selects
+the waiting policy, not `--perf`.
+
 Start with `--perf` to add bounded `[perf]` reports to the normal private game log.
 Disabled by default; startup-only, before guest allocation/thread creation. This
 does not change frame caps, sleeps/spins, gameplay, native cleanup, cache eviction,

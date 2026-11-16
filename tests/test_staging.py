@@ -98,6 +98,12 @@ class StagingTests(unittest.TestCase):
         self.assertTrue((self.output / "docs/PERFORMANCE_DIAGNOSTICS.md").is_file())
         self.assertFalse((self.output / "docs/perf-private.log").exists())
 
+    def test_frame_wait_guide_is_allowlisted(self):
+        (self.root / "docs/FRAME_WAIT_PLAYTEST.md").write_text("synthetic wait guide", encoding="utf-8")
+        self.stage()
+        self.assertEqual((self.output / "docs/FRAME_WAIT_PLAYTEST.md").read_text(encoding="utf-8"),
+                         "synthetic wait guide")
+
     def test_missing_binary_fails_before_staging(self):
         (self.build / "deadspace").unlink()
         with self.assertRaises(SystemExit):

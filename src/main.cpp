@@ -19,6 +19,7 @@
 #include "cli_help.h"
 #include "cli_arguments.h"
 #include "performance_runtime.h"
+#include "frame_wait.h"
 #include "config.h"
 #include "crash.h"
 #include "settings.h"
@@ -218,6 +219,7 @@ int main(int argc, char** argv) {
     save_io::ProfileLock profile_lock;
     bool no_save = false;
     bool performance = false;
+    frame_wait::Mode wait_mode = frame_wait::Mode::Timer;
     std::string assets, lib, data, logfile, shot_dir, apk_path, dev_dir, game_dir;
     bool file_option_error = false;
     std::vector<u64> shot_frames;
@@ -241,6 +243,12 @@ int main(int argc, char** argv) {
         else if (a == "--data") data = next();
         else if (a == "--no-save") no_save = true;
         else if (a == "--perf") performance = true;
+        else if (a == "--frame-wait") {
+            if (!frame_wait::parse_mode(next(), wait_mode)) {
+                std::fputs("--frame-wait requires timer or legacy\n", stderr);
+                return 2;
+            }
+        }
         else if (a == "--log") logfile = next();
         else if (a == "--width") g_config.screen_w = std::stoi(next()), res_set = true;
         else if (a == "--height") g_config.screen_h = std::stoi(next()), res_set = true;
@@ -316,7 +324,7 @@ int main(int argc, char** argv) {
     logging::open_file(logfile.c_str());
     if(performance) {
         perf::enable();
-        LOGI("[perf] startup opt-in cap_override=%d (-1=use setting); no cache flushing or pacing changes",fps_arg);
+        LOGI("[perf] startup opt-in cap_override=%d (-1=use setting); diagnostics do not flush caches or change pacing",fps_arg);
     }
     crash::install(base);
     if (crash_test) *static_cast<volatile int*>(nullptr) = 1;  // debug: verify crash reporting
@@ -507,6 +515,22 @@ int main(int argc, char** argv) {
     native(kRenderer, "NativeOnSurfaceChanged", "(II)V", renderer,
            {jni::JValue::I(g_config.screen_w), jni::JValue::I(g_config.screen_h)});
 
+    frame_wait::Timer frame_timer(wait_mode == frame_wait::Mode::Timer);
+    LOGI("frame wait: requested=%s backend=%s guard_us=%d error=%u",
+         wait_mode == frame_wait::Mode::Timer ? "timer" : "legacy",
+         frame_timer.available() ? "windows-high-resolution" : "legacy-sdl",
+         frame_timer.available() ? 200 : 0, frame_timer.error());
+    struct WaitHost {
+        frame_wait::Timer& timer;
+        uint64_t now() { return SDL_GetPerformanceCounter(); }
+        uint64_t stamp() { return perf::stamp(); }
+        void delay_ms(uint32_t ms) { SDL_Delay(ms); }
+        bool wait_timer(uint64_t duration) {
+            if (timer.wait(duration)) return true;
+            LOGW("frame wait: timer failed error=%u; falling back to legacy-sdl", timer.error());
+            return false;
+        }
+    } wait_host{frame_timer};
     LOGI("entering main loop");
     bool mouse_down = false;
     u64 frames = 0;
@@ -751,15 +775,9 @@ int main(int argc, char** argv) {
             next_tick += freq / u64(fps_limit);
             u64 now = SDL_GetPerformanceCounter();
             if (now < next_tick) {
-                u64 ms = (next_tick - now) * 1000 / freq;
-                if (ms > 1) {
-                    auto t=perf::stamp();
-                    SDL_Delay(u32(ms - 1));
-                    if(performance)perf_sleep+=perf::stamp()-t;
-                }
-                const auto spin_start=perf::stamp();
-                while (SDL_GetPerformanceCounter() < next_tick) {}
-                if(performance)perf_spin+=perf::stamp()-spin_start;
+                const auto waited = frame_wait::until(wait_host, next_tick, freq, now, frame_timer.available());
+                perf_sleep += waited.sleep_ns;
+                perf_spin += waited.spin_ns;
             } else if (now - next_tick > freq / u64(fps_limit)) {
                 next_tick = now;  // more than a frame behind: resync instead of running fast to catch up
             }
@@ -772,6 +790,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    frame_timer.close();  // main deliberately uses _Exit instead of stack unwinding
     perf::runtime_finish();
     LOGI("shutting down");
     geometry::capture().finish();
