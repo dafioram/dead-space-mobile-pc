@@ -317,6 +317,32 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   suppression is included in these UI revisions. Private evidence is not in Git.
 - Other reported terminals and the original asset set still need validation.
 
+- `feat/android-asset-support`, integrated into the combined playtest:
+  original-layout APK validation/profile logging, staged no-replace extraction,
+  identical-data reuse and early Reanimated/HD refusal. `--game-dir` selects
+  imported assets/library; `--data` remains the independent save/settings root.
+  `--import-only` exits before SDL/guest/profile/default-log/crash initialization
+  and rejects gameplay/debug flags. The installer no longer deletes old game
+  data before trying an APK. No physics, HD, renderer or audio fix is included.
+  Main-based builds pass 16 Windows/Linux suites and 14 app-disabled Linux
+  ASan/UBSan suites; combined integration passes 17/17/15, respectively.
+  Synthetic coverage includes malformed ZIP/CRC, limits/path aliases, Unicode,
+  SHA-256 vectors, write/close/publication failures and preservation of existing
+  data. Installer source passes a compile-only check; no installer was run.
+- The private user test build made before filename redaction is staged asset-free.
+  Four fresh private cases A–D were prepared outside the repository, each with
+  its own EXE, game data, future profile and user-run `Launch.cmd`. Import-only
+  checks verify all 1,731 extracted assets / 328,192,023 bytes and each native
+  library against its source APK; protected APK hashes still match the inventory.
+  A/C/D report baseline ARM32; B reports the recognized CPU-detection variant,
+  still awaiting independent gameplay/audio confirmation. An actual identical
+  reimport preserves all output bytes/mtimes; actual Reanimated refusal creates
+  neither parent nor game-data destination. No gameplay, profile initialization,
+  installed-EXE replacement or original-save migration was performed. The user
+  owns menu/texture/audio/transition/save/reload acceptance; import success is not
+  a runtime-compatibility claim. No release/tag was created or moved, and geometry
+  diagnostics remain playtest-only. See `docs/APK_IMPORT.md` for reusable commands.
+
 `.github/workflows/playtest-boundary.yml` fails if a PR from `playtest` targets
 `main`. This is an additional warning, not a substitute for repository branch
 protection or careful review. No such PR should be opened.
