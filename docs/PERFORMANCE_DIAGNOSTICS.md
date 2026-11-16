@@ -146,6 +146,9 @@ costs. Disabled builds still contain lightweight gates; there is no runtime enab
 because earlier allocations would otherwise be missed. No optimization or leak
 fix is claimed. Follow-up CPU sampling can distinguish frame-spin, native host,
 guest/JIT and driver work; bounded logs alone cannot name a hot guest instruction.
+In the source checkout, see `GAMEPLAY_CPU_CAPTURE.md` for a separate user-run
+Windows CPU sampling helper, its system-wide privacy implications, overhead and
+JIT attribution limits. That helper is not part of the portable game package.
 
 Synthetic tests exercise percentiles/overflow/reset, allocation/realloc/free and
 map/decommit accounting, concurrency, event bounds/sanitization, OS query lifecycle,
