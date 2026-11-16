@@ -21,6 +21,8 @@
 #include "crash.h"
 #include "settings.h"
 #include "temporary_profile.h"
+#include "save_io.h"
+#include "save_lifecycle.h"
 #include "texpack.h"
 #include "cpu.h"
 #include "elf_loader.h"
@@ -206,6 +208,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     TemporaryProfile temporary_profile;
+    save_io::ProfileLock profile_lock;
     bool no_save = false;
     std::string assets, lib, data, logfile, shot_dir, apk_path, dev_dir;
     std::vector<u64> shot_frames;
@@ -332,9 +335,9 @@ int main(int argc, char** argv) {
     }
     if (no_save) {
         try {
-            temporary_profile.prepare(data);
+            temporary_profile.prepare(save_io::utf8_path(data));
             LOGI("save protection: original userdata %s will not receive game/settings writes", data.c_str());
-            data = temporary_profile.data_path().string();
+            data = save_io::path_utf8(temporary_profile.data_path());
             LOGI("save protection: disposable session %s (relaunch to restore the original save)", data.c_str());
         } catch (const std::exception& error) {
             LOGE("cannot prepare --no-save profile: %s", error.what());
@@ -343,13 +346,22 @@ int main(int argc, char** argv) {
     }
     hle::g_assets_dir = assets;
     hle::g_data_dir = data;
-    fs::create_directories(data);
+    if (!profile_lock.acquire(save_io::utf8_path(data))) {
+        LOGE("[save-io] refusing concurrent/unwritable profile startup; existing saves are untouched");
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Dead Space", "Cannot acquire exclusive access to userdata. Close another game instance or check directory permissions. See deadspace.log.", nullptr);
+        return 1;
+    }
+    save_io::set_profile_root(save_io::utf8_path(data));
     settings::load(data + "/port_settings.ini");
     texpack::init(base, settings::get_int("texture_packs", 1) != 0, dump_png || settings::get_int("texture_dump", 0) != 0);
     if (msaa_arg >= 0) settings::set_int("msaa", msaa_arg);
     LOGI("assets: %s", assets.c_str());
     LOGI("library: %s", lib.c_str());
     LOGI("user data: %s", data.c_str());
+#ifdef DEADSPACE_BUILD_REVISION
+    LOGI("[save-load] build revision=%s reliability=1 profile=%s", DEADSPACE_BUILD_REVISION, no_save ? "disposable --no-save" : "persistent");
+#endif
+    save_io::describe_library(save_io::utf8_path(lib));
 
 #ifdef _WIN32
     timeBeginPeriod(1);
@@ -428,6 +440,7 @@ int main(int argc, char** argv) {
     lights::install();
     console::install();
     menu_nav::install();
+    save_lifecycle::install();
     LOGI("running %zu static constructors", elf::g_game.init_array.size());
     elf::run_init_array(elf::g_game);
 
@@ -689,6 +702,7 @@ int main(int argc, char** argv) {
     // _Exit below intentionally skips destructors because guest threads remain.
     // Remove only our disposable tree; a locked file may leave it for later
     // manual removal, but can never redirect writes back to the original.
+    if (no_save) profile_lock.release();  // allow removal of the private lock file on Windows
     if (auto error = temporary_profile.discard())
         LOGW("temporary profile cleanup incomplete: %s (%s)", temporary_profile.data_path().string().c_str(), error.message().c_str());
     std::fflush(stdout);

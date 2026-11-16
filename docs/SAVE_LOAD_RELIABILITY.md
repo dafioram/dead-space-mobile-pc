@@ -1,9 +1,138 @@
 # Saving/loading reliability audit
 
-Status: **audit and proposed work**, not implemented save hardening. Reviewed on
-2026-11-15 against production main `7598c4c` and the locally supplied Android
-library. This branch starts independently from main. No save format, gameplay
-code, original save, installation or release tag is changed by this document.
+Status: **implemented hardening, awaiting user gameplay/persistence testing**.
+The historical audit below reviewed main `7598c4c`; the implementation updates
+independent `fix/save-load-reliability` through main `2cc804e`. No save format,
+native progression/slot rules, assets or release tags are changed. The agent
+does not launch or drive gameplay.
+
+## Implemented behavior
+
+### Normal saving, atomic publication and backups
+
+Native truncating writes to profile `.sb` files now use exclusively-created
+sibling `.ds-save-*.tmp` files. The old final is not truncated. Save writes
+complete partial progress, retry EINTR and fail on zero progress. Generic files,
+pipes and non-truncating I/O retain normal POSIX behavior; direct non-truncating
+profile writes are explicitly logged as **not** atomic replacements.
+
+Publication requires complete writes, sync, successful close and bounded SBIN
+inspection. Verified native filename-save hooks defer publication until the
+serializer returns; false results discard staged output even if its bytes look
+complete. Native FileStream close/flush results are corrected after imported I/O
+failures, without skipping native cleanup. Unsupported hook layouts are logged;
+checked atomic I/O remains active with validated-close publication, without
+claiming native-result tracking for an unknown library.
+
+On supported Windows/Linux filesystems, completed siblings replace the final
+atomically, **without deleting it first**. POSIX uses rename and directory fsync;
+Windows uses wide MoveFileExW replacement with WRITE_THROUGH and file `_commit`.
+Actual power-loss guarantees still depend on the OS/filesystem/device.
+
+Before overwriting a structurally validated known-format final, its previous
+contents are copied to a separately-staged, synced and validated `<filename>.bak`.
+The copy's identity must match the inspected previous file. Corrupt/unverified
+finals never rotate over an existing known-good backup. There is one backup per
+target. Backup/pre-publication failures retain the old final and report failure,
+never silently fall back to truncation. An error **after** replacement is reported
+as "new final installed; durability uncertain", not falsely described as rollback.
+
+Handled failures remove only their own temporary. After process termination,
+abandoned stages are logged and left alone, never silently promoted or deleted.
+The port does not auto-restore backups, switch slots or repair data. Existing
+native new-game/deletion/fallback decisions remain the game's policy.
+
+### Load diagnosis and malformed input
+
+`[save-load] selected` records the opened filename (including slot and Checkpoint/
+Level role), byte size, FNV-1a-64 identity and validation classification/reason.
+Inspection reads that same descriptor and restores its position, rather than
+consuming the native stream or inspecting a newer replacement pathname. FNV
+identities are diagnostic fingerprints, not cryptographic authenticity checks.
+
+The separate bounded SBIN v2 inspector checks section boundaries/alignment,
+duplicate/missing sections, every checksum, string lengths/counts, known schema
+tables, object extents, root fields, array counts and known string/object
+references. It does not reuse the unchecked asset-layout parser. Unknown versions,
+types/kinds/enum/symbol extensions and inspection limits are **unverified**, not
+assigned guessed sizes or blanket-banned. Inspection has a 64 MiB size cap and
+a bounded semantic-work budget; structural validity is not gameplay compatibility.
+
+For the verified FileInputStream layout, known structurally invalid selected
+files return false **before native parsing**. The caller still owns/closes its
+stream. Correlation uses that exact stream's descriptor, not the last open on a
+thread; ordinary asset databases and unfamiliar formats are not blanket-blocked.
+
+Native parse BEGIN/END logs distinguish serialization from later restoration,
+assets and rendering. A parser success/checksum pass never claims a playable
+checkpoint or reclassifies later scene crashes as corrupt saves. Startup records
+source revision, persistent/disposable profile and library size/content identity.
+No native error text is invented when the retail code exposes only false.
+
+`[save-io]` failures include operation, path, real errno/reason and relevant byte
+counts: open/read/write, zero progress, guest range/product overflow, seek,
+truncate, flush/sync/close, validation, backup and replacement. Directory errors
+are propagated. Missing/unused files are informational, not declared corruption.
+Successful publication has an explicit **COMMITTED** line. Stdio error/EOF remain
+distinct; clearerr clears the indicator, not a failed transaction's prohibition
+on publishing partial data. Normal saves are tested repeatedly after failures.
+
+### Ownership, Unicode and port preferences
+
+An OS-backed `.deadspace-profile.lock` gives one cooperating instance exclusive
+profile ownership **before** preferences load/write. A conflicting instance gets
+an explicit startup error, not silently disabled saving. The OS releases ownership
+on termination. The persistent lock filename is normal; do not delete it while
+instances run. Older builds do not cooperate with this lock: close them before
+using the same profile with a new build.
+
+Same-path writers are excluded, including Windows case aliases. Wide filesystem
+calls preserve UTF-8 paths on Windows. Guest normalization handles both slash
+styles; atomic targets outside the selected root, symlink/reparse targets,
+directories and explicitly read-only finals are refused with diagnostics.
+
+`port_settings.ini` uses checked atomic replacement too, with a previous-readable-
+text backup. Persistence failure is logged while runtime preferences remain usable.
+`--no-save` still permits temporary progress/settings/backups inside its private
+copy. Its lock and sidecars never go to the original; the private lock is released
+before cleanup. Copying while another instance saves is still not a guaranteed
+consistent multi-file snapshot; use a quiescent source.
+
+## Validation and remaining limits
+
+Three new asset-free suites exercise production I/O/inspection, actual descriptor/
+stdio imports and native-result callbacks with simulated registers, and synthetic
+helper processes. They cover repeated first/overwrite saves, exact backup bytes,
+partial/EINTR/zero/mid-write disk-full failures, read/flush/sync/close/backup/replace
+errors, serializer false, unclosed/deferred streams, invalid buffers/overflow,
+stdio indicators, ordinary files/real pipes, read-only/invalid targets, Unicode,
+writer/case contention, lock release after normal/killed helpers, and disposable
+progress/preferences with original bytes unchanged.
+
+Helpers terminate only themselves after staged writes, sync, close, backup and
+final replacement. Finals remain complete; abandoned stages are never auto-loaded.
+Validator tests cover every truncation, checksum/table/reference failures and
+50,000 generated random/deep-checksummed mutations. Private supplied saves were
+inspected read-only, never used as public fixtures or executed by tests.
+
+Windows/Linux application builds pass all 14 suites. A clean application-off
+Linux ASan/UBSan build passes all 13 asset-free suites. Native hook/layout sites
+were checked read-only. No game session was launched, stopped or driven, and
+no original profile/installation was written by agent validation.
+
+This is **per-file**, not a whole-profile checkpoint/level/achievement journal.
+Native multi-file ordering and semantic compatibility are not redesigned. It is
+not proof of a fix for issue #22 or earlier render crashes, nor a destructive
+migration or automatic recovery policy.
+
+For user persistence testing, select a **copy** with `--data`, save/quit and
+relaunch that same copy. `--no-save` intentionally discards progress across
+launches. Check COMMITTED lines and the next selected filename/digest. If recovery
+is needed, preserve the whole profile/log and close the game first: per-file
+backups are not necessarily a mutually consistent checkpoint/level pair, so do
+not blindly mix them.
+
+## Historical audit findings (before implementation)
 
 ## What issue #22 does and does not establish
 
@@ -165,6 +294,7 @@ profiles and preserved original hashes, not committed saves or fixtures.
 protecting originals. Do not introduce an atomic-write bypass that publishes
 outside its private root, or weaken its existing cleanup-error reporting.
 
-No fault-injection or bad-save reproduction has yet been run for this audit.
+At the time of the original audit, fault injection had not yet been run; the
+implementation/test results above supersede that statement.
 The tester's actual failing save, exact executable/library/assets and full
 crash-time log are still needed to connect any hardening opportunity to #22.

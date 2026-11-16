@@ -4,7 +4,7 @@
 
 namespace settings {
 void load(const std::string& path);
-void save();
+bool save();  // false is logged; keep the runtime preference even if persistence fails
 int get_int(const std::string& key, int def);
 void set_int(const std::string& key, int value);  // saves immediately
 std::string get_string(const std::string& key, const std::string& def);

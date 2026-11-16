@@ -401,6 +401,11 @@ highlighted one. Words in a command are joined with _ (spaces work too).
 Resource/restore commands can affect autosaves; use `--no-save` to keep them temporary.
 See [the debug guide](docs/debug_menu.md) for limits, ownership checks and oxygen behavior.
 
+Profile saves use checked per-file atomic replacement and previous-file backups.
+Failures and selected load files are logged as `[save-io]` / `[save-load]`; normal saving
+remains enabled. See [save/load reliability](docs/SAVE_LOAD_RELIABILITY.md) for limits
+and recovery cautions. Do not run older/newer builds against the same profile together.
+
 ### How E picks
 A box in front of Isaac (1.8 m deep, 1.4 m wide, floor to above head height) points where the
 camera looks. Every usable object has a zone: its 3D bounding box, padded to at least 0.5 m; objects
