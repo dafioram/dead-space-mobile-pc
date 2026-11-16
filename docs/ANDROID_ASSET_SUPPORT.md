@@ -1,6 +1,9 @@
 # Android APK / asset compatibility inventory
 
-Status: **read-only survey**, not a new importer or runtime compatibility patch.
+Status: inventory plus **scoped original-layout importer implementation**, awaiting
+user acceptance. See [APK import and isolated tests](APK_IMPORT.md) for current
+commands, safety policy and runtime-test boundaries. The survey sections below
+record the earlier read-only comparisons; they are not claims of playtesting.
 Maintained on `feat/android-asset-support`, based on production main `9ede69c`.
 Five supplied Android APKs have now been assessed. A–D are direct ARM32 packages
 with identical assets. **E (Reanimated 1.3) adds an ARM64 host/JIT wrapper around
@@ -11,7 +14,8 @@ Android SDK metadata are not native-architecture or compatibility identifiers.
 No APK, extracted library, asset, save, screenshot, recording, dump, log or private
 inspection fixture belongs in this branch, tests or release packages. This document
 contains only provenance/compatibility metadata. Supplied copies are inspected
-without importing them, modifying the installation or executing the game. All
+without modifying the installation or executing the game. Later authorized
+import-only testing uses fresh private case folders, never the installation. All
 interactive gameplay/persistence testing is reserved for the user.
 
 ## Running inventory
@@ -227,13 +231,16 @@ IDs or assume that converting KTX to PNG alone establishes correct mapping.
 3. `lib/armeabi-v7a/libDeadSpace.so`
 
 APKs A–D use the second layout, with supported stored/deflated ZIP
-entries. Static inspection therefore finds no need for a new extraction-path
-rule or asset variant for these four copies. No actual import was run for the
-survey. The port's existing original-layout texture-mode policy remains unchanged;
+entries. Static inspection therefore found no need for a new extraction-path
+rule or asset variant for these four copies. No actual import was run during the
+initial survey. The implemented importer adds SHA-256 profile reporting, checked
+staged extraction and isolated `--game-dir` / `--import-only` commands.
+The port's existing original-layout texture-mode policy remains unchanged;
 this document is not an independent texture-format audit.
 
 E's `assets/game/libDeadSpace32.so` is **not in the current library candidate
-list**, so the present importer rejects it before extraction. Merely adding that
+list**; an explicit recognition-only guard now explains its rejection before
+any extraction/destination writes. Merely adding that
 candidate would also be insufficient: its game assets must be normalized from
 the nested prefix, non-game host/splash/HD files kept out of the stock asset root,
 and texture-mode selection handled explicitly. In particular, a game library
@@ -243,8 +250,9 @@ than applying the importer's older fan-fixed-layout heuristic to this new layout
 
 Optional HD support is separate work: establish hash/replacement mapping, support
 or safely decode the KTX formats/mip levels, and preserve normal texture-pack
-enable/disable behavior. No importer, texture decoder, renderer or installation
-was changed during this inventory. Static feasibility is not runtime validation.
+enable/disable behavior. No texture decoder, renderer, physics or existing
+installation is changed by this scoped importer work. Static feasibility is not
+runtime validation.
 
 ## Public implementation reference and proposed integration
 
@@ -296,7 +304,7 @@ where needed or implement the glue independently against the documented format
 and algorithm. Do not copy generated retail-derived code, original assets,
 captures or another project's installed saves.
 
-### Proposed staged work (not implemented)
+### Future Reanimated staged work (not implemented)
 
 1. **Base APK layout support:** keep A–D behavior; recognize E's ARM32 core and
    nested original asset root; record the actual library/source profile; preserve
@@ -360,7 +368,8 @@ importer/optional-HD-support target**, though its guest engine is already the
 baseline. Existing baseline-content compatibility must still be distinguished
 from independent runtime/audio validation of library B, Android wrapper behavior,
 and the unimplemented E importer/HD mapping work. No gameplay was run for these
-surveys and none of those implementation changes is claimed complete.
+surveys. Original-layout import validation/isolation is now implemented;
+Reanimated base-layout import and HD integration remain unimplemented.
 
 For future APKs, append package/version, every native ABI/core candidate, full
 APK/library hashes, asset-content group, format/layout differences, and separate
@@ -369,6 +378,7 @@ from native-core changes and asset changes. Do not mix libraries/assets between
 versions, overwrite current installations or announce support solely because
 filenames or version strings match.
 
-Potential importer/hook changes require their own scoped implementation and
-synthetic tests, followed by user-led runtime checks. This inventory authorizes
-none of those changes and makes no universal save-compatibility claim.
+Any further importer/hook changes require their own scoped implementation and
+synthetic tests, followed by user-led runtime checks. The inventory makes no
+universal save-compatibility claim. The current original-layout work does not
+authorize physics/HD integration or release publication.

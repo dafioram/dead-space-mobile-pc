@@ -18,7 +18,12 @@ Game files and profiles:
   -h, --help                 Print this help and exit without starting the game.
   --assets DIR               Extracted assets directory (gamedata/assets).
   --lib FILE                 Matching libDeadSpace.so (gamedata/libDeadSpace.so).
-  --apk FILE                 Import your APK into gamedata beside the executable.
+  --apk FILE                 Import an original-layout ARM32 APK (A-D inventory).
+  --game-dir DIR             Game-data root for import OR reuse (assets + library).
+                             Default: gamedata beside executable. No profile change.
+  --import-only              With --apk and explicit --game-dir: extract and exit
+                             BEFORE SDL/game/profile/log/crash initialization.
+                             Only --apk, --game-dir, --verbose accepted in this mode.
   --data DIR                 Userdata root: saves AND port_settings.ini.
                              Default: userdata beside the executable.
   --no-save                  Play on a disposable copy of that userdata root.
@@ -55,7 +60,15 @@ Developer options (see docs/debug_menu.md):
   --crash-test              Intentionally crash to test reporting. NOT gameplay.
 
 Example:
+  deadspace --apk "D:/DSM/game.apk" --game-dir "D:/DSM/test-A/game" --import-only
+  deadspace --game-dir "D:/DSM/test-A/game" --data "D:/DSM/test-A/userdata"
   deadspace --assets "D:/DSM/gamedata/assets" --lib "D:/DSM/gamedata/libDeadSpace.so" --data "D:/DSM/userdata" --no-save
+
+Import writes a fresh staged directory; identical existing data is reused, while
+different existing data is refused unchanged (choose a fresh --game-dir).
+Reanimated/HD is detected and refused BEFORE extraction; support is planned.
+--game-dir cannot be mixed with --assets/--lib; --data is independent. In
+--import-only mode redirect stdout to keep import diagnostics; no default log.
 
 --help takes precedence over other arguments and does not import data or write
 logs/dumps. --no-save protects the userdata source, not APK imports, logs, texture

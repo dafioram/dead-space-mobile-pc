@@ -125,21 +125,19 @@ void install(std::wstring dir, std::wstring apk, bool desktop) {
     std::error_code ec;
     std::wstring err;
     try {
-        fs::create_directories(dir, ec);
-        if (ec) throw std::wstring(L"Cannot create the folder:\n") + dir;
-
         // (the game data first: if the file turns out not to be the right APK, nothing has been installed)
         if (!apk.empty()) {
             status(L"Importing the game data from your APK (this takes a moment)...");
             const fs::path gd = fs::path(dir) / L"gamedata";
-            fs::remove_all(gd, ec);  // (a re-install with a different APK starts clean)
             logging::g_last_error.clear();
             if (!apk::import(utf8(apk), utf8(gd.wstring()))) {
-                fs::remove_all(gd, ec);
                 throw std::wstring(L"The game data could not be imported from that file.\n\n") + wide(logging::g_last_error) +
-                    L"\n\nIt has to be the Android APK of Dead Space (2011, EA / IronMonkey).";
+                    L"\n\nUse an original-layout ARM32 APK. Reanimated/HD is not supported yet."
+                    L"\nExisting data was not overwritten. For different assets choose a fresh install folder, or keep the existing game data.";
             }
         }
+        fs::create_directories(dir, ec);
+        if (ec) throw std::wstring(L"Cannot create the folder:\n") + dir;
         status(L"Copying the game program...");
         HRSRC res = FindResourceW(nullptr, L"PAYLOAD_EXE", RT_RCDATA);
         HGLOBAL mem = res ? LoadResource(nullptr, res) : nullptr;

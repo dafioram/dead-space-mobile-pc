@@ -17,6 +17,7 @@
 
 #include "apk.h"
 #include "cli_help.h"
+#include "cli_arguments.h"
 #include "config.h"
 #include "crash.h"
 #include "settings.h"
@@ -192,7 +193,7 @@ void save_png(const std::string& path, int, int, int div) {
 std::string first_existing(std::initializer_list<std::string> paths) {
     for (auto& p : paths) {
         std::error_code ec;
-        if (fs::exists(p, ec)) return p;
+        if (fs::exists(save_io::utf8_path(p), ec)) return p;
     }
     return "";
 }
@@ -200,6 +201,9 @@ std::string first_existing(std::initializer_list<std::string> paths) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    cli::Arguments arguments(argc, argv);
+    argc = arguments.count;
+    argv = arguments.values;
     // Before even parsing side-effecting debug flags (audio dump/crash test),
     // opening logs, touching assets/profiles or initialising SDL/OpenGL.
     if (cli::help_requested(argc, argv)) {
@@ -207,10 +211,12 @@ int main(int argc, char** argv) {
         std::fflush(stdout);
         return 0;
     }
+    if (auto imported = apk::import_cli(argc, argv)) return *imported;
     TemporaryProfile temporary_profile;
     save_io::ProfileLock profile_lock;
     bool no_save = false;
-    std::string assets, lib, data, logfile, shot_dir, apk_path, dev_dir;
+    std::string assets, lib, data, logfile, shot_dir, apk_path, dev_dir, game_dir;
+    bool file_option_error = false;
     std::vector<u64> shot_frames;
     int fps_arg = -1;  // --fps N overrides the Frame Rate Limit setting
     u64 exit_frame = 0, gl_trace_frame = 0;
@@ -223,7 +229,11 @@ int main(int argc, char** argv) {
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
         if (a == "--assets") assets = next();
         else if (a == "--lib") lib = next();
-        else if (a == "--apk") apk_path = next();
+        else if (a == "--apk" || a == "--game-dir") {
+            std::string value = next();
+            if (value.empty() || value.starts_with("--")) file_option_error = true;
+            (a == "--apk" ? apk_path : game_dir) = value;
+        }
         else if (a == "--dump-audio") jni::audio_dump(next().c_str());
         else if (a == "--data") data = next();
         else if (a == "--no-save") no_save = true;
@@ -290,6 +300,10 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (file_option_error || (!game_dir.empty() && (!assets.empty() || !lib.empty())) || (!apk_path.empty() && (!assets.empty() || !lib.empty()))) {
+        std::fputs("Invalid game-file options: --apk/--game-dir need values and cannot be mixed with --assets/--lib. Use --help.\n", stderr);
+        return 2;
+    }
     char* base_c = SDL_GetBasePath();
     std::string base = base_c ? base_c : "./";
     SDL_free(base_c);
@@ -299,12 +313,12 @@ int main(int argc, char** argv) {
     if (crash_test) *static_cast<volatile int*>(nullptr) = 1;  // debug: verify crash reporting
 
     // Game files: imported from the user's APK into gamedata/ (once), or given explicitly.
-    const std::string gamedata = base + "gamedata";
-    if (apk_path.empty() && assets.empty() && !fs::exists(gamedata + "/libDeadSpace.so")) {
+    const std::string gamedata = game_dir.empty() ? base + "gamedata" : game_dir;
+    if (game_dir.empty() && apk_path.empty() && assets.empty() && !fs::exists(save_io::utf8_path(gamedata + "/libDeadSpace.so"))) {
         std::error_code ec;
         for (auto& e : fs::directory_iterator(base, ec))
             if (e.path().extension() == ".apk") {
-                apk_path = e.path().string();
+                apk_path = save_io::path_utf8(e.path());
                 break;
             }
     }
@@ -312,18 +326,20 @@ int main(int argc, char** argv) {
         LOGI("importing game data from %s ...", apk_path.c_str());
         if (!apk::import(apk_path, gamedata)) {
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Dead Space",
-                                     "Could not import the game data from the APK. See deadspace.log.", nullptr);
+                                     "Could not import the APK. Existing game data was not overwritten.\nUse a fresh --game-dir for another APK. Reanimated/HD import is deferred.\nSee deadspace.log.", nullptr);
             return 1;
         }
     }
     {  // (left by the importer when the APK was an unmodified one; --atc-textures forces it)
         std::error_code ec;
-        if (fs::exists(gamedata + "/atc_textures", ec)) hle::g_real_atc = true;
+        if (fs::exists(save_io::utf8_path(gamedata + "/atc_textures"), ec)) hle::g_real_atc = true;
     }
     if (assets.empty())
-        assets = first_existing({gamedata + "/assets", base + "../apk/assets", "apk/assets"});
+        assets = game_dir.empty() ? first_existing({gamedata + "/assets", base + "../apk/assets", "apk/assets"})
+                                  : first_existing({gamedata + "/assets"});
     if (lib.empty())
-        lib = first_existing({gamedata + "/libDeadSpace.so", assets + "/guest_libs/libDeadSpace.so"});
+        lib = game_dir.empty() ? first_existing({gamedata + "/libDeadSpace.so", assets + "/guest_libs/libDeadSpace.so"})
+                               : first_existing({gamedata + "/libDeadSpace.so"});
     if (data.empty()) data = base + "userdata";
     if (assets.empty() || lib.empty()) {
         LOGE("could not find the game files. Run once with --apk <Dead Space APK> (or put the APK next to the exe)");
@@ -356,6 +372,8 @@ int main(int argc, char** argv) {
     texpack::init(base, settings::get_int("texture_packs", 1) != 0, dump_png || settings::get_int("texture_dump", 0) != 0);
     if (msaa_arg >= 0) settings::set_int("msaa", msaa_arg);
     LOGI("assets: %s", assets.c_str());
+    if (!game_dir.empty())
+        LOGI("[apk-import] explicit game-dir=%s (no fallback to another installation); --data controls profile independently", game_dir.c_str());
     LOGI("library: %s", lib.c_str());
     LOGI("user data: %s", data.c_str());
 #ifdef DEADSPACE_BUILD_REVISION
