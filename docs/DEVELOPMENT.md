@@ -50,6 +50,9 @@ For the preliminary iOS inventory and proposed inspect/unpack work, see
 [IOS_ASSET_IMPORT.md](IOS_ASSET_IMPORT.md). IPA import and iOS runtime support
 are not implemented. The same private-data rules apply to IPAs, extracted iOS
 assets and executables; do not mix them into an existing Android installation.
+Deferred iOS video references, version evidence and the future gameplay-matching
+checklist are in [IOS_BEHAVIOR_MATCHING.md](IOS_BEHAVIOR_MATCHING.md). These are
+documentation only; iOS implementation remains postponed.
 
 ## Asset-free tests
 

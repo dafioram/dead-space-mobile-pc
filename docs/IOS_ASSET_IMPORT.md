@@ -1,14 +1,14 @@
 # iOS asset import: findings and staged plan
 
-Status: investigation only. The port does **not** currently import IPAs, load an
+Status: **deferred investigation/documentation only**. The port does **not** currently import IPAs, load an
 iOS executable, or support the iOS-only rifle and Survival assets. This document
 starts the isolated `feat/ios-asset-import` branch from production main, not from
 the combined playtest branch.
 
 ## Scope and evidence
 
-A quick, read-only inspection on 2026-11-15 examined one user-supplied IPA named
-`Dead_Space__1.0.3_ios_3.0.ipa`, comparing its asset filenames with the local
+A quick, read-only inspection on 2026-11-15 examined one privately supplied iOS
+sample, comparing its asset filenames with the local
 Android installation. The archive was not executed or imported into the game.
 The inspection covered ZIP entries, bundle metadata, selected serialized tables,
 an audio-event manifest, and printable executable names/symbols. It did not
@@ -17,7 +17,9 @@ disassemble gameplay, validate rendering, or test unlocks and saves.
 Bundle metadata reports:
 
 - Display name: Dead Space; identifier: `com.ea.deadspace.inc`.
-- Marketing version: `1.0.3`; internal bundle version: `1.3.8`.
+- Marketing version (`CFBundleShortVersionString`): `1.0.3`; internal build
+  (`CFBundleVersion`): `1.3.8`. These plist fields were rechecked read-only on
+  2026-11-16; this identification is not inferred from an archive filename.
 - Minimum iOS version: `3.0`; device family: iPhone (`1`).
 - Bundle root: `Payload/Dead Space.app/`.
 - Asset roots: `published/` and `published_low/`.
@@ -26,6 +28,13 @@ Bundle metadata reports:
 
 These observations apply to this sample and our installed Android package, not
 every iOS or Android release. Metadata is not proof of archive provenance.
+
+The supplied sample is therefore **1.0.3 / build 1.3.8**, not a verified 1.3.11
+sample. The user's recollection of 1.3.11 remains an unverified alternative, not
+another inspected build. Public video descriptions and a catalog listing refer
+to **1.3.34**; no such package has been inspected here, and its marketing/internal
+version fields, binary identity and changes must not be guessed. See the
+[deferred behavior reference/version ledger](IOS_BEHAVIOR_MATCHING.md).
 
 ## Content that stands out
 
@@ -56,6 +65,18 @@ Android already retains rifle names/descriptions, help text, `BTN_BURST` and
 item mappings did not reveal a rifle implementation. Merely enabling a button
 or granting an inventory entry is not a supported way to recover the weapon.
 Other shared mode/difficulty text likewise does not establish Android support.
+
+## Deferred gameplay comparison
+
+The user supplied Helios_Max's iOS Endless/all-stages and timed Waterworks videos
+as later comparison targets. Four stage labels are supported by the reference
+metadata and agree with the four Survival resources above; separate timed videos
+for all four stages are now linked in [IOS_BEHAVIOR_MATCHING.md](IOS_BEHAVIOR_MATCHING.md).
+That document separates user observations, verified video metadata/description
+chapters and still-unmeasured mechanics. The long Waterworks run is labeled
+**5 Minutes To Kill**, not Endless: do not implement its name as a hard five-minute
+session cap or conflate the two modes. No rifle/Survival implementation or footage
+playtest is claimed by adding these references; iOS work remains postponed.
 
 ## Compatibility boundaries
 
