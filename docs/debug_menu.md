@@ -67,6 +67,25 @@ manual recovery, and never blindly mix checkpoint/level files from different run
 To test persistence across launches, use a copied profile with `--data` **without**
 `--no-save`; that flag intentionally discards session progress on exit.
 
+### Wall-streak geometry capture (opt-in)
+
+`/geom on` arms the shared Native/Legacy geometry observer; close the console,
+then press **F4** when a streak is visible. Wait for **REPORT READY** (about one
+second). F8 remains the renderer switch. `/geom mark` also marks from the console,
+but F4 avoids typing away the recent combat frames. `/geom status` shows state.
+The bounded report goes into `deadspace.log`; preserve it before the next launch.
+
+Optional `/geom focus 1` through `/geom focus 12` highlights the latest report's
+ranked candidates: yellow longest sampled triangle, magenta thinnest. These are
+**x-ray outlines**, not proof of actual visibility or corruption. Say which number
+overlaps the real streak; no normal draw is hidden. `/geom focus 0` clears it;
+`/geom off` stops observation. `/debug_off` also turns it off. Capture has CPU
+overhead while armed and is disabled by default. It does not change saves.
+
+Full implementation limits and interpretation: `docs/GEOMETRY_DIAGNOSTICS.md` in
+the source repository. Send the log and a short recording around F4 markers; keep
+all real geometry excerpts/recordings private, not in commits or public packages.
+
 ## Keyboard shortcuts
 
 | Key | Action |

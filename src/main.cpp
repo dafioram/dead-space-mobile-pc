@@ -23,6 +23,7 @@
 #include "temporary_profile.h"
 #include "save_io.h"
 #include "save_lifecycle.h"
+#include "geometry_capture.h"
 #include "texpack.h"
 #include "cpu.h"
 #include "elf_loader.h"
@@ -440,6 +441,8 @@ int main(int argc, char** argv) {
     input::install();
     lights::install();
     console::install();
+    geometry::capture().symbolizer(cpu::symbolize);
+    LOGI("[geometry] shared-GLES diagnostics available, disabled by default; /geom on arms, F4 marks, /geom off stops");
     menu_nav::install();
     save_lifecycle::install();
     LOGI("running %zu static constructors", elf::g_game.init_array.size());
@@ -515,6 +518,12 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&e)) {
             float gx, gy;
             if (console::event(e)) continue;
+            // F4 is diagnostic-only while explicitly armed. Do not steal game
+            // controls or synthesize gameplay/menu events to mark a frame.
+            if (geometry::capture().enabled() && (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) && e.key.keysym.scancode == SDL_SCANCODE_F4) {
+                if (e.type == SDL_KEYDOWN && !e.key.repeat) LOGI("[geometry] %s", geometry::capture().mark().c_str());
+                continue;
+            }
             // loading screen "press any key to continue": any key or mouse button taps where the game waits for
             // one; the left / right arrow keys swipe through its hints
             if (patches::loading_wait() && ((e.type == SDL_KEYDOWN && !e.key.repeat && (e.key.keysym.sym < SDLK_F1 || e.key.keysym.sym > SDLK_F12)) ||
@@ -595,7 +604,9 @@ int main(int argc, char** argv) {
             render::trace_next_frame();
         }
         render::begin_frame();
+        geometry::capture().begin_frame();
         native(kRenderer, "NativeOnDrawFrame", "()V", renderer);
+        geometry::capture().end_frame();
         render::end_frame();
         if (gl_trace_frame && frames + 1 == gl_trace_frame) cpu::set_gl_trace(false);
         // skipping a cinematic: run extra game frames per displayed frame, without vsync
@@ -605,7 +616,9 @@ int main(int argc, char** argv) {
             for (int i = 0; i < 7 && input::fast_forwarding(); i++) {
                 input::frame(win);
                 render::begin_frame();
+                geometry::capture().begin_frame();
                 native(kRenderer, "NativeOnDrawFrame", "()V", renderer);
+                geometry::capture().end_frame();
                 render::end_frame();
             }
         } else if (ff_vsync_off) {
@@ -620,7 +633,9 @@ int main(int argc, char** argv) {
                 menu_nav::frame(true);  // (keeps its list of live buttons per game frame; draws nothing)
                 input::frame(win);
                 render::begin_frame();
+                geometry::capture().begin_frame();
                 native(kRenderer, "NativeOnDrawFrame", "()V", renderer);
+                geometry::capture().end_frame();
                 render::end_frame();
             }
         } else if (turbo_vsync_off) {
@@ -663,6 +678,15 @@ int main(int argc, char** argv) {
             }
         }
         console::draw(g_config.screen_w, g_config.screen_h);
+        if (geometry::capture().enabled()) {
+            for (const auto& line : geometry::capture().lines()) hle::overlay_line(line.x0, line.y0, line.x1, line.y1, line.color);
+            std::string status = "GEOMETRY ON | F4 MARK | /geom off";
+            if (geometry::capture().pending()) status += " | CAPTURING";
+            else if (geometry::capture().ready()) status += " | REPORT READY (" + std::to_string(geometry::capture().choices()) + " candidates)";
+            if (geometry::capture().focused()) status += geometry::capture().focus_seen() ? " | FOCUS MATCH (X-RAY)" : " | FOCUS NOT OBSERVED";
+            hle::overlay_text(8, float(g_config.screen_h - 24), 2, status.c_str(), 0xffff00ffu);
+        }
+        geometry::capture_log();
         menu_nav::frame(input::controls_active());
         hle::overlay_draw();  // debug overlays queued during the game frame
         ++frames;
@@ -695,6 +719,8 @@ int main(int argc, char** argv) {
     }
 
     LOGI("shutting down");
+    geometry::capture().finish();
+    geometry::capture_log(true);
     native(kActivity, "NativeOnPause", "()V", act);
     native(kActivity, "NativeOnStop", "()V", act);
     SDL_GL_DeleteContext(gl);

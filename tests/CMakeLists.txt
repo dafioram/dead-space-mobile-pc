@@ -42,6 +42,10 @@ set_tests_properties(save_adapters PROPERTIES TIMEOUT 120)
 add_test(NAME save_processes COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_save_process.py"
     --probe "$<TARGET_FILE:save_io_tests>" -v)
 set_tests_properties(save_processes PROPERTIES TIMEOUT 120)
+add_executable(geometry_tests geometry_tests.cpp)
+target_link_libraries(geometry_tests PRIVATE geometry_diagnostics)
+add_test(NAME geometry_diagnostics COMMAND geometry_tests)
+set_tests_properties(geometry_diagnostics PROPERTIES TIMEOUT 120)
 add_test(NAME apk_import COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_apk_import.py" --importer "$<TARGET_FILE:apk_import_probe>")
 add_test(NAME asset_policy COMMAND "${Python3_EXECUTABLE}" -m unittest discover

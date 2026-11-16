@@ -10,6 +10,8 @@
 #include <vector>
 
 #include "hle/gles.h"
+#include "geometry_capture.h"
+#include "config.h"
 #include "texpack.h"
 #include "hle/hle.h"
 #include "render/native.h"
@@ -107,6 +109,9 @@ struct TexInfo {
 std::unordered_map<GLuint, TexInfo> g_tex;
 std::unordered_map<GLuint, std::vector<u8>> g_buf_shadow;
 std::unordered_map<GLuint, u32> g_buf_mapped;  // buffer -> guest mapping
+std::unordered_map<GLuint, uint64_t> g_geometry_buffer_generations;
+uint64_t g_geometry_buffer_serial = 0;
+GLuint g_geometry_framebuffer = 0;
 
 std::vector<u8> g_conv[A_COUNT];
 std::set<std::string> g_warned;
@@ -228,6 +233,53 @@ bool any_conversion() {
         if (g_arr[k].enabled && k != A_POINTSIZE && k != A_MATIDX && k != A_WEIGHT && !native_ok(k, g_arr[k].type))
             return true;
     return false;
+}
+
+geometry::Source geometry_source(GLuint buffer, u32 pointer) {
+    if (buffer) {
+        auto it = g_buf_shadow.find(buffer);
+        if (it == g_buf_shadow.end() || pointer > it->second.size() || it->second.empty()) return {};
+        return {it->second.data() + pointer, it->second.size() - pointer, 0, false, nullptr};
+    }
+    if (!pointer) return {};
+    return {mem::host(pointer), (uint64_t(1) << 32) - pointer, pointer, true, mem::is_mapped};
+}
+geometry::Array geometry_array(const Array& array) {
+    geometry::Array out;
+    out.enabled = array.enabled;
+    out.components = array.size;
+    out.type = array.type;
+    out.stride = array.stride;
+    out.pointer = array.ptr;
+    out.buffer = array.buffer;
+    out.source = geometry_source(array.buffer, array.ptr);
+    auto it = g_geometry_buffer_generations.find(array.buffer);
+    if (it != g_geometry_buffer_generations.end()) out.generation = it->second;
+    return out;
+}
+void observe_geometry(Ctx& c, bool indexed) {
+    if (!geometry::capture().enabled()) return;
+    geometry::Draw draw;
+    draw.caller = c.lr();
+    draw.mode = c.arg(0);
+    draw.indexed = indexed;
+    draw.count = int(c.arg(indexed ? 1 : 2));
+    draw.first = indexed ? 0 : int(c.arg(1));
+    if (indexed) {
+        draw.index_type = c.arg(2);
+        draw.index_pointer = c.arg(3);
+        draw.index_buffer = g_element_buffer;
+        draw.indices = geometry_source(g_element_buffer, c.arg(3));
+        auto it = g_geometry_buffer_generations.find(g_element_buffer);
+        if (it != g_geometry_buffer_generations.end()) draw.index_generation = it->second;
+    }
+    draw.position = geometry_array(g_arr[A_VERTEX]);
+    draw.normal = geometry_array(g_arr[A_NORMAL]);
+    draw.color = geometry_array(g_arr[A_COLOR]);
+    draw.uv = geometry_array(g_arr[A_TEX0]);
+    draw.state = render::geometry_state();
+    draw.state.framebuffer = g_geometry_framebuffer;
+    geometry::capture().observe(draw, g_config.screen_w, g_config.screen_h);
 }
 
 int array_index_for(GLenum cap) {
@@ -1491,6 +1543,7 @@ void register_gles() {
         GLuint* b = c.argp<GLuint>(1);
         for (int i = 0; i < n; i++) {
             g_buf_shadow.erase(b[i]);
+            g_geometry_buffer_generations.erase(b[i]);
             if (g_array_buffer == b[i]) g_array_buffer = 0;
             if (g_element_buffer == b[i]) g_element_buffer = 0;
         }
@@ -1507,6 +1560,7 @@ void register_gles() {
         GLuint b = target == GL_ARRAY_BUFFER ? g_array_buffer : g_element_buffer;
         auto& sh = g_buf_shadow[b];
         sh.assign(c.arg(1), 0);
+        g_geometry_buffer_generations[b] = ++g_geometry_buffer_serial;
         if (c.arg(2)) std::memcpy(sh.data(), mem::host(c.arg(2)), c.arg(1));
         p_glBufferData(target, GLsizeiptr(c.arg(1)), hp(c.arg(2)), c.arg(3));
     });
@@ -1567,6 +1621,7 @@ void register_gles() {
         GLint first = GLint(c.arg(1));
         GLsizei count = GLsizei(c.arg(2));
         if (count <= 0) return;
+        observe_geometry(c, false);
         if (render::enabled()) {
             sync_native_arrays();
             return render::draw_arrays(c.arg(0), first, count);
@@ -1579,6 +1634,7 @@ void register_gles() {
         GLsizei count = GLsizei(c.arg(1));
         u32 ind = c.arg(3);
         if (count <= 0) return;
+        observe_geometry(c, true);
         const u8* idx = nullptr;
         if (g_element_buffer) {
             auto it = g_buf_shadow.find(g_element_buffer);
@@ -1610,6 +1666,7 @@ void register_gles() {
     reg("glDeleteFramebuffersOES", [](Ctx& c) { p_glDeleteFramebuffers(GLsizei(c.arg(0)), c.argp<GLuint>(1)); });
     reg("glBindFramebufferOES", [](Ctx& c) {
         GLuint fb = c.arg(1);
+        g_geometry_framebuffer = fb;
         p_glBindFramebuffer(c.arg(0), fb ? fb : g_default_fbo);
     });
     reg("glIsFramebufferOES", [](Ctx& c) { c.ret(p_glIsFramebuffer(c.arg(0))); });
