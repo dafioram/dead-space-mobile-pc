@@ -2,10 +2,12 @@
 #pragma once
 #include <string>
 #include <vector>
+#include "performance.h"
 
 #include "render/native.h"
 
 namespace lights {
+void performance_snapshot(perf::Metrics& out);
 
 void install();           // hooks (before the game runs)
 void set_trace(bool on);  // dev: log fire / impact / projectile events

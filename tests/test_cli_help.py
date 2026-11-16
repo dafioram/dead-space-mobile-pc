@@ -18,7 +18,7 @@ class HelpTests(unittest.TestCase):
                 # Help must win even over earlier side-effecting options.
                 command = [str(self.executable), "--dump-audio", str(root / "audio.raw"),
                            "--log", str(root / "game.log"), "--data", str(root / "userdata"),
-                           "--apk", str(root / "not-an-apk.zip"), "--no-save", flag]
+                            "--apk", str(root / "not-an-apk.zip"), "--no-save", "--perf", flag]
                 result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=15)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("Usage: deadspace [options]", result.stdout)

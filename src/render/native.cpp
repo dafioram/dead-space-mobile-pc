@@ -3451,6 +3451,22 @@ void texture_deleted(GLuint tex) {
     g_tex_meta.erase(tex);
     g_tex_kind.erase(tex);
 }
+void performance_snapshot(perf::Metrics& out) {
+    uint64_t image_bytes = 0, image_capacity = 0;
+    size_t scanned = 0;
+    for (const auto& item : g_tex_images) {
+        if (scanned == perf::cache_scan_limit) break;
+        ++scanned;
+        image_bytes += item.second.px.size(); image_capacity += item.second.px.capacity();
+    }
+    out.insert(out.end(), {{"texture_meta_entries", g_tex_meta.size()}, {"lighting_images", g_tex_images.size()},
+        {"lighting_image_bytes_scanned", image_bytes}, {"lighting_image_capacity_scanned", image_capacity},
+        {"image_scan_truncated", scanned < g_tex_images.size()}, {"lamp_masks", g_lamp_masks.size()},
+        {"gobo_entries", g_gobo_info.size()}, {"samplers", g_samplers.size()},
+        {"scene_meshes", g_smesh.size()}, {"scene_mesh_capacity_bytes", g_smesh.capacity()*sizeof(SMesh)},
+        {"scene_vertex_bytes", g_sverts.size()*sizeof(float)}, {"scene_vertex_capacity_bytes", g_sverts.capacity()*sizeof(float)},
+        {"scene_index_bytes", g_sidx.size()*sizeof(u32)}, {"scene_index_capacity_bytes", g_sidx.capacity()*sizeof(u32)}});
+}
 void set_anisotropy(int level) {
     int v = 1;
     while (v * 2 <= std::clamp(level, 1, g_max_aniso)) v *= 2;
