@@ -272,6 +272,27 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   private save copies pass read-only inspection, not gameplay execution. All
   interactive validation remains user-led. See `docs/SAVE_LOAD_RELIABILITY.md`.
   Production main through `2cc804e`, including merged PR #28, is integrated.
+- User persistence confirmation on `6ce7726`: the next user-run log loaded
+  `01_CheckpointSave.sb` at 3788 bytes / FNV64 `9923f1f71b4b35c6`, matching the
+  previous run's final committed checkpoint, and native parsing succeeded before
+  entering `02_mines_01`. The user confirmed their saved bench upgrades returned.
+  This verifies that supplied checkpoint's persistence/restoration, not every
+  save/schema/scene. The log subsequently reported a successful new checkpoint
+  commit and normal shutdown. No agent gameplay was performed.
+- `feat/geometry-diagnostics` / draft PR #30 / source `926a47a`: opt-in shared
+  GLES observation before Native/Legacy diverge. `/geom on` arms; F4 marks;
+  `/geom focus N` optionally outlines sampled candidate triangles; `/geom off`
+  stops. F8 remains the renderer switch. Bounded position/index/attribute checks,
+  local/eye/clip samples, state/caller fingerprints and recent-frame reports go
+  into the private log without suppressing draws, altering geometry, writing
+  saves or claiming mesh ownership. Shadow extents and mapped pages are checked,
+  but guest allocation ownership remains unknown. Candidate ranking/through-wall
+  x-ray overlays are not proof of corruption; no streak or armor-lighting fix is
+  claimed. Windows/Linux builds pass 15 suites; app-disabled Linux ASan/UBSan
+  passes 14, including 30,000 synthetic geometry mutations. Actual capture and
+  highlight behavior awaits user testing. Instructions are explicitly allowlisted
+  for portable staging, never captures. See `docs/GEOMETRY_DIAGNOSTICS.md`.
+  Production main through `9ede69c` (merged save reliability PR #29) is integrated.
 - Android-origin save compatibility: the user's four original save files use
   SBIN v2, pass all chunk checksums and match the comparison port save's common
   campaign/player/weapon/inventory/metadata/achievement field types. Android
