@@ -12,6 +12,8 @@ include(CTest)
 
 add_library(profile_io STATIC src/save_io.cpp src/save_validation.cpp)
 target_include_directories(profile_io PUBLIC src)
+add_library(frame_wait STATIC src/frame_wait.cpp)
+target_include_directories(frame_wait PUBLIC src)
 find_package(Threads REQUIRED)
 add_library(performance_diagnostics STATIC src/performance.cpp src/performance_platform.cpp)
 target_include_directories(performance_diagnostics PUBLIC src)
@@ -90,7 +92,7 @@ add_executable(deadspace
     src/jni/java_classes.cpp
 )
 target_include_directories(deadspace PRIVATE src)
-target_link_libraries(deadspace PRIVATE dynarmic OpenGL::GL profile_io performance_diagnostics)
+target_link_libraries(deadspace PRIVATE dynarmic OpenGL::GL profile_io performance_diagnostics frame_wait)
 execute_process(COMMAND git rev-parse --short=12 HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_VARIABLE DEADSPACE_BUILD_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 if (NOT DEADSPACE_BUILD_REVISION)

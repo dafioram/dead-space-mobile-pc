@@ -29,6 +29,8 @@ Display and graphics:
   --width W --height H       Game resolution (default: desktop resolution).
   --fullscreen              Start in borderless fullscreen.
   --fps N                   Frame cap for this run; 0 = unlimited.
+  --frame-wait MODE          timer (default) or legacy; same frame cap/deadline.
+                             Windows high-resolution wait, else legacy SDL path.
   --msaa N                  Anti-aliasing: 0, 2, 4 or 8 samples.
   --atc-textures            Force original-APK ATC texture decoding.
                              Renderer selection is in Options > Graphics / F8.
