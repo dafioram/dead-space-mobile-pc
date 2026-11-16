@@ -25,6 +25,12 @@ but does not write the source userdata. Relaunch starts from the source again;
 it is not a persistence test. Close any other instance normally before preparing
 the disposable copy. Keep the original saves and complete checkpoint/level pairs.
 
+With separate `--assets`/`--lib` paths, explicitly match the texture mode too:
+append `--atc-textures` for original-layout ATC data (A–D), but not converted ETC2
+data. Those separate paths do not select an external game-data marker themselves.
+The combined playtest's prepared launchers instead use `--game-dir` to select the
+whole installed game-data root and its existing texture-mode marker automatically.
+
 For the control, run the identical EXE/arguments without `--perf`, with a fresh log
 name. Every log filename must be new: the existing logger truncates a reused name.
 Use the same resolution, 60 FPS cap, VSync setting, scene and camera. A smaller
