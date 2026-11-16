@@ -43,10 +43,16 @@ public:
         cfg.code_cache_size = cache_size;
         cfg.define_unpredictable_behaviour = true;
         jit = std::make_unique<Dynarmic::A32::Jit>(cfg);
+        perf_counted = perf::enabled();
+        perf_cache_size = cache_size;
+        if (perf_counted) perf::jit_created(cache_size);
     }
+    ~Cpu() { if (perf_counted) perf::jit_destroyed(perf_cache_size); }
 
     std::unique_ptr<Dynarmic::A32::Jit> jit;
     bool running = false;
+    bool perf_counted = false;
+    size_t perf_cache_size = 0;
 
     void fault(const char* what, u32 addr) {
         LOGE("guest %s fault at %08x (pc~%08x %s)", what, addr, jit->Regs()[15],
@@ -188,6 +194,7 @@ void thread_attach(u32 stack_base, u32 stack_size) {
     TState& t = t_state;
     if (t.attached) return;
     t.attached = true;
+    perf::thread_enter();
     t.info.tid = g_next_tid++;
     if (!stack_base) {
         stack_size = 8 << 20;
@@ -211,6 +218,7 @@ void thread_detach() {
     mem::heap_free(t.info.errno_addr);
     mem::heap_free(t.info.tls_area);
     t.attached = false;
+    perf::thread_leave();
 }
 
 u32 current_pc() {

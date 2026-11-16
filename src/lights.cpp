@@ -693,6 +693,7 @@ void on_world_constructed(cpu::Ctx& c) {
     g_teardown_budget = 0;
     g_bad_header_budget = 0;
     LOGI("[scene-cache] world constructed %08x generation=%llu", token.address, (unsigned long long)token.generation);
+    if(perf::enabled())perf::event("world-constructed",std::to_string(token.generation));
 }
 
 void on_world_destroyed(cpu::Ctx& c) {
@@ -703,6 +704,7 @@ void on_world_destroyed(cpu::Ctx& c) {
     LOGI("[scene-cache] world retiring %08x generation=%llu cached-nodes=%zu fade-roots=%zu fade-states=%zu fixtures=%zu",
          token.address, (unsigned long long)token.generation, g_nodes.size(), g_fade_nodes.size(), g_fade_state.size(), g_fixtures.size());
     if (g_scene_world == token) clear_scene_locked();
+    if(perf::enabled())perf::event("world-retiring",std::to_string(token.generation));
     g_lifetimes.worlds.retire(c.reg(0));
 }
 
@@ -1066,4 +1068,10 @@ bool is_fog_vertices(u32 guest_addr) {
            std::any_of(g_fog_data.begin(), g_fog_data.end(), [&](const FogData& f) { return f.data == guest_addr && node_kind_locked(f.ref) >= 0; });
 }
 
+void performance_snapshot(perf::Metrics& out) {
+    std::lock_guard lock(g_scene_mutex);
+    out.insert(out.end(), {{"cached_nodes",g_nodes.size()}, {"previous_transforms",g_previous_transforms.size()},
+        {"fade_nodes",g_fade_nodes.size()}, {"fade_states",g_fade_state.size()}, {"fog_observations",g_fog_data.size()},
+        {"fixtures",g_fixtures.size()}, {"fixture_sources",g_fixture_sources.size()}});
+}
 }  // namespace lights

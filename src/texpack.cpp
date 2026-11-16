@@ -242,4 +242,16 @@ u32 hash_of(unsigned tex) {
     return it == g_hash_of.end() ? 0 : it->second;
 }
 
+void performance_snapshot(perf::Metrics& out) {
+    uint64_t bytes=0, capacity=0, images=0;
+    size_t scanned=0;
+    for(const auto& item:g_colour) {
+        if(scanned==perf::cache_scan_limit)break;
+        ++scanned; bytes+=item.second.px.size(); capacity+=item.second.px.capacity();
+        if(item.second.w)++images;
+    }
+    out.insert(out.end(), {{"replacement_or_miss_entries",g_colour.size()}, {"replacement_images_scanned",images},
+        {"replacement_bytes_scanned",bytes}, {"replacement_capacity_scanned",capacity},
+        {"scan_truncated",scanned<g_colour.size()}, {"live_texture_hash_entries",g_hash_of.size()}, {"pack_files",g_files.size()}});
+}
 }  // namespace texpack
