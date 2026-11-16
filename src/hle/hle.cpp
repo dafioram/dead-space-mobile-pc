@@ -48,26 +48,6 @@ u32 resolve(const std::string& name, bool is_func, bool is_weak) {
 
 void set_errno(int e) { mem::w32(cpu::thread().errno_addr, u32(e)); }
 
-int host_errno_to_guest(int e) {
-    switch (e) {
-    case ENOENT: return G_ENOENT;
-    case EACCES: return G_EACCES;
-    case EEXIST: return G_EEXIST;
-    case ENOTDIR: return G_ENOTDIR;
-    case EISDIR: return G_EISDIR;
-    case EINVAL: return G_EINVAL;
-    case ENOSPC: return G_ENOSPC;
-    case EBADF: return G_EBADF;
-    case ENOMEM: return G_ENOMEM;
-    case EAGAIN: return G_EAGAIN;
-    case EBUSY: return G_EBUSY;
-    case ENOTEMPTY: return G_ENOTEMPTY;
-    case EINTR: return G_EINTR;
-    case EPERM: return G_EPERM;
-    default: return G_EIO;
-    }
-}
-
 // ---------------------------------------------------------------- data imports
 static void make_data_imports() {
     // bionic stdio: FILE __sF[3], each 84 bytes; _file (short) at offset 14

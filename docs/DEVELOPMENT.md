@@ -87,6 +87,13 @@ normal fade timing, fixture/fog invalidation, temporary-reference balance, cycli
 parents, lock release around native transforms/releases, and read-only teardown
 diagnostics. It executes no game instructions and requires no SDL/GL packages.
 
+`save_io`, `save_adapters` and `save_processes` cover checked atomic profile I/O,
+bounded SBIN inspection, actual descriptor/stdio handlers, native save/load return
+policy with simulated registers, and helper-process lock/termination boundaries.
+Fixtures/fuzz mutations are synthetic; no retail code, assets or saves are
+executed or distributed. See `SAVE_LOAD_RELIABILITY.md` for guarantees and limits.
+Helpers deliberately terminate only themselves, never a game process.
+
 This is a baseline regression suite, not a claim that the importer handles every
 malformed archive safely. CRC verification and comprehensive importer hardening
 remain separate work. Tests do not launch the JIT, render, or validate gameplay.

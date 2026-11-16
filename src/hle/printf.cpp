@@ -4,6 +4,8 @@
 #include <cstdlib>
 
 #include "hle/hle.h"
+#include "save_io.h"
+#include <cerrno>
 
 namespace hle {
 
@@ -342,8 +344,19 @@ void register_printf() {
         ArgReader a = ArgReader::slots(c, 2);
         std::string s = format(c.argstr(1), a);
         std::FILE* f = stdio_host_file(c.arg(0));
-        if (f) std::fwrite(s.data(), 1, s.size(), f == stderr ? stdout : f);
-        c.ret(u32(s.size()));
+        if (!f) { set_errno(G_EBADF); return c.ret(0xffffffff); }
+        size_t wrote = save_io::fwrite(s.data(), 1, s.size(), f == stderr ? stdout : f);
+        if (wrote != s.size()) { set_errno(host_errno_to_guest(errno ? errno : EIO)); return c.ret(0xffffffff); }
+        c.ret(u32(wrote));
+    });
+    reg("vfprintf", [](Ctx& c) {
+        ArgReader a = ArgReader::valist(c.arg(2));
+        std::string s = format(c.argstr(1), a);
+        std::FILE* f = stdio_host_file(c.arg(0));
+        if (!f) { set_errno(G_EBADF); return c.ret(0xffffffff); }
+        size_t wrote = save_io::fwrite(s.data(), 1, s.size(), f == stderr ? stdout : f);
+        if (wrote != s.size()) { set_errno(host_errno_to_guest(errno ? errno : EIO)); return c.ret(0xffffffff); }
+        c.ret(u32(wrote));
     });
     reg("sscanf", [](Ctx& c) {
         ArgReader a = ArgReader::slots(c, 2);

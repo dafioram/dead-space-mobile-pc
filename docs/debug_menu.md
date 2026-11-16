@@ -22,7 +22,8 @@ save subdirectory. No original folder is created if it does not exist.
 - This is not a write-rejection mode or an option to force every Continue action
   to reread the original checkpoint. No native save errors are fabricated.
 - It is opt-in for each launch; omit it for normal persistent progress. Settings
-  changes in a no-save session are temporary too. It does not create a backup.
+  changes in a no-save session are temporary too. Per-file backups created inside
+  the copy are disposable; this is not a permanent backup of your originals.
 - Close other game instances while starting it if you need a consistent copy.
   It cannot stop another process from writing your originals.
 - Symlinks, Windows reparse points/junctions and special files in the source are
@@ -45,6 +46,26 @@ To keep assets elsewhere as well:
 
 Use matching assets/library from your own APK. `--apk FILE` still imports beside
 the executable; it is not an alternate import-destination option.
+
+### Save/load diagnostics
+
+Normal saving remains enabled. Profile `.sb` replacements are staged, checked and
+synced; successful publication logs `[save-io] COMMITTED`. Failures identify the
+operation/path/errno or structural reason. `[save-load]` records selected files,
+content identity and native parsing separately from later restoration/rendering.
+An invalid supported file is refused, not silently repaired or replaced by a
+backup. Unfamiliar formats are reported as unverified, not blanket-banned.
+
+`<filename>.bak` is the previous validated per-file save, not necessarily a
+consistent whole-profile recovery set. `.ds-save-*.tmp` is uncommitted output;
+startup reports abandoned stages but never auto-loads/promotes them. The normal
+`.deadspace-profile.lock` filename may remain after exit; the OS lock, not file
+existence, prevents concurrent writers. Close older builds too: they do not
+cooperate with the new lock. Preserve the complete profile/log before attempting
+manual recovery, and never blindly mix checkpoint/level files from different runs.
+
+To test persistence across launches, use a copied profile with `--data` **without**
+`--no-save`; that flag intentionally discards session progress on exit.
 
 ## Keyboard shortcuts
 
