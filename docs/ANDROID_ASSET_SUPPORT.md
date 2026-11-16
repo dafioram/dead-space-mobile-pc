@@ -212,8 +212,10 @@ HD-pack manifest SHA-256 (same algorithm, keeping `assets/texture_hd/` pathnames
 
 The PC port's `src/texpack.cpp` currently uses **8-hex-digit 32-bit pixel hashes and
 PNG replacements**, not this wrapper's 16-digit KTX scheme. Host symbols identify
-KTX upload and 16-digit texture naming support. The precise wrapper hash/input and
-its relation to PC decoded pixels have not been fully recovered; do not truncate
+KTX upload and 16-digit texture naming support. Subsequent review found a public
+reference implementation of the Reanimated-compatible raw-upload hash and KTX
+bridge (see below). That removes a major format-recovery unknown, but it is not
+yet integrated or validated against this PC port's upload paths. Do not truncate
 IDs or assume that converting KTX to PNG alone establishes correct mapping.
 
 ## Current importer boundary
@@ -243,6 +245,102 @@ Optional HD support is separate work: establish hash/replacement mapping, suppor
 or safely decode the KTX formats/mip levels, and preserve normal texture-pack
 enable/disable behavior. No importer, texture decoder, renderer or installation
 was changed during this inventory. Static feasibility is not runtime validation.
+
+## Public implementation reference and proposed integration
+
+The user identified [daniyalshakeel5/Dead-Space-Mobile-PC-port](https://github.com/daniyalshakeel5/Dead-Space-Mobile-PC-port).
+Read-only review is pinned to commit
+`2731003f64e2b90c086221d5dc5dcb1bb2f23609`; no source code or game-derived outputs
+were imported into this fork.
+
+The linked `docs/REANIMATED_NATIVE_TOUCH_2026-11-07.md` explicitly identifies itself
+as historical. Its older "HD not yet integrated" text is superseded by the current
+[technical guide, section 8](https://github.com/daniyalshakeel5/Dead-Space-Mobile-PC-port/blob/2731003f64e2b90c086221d5dc5dcb1bb2f23609/docs/TECHNICAL_BUILD_GUIDE.md#8-saves-and-hd-textures)
+and actual source under `source/experimental/lifted_milestone6/tools/`:
+
+- [`texture_ktx.h`](https://github.com/daniyalshakeel5/Dead-Space-Mobile-PC-port/blob/2731003f64e2b90c086221d5dc5dcb1bb2f23609/source/experimental/lifted_milestone6/tools/texture_ktx.h):
+  bounded KTX1 validation, mip layout checks, 64-bit FNV-1a texture identification
+  and ATC color/alpha decoding.
+- [`texture_hd.h`](https://github.com/daniyalshakeel5/Dead-Space-Mobile-PC-port/blob/2731003f64e2b90c086221d5dc5dcb1bb2f23609/source/experimental/lifted_milestone6/tools/texture_hd.h):
+  original-upload lookup, ETC1/ATC decoding and mip upload, missing/rejected-pack
+  fallback, saved original image state, restoration before subimage updates,
+  dynamic-texture exclusion and deletion cleanup.
+- `source/tests/test_texture_ktx.c`: synthetic truncation/dimension/mip and ATC
+  color/alpha regression checks.
+- `source/packaging/linux-touchscreen/Play-Dead-Space-Touch.sh`: handling of both
+  original/Reanimated donor layouts and optional HD extraction into an existing
+  install. This is useful layout evidence, not a launcher to run over our profiles.
+
+The reference's identity is **64-bit FNV-1a over little-endian width, height and
+original GL format, followed by the original packed level-zero upload bytes**.
+It is not this port's 32-bit hash of decoded RGBA. Original row alignment/padding,
+packed pixel formats and compressed payloads must be handled at the shared GLES
+boundary before decoding or replacement. Source code establishes the proposed
+algorithm; actual key matches and replacement behavior in our runtime still need
+independent tests and user-run logs.
+
+The reference project uses a different native i686/AOT-generated runtime. Its HD
+algorithm/parser do not require us to adopt that translator, its generated game
+C, Linux save paths, touch patches or the closed Android `libdsr.so`. Likewise,
+Windows host bitness is unrelated to needing the ARM64 Android library: the guest
+core is already the supported baseline.
+
+### Reuse and attribution boundary
+
+The ATC decoder explicitly credits AssetStudio and includes an MIT notice for
+Radu / Perfare. Preserve that notice and original contributor credit for any
+permitted reuse. GitHub reports no recognized repository-wide license, and the
+reviewed root/source README files do not supply a blanket grant for the surrounding
+custom glue. Do not assume all public code is freely copyable: clarify permission
+where needed or implement the glue independently against the documented format
+and algorithm. Do not copy generated retail-derived code, original assets,
+captures or another project's installed saves.
+
+### Proposed staged work (not implemented)
+
+1. **Base APK layout support:** keep A–D behavior; recognize E's ARM32 core and
+   nested original asset root; record the actual library/source profile; preserve
+   ATC semantics, original profile paths and original assets. Use safe staged
+   extraction and clean synthetic ZIP tests. Never load/copy the ARM64 Android
+   runtime as the PC executable or migrate another launcher's saves.
+2. **Optional HD pack support, separately:** extract only the user's KTX files
+   into an explicitly selected pack location, including HD-only import for an
+   existing baseline installation. Add the raw 64-bit upload identity alongside,
+   not instead of, existing PNG/32-bit packs. Define pack precedence and retain
+   an explicit off/original-texture path.
+3. **Renderer integration:** connect validation/decoding/upload to our shared
+   GLES path so Native and Legacy both benefit. Keep GL binding/unpack state,
+   mip selection, original dimensions/crop coordinates and Native texture/cache
+   metadata coherent. Restore the correct original ATC/ETC/pixel-format image
+   before dynamic subimage updates; do not blindly copy a restore path that assumes
+   every compressed original is ETC1. Handle texture deletion/ID reuse, partial
+   failures and CPU/GPU memory limits without leaving a partially replaced image.
+4. **Validation and delivery:** asset-free parser/hash/decoder tests, actual host
+   adapter tests with synthetic GL/native stand-ins, malformed-input and texture
+   lifetime cases, Windows/Linux builds and sanitizers. Log source selection,
+   lookups, matches, rejection/fallback and actual replacement sizes. Build the
+   combined user test binary from `playtest`; all gameplay, visual A/B and
+   persistence confirmation remains user-led. Ship only executable/docs/notices,
+   never the user's HD pack or APK.
+
+### Separate physics lead, not part of APK/HD support
+
+The reference also includes
+[`solver_init_fix.py`](https://github.com/daniyalshakeel5/Dead-Space-Mobile-PC-port/blob/2731003f64e2b90c086221d5dc5dcb1bb2f23609/source/experimental/lifted_milestone6/tools/solver_init_fix.py).
+It changes one donor-guarded physics constraint-row setup call from `Memchr` to
+`memset`, rather than globally changing Memchr semantics or hiding triangles.
+Independent read-only inspection confirms our exact baseline library has the
+cited call at RVA `0x26325c`, passing zero and 136 bytes to
+`EA::StdC::Memchr(char const*, char, unsigned int)` at `0x28b4e4`; that target
+really searches bytes and does not clear them. Our donor SHA1 also matches the
+reference's `64a3323cd3cc0c483a645b62af8508624163ba9b`.
+
+This is a concrete initialization concern worth a **separate** physics/ragdoll
+investigation, potentially relevant to stretched limbs. It does not prove that
+our observed streaks/non-finite submissions have this cause, that the audio
+transition crash shares it, or that APK/HD imports should alter the solver.
+No physics patch was applied or runtime reproduction performed in this review;
+geometry diagnostics remain an independent playtest investigation.
 
 An APK with an ARM64 launcher might still bundle a separate ARM32 game core; an
 APK containing only an AArch64 game core would be a different runtime problem.
