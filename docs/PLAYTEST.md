@@ -256,6 +256,22 @@ shader and terminal-interaction fixes are not part of this initial baseline.
   jumps, normal exit and visual confirmation. The reported crashes are not yet
   confirmed fixed, and the dark/see-through store remains separate. See
   `docs/SCENE_CACHE_LIFETIME.md`. Save reliability is not included.
+- `fix/save-load-reliability` / PR #29 / source `b24acf5`: checked per-file atomic
+  profile saves, previous-validated-file backups, real sync/close/flush error
+  reporting, native serializer-result gating, Unicode paths and writer locks.
+  Port preferences are atomic too; `--no-save` still permits private temporary
+  progress/settings without original writes. A bounded SBIN inspector and exact
+  input-stream correlation reject known malformed selections before native parse;
+  unfamiliar formats remain unverified, not blanket-banned. `[save-io]` logs
+  operations/errors/COMMITTED status; `[save-load]` separates selected file and
+  parse result from later restoration/assets/rendering. No format or native
+  progression/slot-order changes, automatic repair/backup promotion, or whole-
+  profile journal. Windows/Linux themed builds pass 14 suites; clean app-disabled
+  Linux ASan/UBSan passes 13, including 50,000 synthetic mutations, actual bridge
+  handler tests and helper termination at transaction boundaries. Eight retained
+  private save copies pass read-only inspection, not gameplay execution. All
+  interactive validation remains user-led. See `docs/SAVE_LOAD_RELIABILITY.md`.
+  Production main through `2cc804e`, including merged PR #28, is integrated.
 - Android-origin save compatibility: the user's four original save files use
   SBIN v2, pass all chunk checksums and match the comparison port save's common
   campaign/player/weapon/inventory/metadata/achievement field types. Android

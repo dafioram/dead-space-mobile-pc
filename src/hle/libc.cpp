@@ -22,12 +22,32 @@
 
 #include "hle/hle.h"
 #include "hle/timing.h"
+#include "save_io.h"
 
 namespace hle {
 
 namespace {
 
 namespace fs = std::filesystem;
+
+int filesystem_errno(const std::error_code& error, int fallback = EIO) {
+    if (!error) return fallback;
+    for (int candidate : {ENOENT, EACCES, EEXIST, ENOTDIR, EISDIR, EINVAL, ENOSPC, EROFS, ENOTEMPTY, EBUSY})
+        if (error == std::error_condition(candidate, std::generic_category())) return candidate;
+    return EIO;
+}
+
+void filesystem_result(Ctx& c, const char* operation, const std::string& path, bool okay, const std::error_code& error, int fallback = EIO) {
+    if (!okay) {
+        int code = filesystem_errno(error, fallback);
+        set_errno(host_errno_to_guest(code));
+        if (code != ENOENT && code != EEXIST)
+            LOGE("[save-io] filesystem %s FAILED path=%s errno=%d reason=%s", operation, path.c_str(), code, error ? error.message().c_str() : std::strerror(code));
+    } else if (save_io::profile_file(save_io::utf8_path(path))) {
+        LOGI("[save-io] explicit native filesystem %s path=%s (not automatic recovery)", operation, path.c_str());
+    }
+    c.ret(okay ? 0 : 0xffffffff);
+}
 
 u32 gptr(const void* p) { return p ? mem::guest(p) : 0; }
 
@@ -75,7 +95,7 @@ HostStat host_stat(const std::string& p) {
     HostStat r;
 #ifdef _WIN32
     struct _stat64 st;
-    if (_stat64(p.c_str(), &st) != 0) return r;
+    if (_wstat64(save_io::utf8_path(p).c_str(), &st) != 0) return r;
 #else
     struct stat st;
     if (::stat(p.c_str(), &st) != 0) return r;
@@ -116,24 +136,6 @@ void fill_dirent(u32 d, const std::string& name, bool is_dir, u32 idx) {
     mem::w16(d + 16, 280);                   // d_reclen
     mem::w8(d + 18, is_dir ? 4 : 8);         // d_type (DT_DIR / DT_REG)
     std::strncpy(mem::ptr<char>(d + 19), name.c_str(), 255);
-}
-
-// ---------------------------------------------------------------- open flags
-int host_open_flags(u32 g) {
-    int f = 0;
-    switch (g & 3) {
-    case 0: f = O_RDONLY; break;
-    case 1: f = O_WRONLY; break;
-    default: f = O_RDWR; break;
-    }
-    if (g & 0x40) f |= O_CREAT;
-    if (g & 0x80) f |= O_EXCL;
-    if (g & 0x200) f |= O_TRUNC;
-    if (g & 0x400) f |= O_APPEND;
-#ifdef _WIN32
-    f |= O_BINARY;
-#endif
-    return f;
 }
 
 // ---------------------------------------------------------------- misc state
@@ -391,39 +393,8 @@ void register_libc() {
     });
 
     // ---------------------------------------------------------- file descriptors
-    reg("open", [](Ctx& c) {
-        std::string p = host_path(c.argstr(0));
-        int fd = ::open(p.c_str(), host_open_flags(c.arg(1)), 0644);
-        LOGD("open(%s) -> %d", c.argstr(0), fd);
-        if (fd < 0) set_errno(host_errno_to_guest(errno));
-        c.ret(u32(fd));
-    });
-    reg("close", [](Ctx& c) { c.ret(u32(::close(int(c.arg(0))))); });
-    reg("read", [](Ctx& c) {
-        int r = ::read(int(c.arg(0)), mem::host(c.arg(1)), c.arg(2));
-        if (r < 0) set_errno(host_errno_to_guest(errno));
-        c.ret(u32(r));
-    });
-    reg("write", [](Ctx& c) {
-        int fd = int(c.arg(0));
-        if (fd == 1 || fd == 2) {
-            std::fwrite(mem::host(c.arg(1)), 1, c.arg(2), stdout);
-            return c.ret(c.arg(2));
-        }
-        int r = ::write(fd, mem::host(c.arg(1)), c.arg(2));
-        if (r < 0) set_errno(host_errno_to_guest(errno));
-        c.ret(u32(r));
-    });
-    reg("lseek", [](Ctx& c) { c.ret(u32(::lseek(int(c.arg(0)), long(s32(c.arg(1))), int(c.arg(2))))); });
-    reg("fsync", [](Ctx& c) { c.ret(0); });
+    register_file_descriptors();
     reg("fcntl", [](Ctx& c) { c.ret(0); });
-    reg("ftruncate", [](Ctx& c) {
-#ifdef _WIN32
-        c.ret(u32(_chsize(int(c.arg(0)), long(c.arg(1)))));
-#else
-        c.ret(u32(::ftruncate(int(c.arg(0)), off_t(c.arg(1)))));
-#endif
-    });
     reg("fstat", [](Ctx& c) {
 #ifdef _WIN32
         struct _stat64 st;
@@ -432,7 +403,7 @@ void register_libc() {
         struct stat st;
         if (::fstat(int(c.arg(0)), &st) != 0) {
 #endif
-            set_errno(G_EBADF);
+            set_errno(host_errno_to_guest(errno));
             return c.ret(0xFFFFFFFF);
         }
         HostStat s;
@@ -445,9 +416,10 @@ void register_libc() {
     });
     reg("stat", [](Ctx& c) {
         HostStat s = host_stat(host_path(c.argstr(0)));
+        int error = errno;
         LOGD("stat(%s) -> %d", c.argstr(0), s.ok);
         if (!s.ok) {
-            set_errno(G_ENOENT);
+            set_errno(host_errno_to_guest(error));
             return c.ret(0xFFFFFFFF);
         }
         write_stat(c.arg(1), s);
@@ -456,28 +428,37 @@ void register_libc() {
     reg("mkdir", [](Ctx& c) {
         std::error_code ec;
         std::string p = host_path(c.argstr(0));
-        if (fs::exists(p, ec)) {
+        auto path = save_io::utf8_path(p);
+        if (fs::exists(path, ec)) {
             set_errno(G_EEXIST);
             return c.ret(0xFFFFFFFF);
         }
-        c.ret(fs::create_directories(p, ec) ? 0 : 0xFFFFFFFF);
+        bool okay = !ec && fs::create_directories(path, ec);
+        filesystem_result(c, "mkdir", p, okay, ec);
     });
     reg("rmdir", [](Ctx& c) {
         std::error_code ec;
-        c.ret(fs::remove(host_path(c.argstr(0)), ec) ? 0 : 0xFFFFFFFF);
+        std::string path = host_path(c.argstr(0));
+        bool okay = fs::remove(save_io::utf8_path(path), ec);
+        filesystem_result(c, "rmdir", path, okay, ec, ENOENT);
     });
     reg("remove", [](Ctx& c) {
         std::error_code ec;
-        c.ret(fs::remove(host_path(c.argstr(0)), ec) ? 0 : 0xFFFFFFFF);
+        std::string path = host_path(c.argstr(0));
+        bool okay = fs::remove(save_io::utf8_path(path), ec);
+        filesystem_result(c, "remove", path, okay, ec, ENOENT);
     });
     reg("unlink", [](Ctx& c) {
         std::error_code ec;
-        c.ret(fs::remove(host_path(c.argstr(0)), ec) ? 0 : 0xFFFFFFFF);
+        std::string path = host_path(c.argstr(0));
+        bool okay = fs::remove(save_io::utf8_path(path), ec);
+        filesystem_result(c, "unlink", path, okay, ec, ENOENT);
     });
     reg("rename", [](Ctx& c) {
         std::error_code ec;
-        fs::rename(host_path(c.argstr(0)), host_path(c.argstr(1)), ec);
-        c.ret(ec ? 0xFFFFFFFF : 0);
+        std::string from = host_path(c.argstr(0)), to = host_path(c.argstr(1));
+        fs::rename(save_io::utf8_path(from), save_io::utf8_path(to), ec);
+        filesystem_result(c, "rename", from + " -> " + to, !ec, ec);
     });
     reg("chdir", [](Ctx& c) { c.ret(0); });
     reg("chmod", [](Ctx& c) { c.ret(0); });
@@ -490,15 +471,25 @@ void register_libc() {
     reg("opendir", [](Ctx& c) {
         std::string p = host_path(c.argstr(0));
         std::error_code ec;
-        if (!fs::is_directory(p, ec)) {
+        if (!fs::is_directory(save_io::utf8_path(p), ec)) {
             LOGD("opendir(%s) failed", c.argstr(0));
-            set_errno(G_ENOENT);
+            set_errno(host_errno_to_guest(filesystem_errno(ec, ENOENT)));
             return c.ret(0);
         }
         Dir d;
         d.entries.push_back({".", true});
         d.entries.push_back({"..", true});
-        for (auto& e : fs::directory_iterator(p, ec)) d.entries.push_back({e.path().filename().string(), e.is_directory()});
+        fs::directory_iterator it(save_io::utf8_path(p), ec), end;
+        for (; !ec && it != end; it.increment(ec)) {
+            std::error_code type_error;
+            bool directory = it->is_directory(type_error);
+            if (type_error) { ec = type_error; break; }
+            d.entries.push_back({save_io::path_utf8(it->path().filename()), directory});
+        }
+        if (ec) {
+            LOGE("[save-io] directory enumeration FAILED path=%s reason=%s", p.c_str(), ec.message().c_str());
+            set_errno(host_errno_to_guest(filesystem_errno(ec))); return c.ret(0);
+        }
         d.dirent = mem::heap_alloc(288);
         u32 h = mem::heap_alloc(16);
         std::lock_guard lk(g_dir_lock);

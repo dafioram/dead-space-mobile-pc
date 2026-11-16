@@ -5,8 +5,10 @@ add_executable(core_tests
     core_tests.cpp
     ../src/asset_file.cpp
     ../src/settings.cpp
+    ../src/log.cpp
 )
 target_include_directories(core_tests PRIVATE ../src)
+target_link_libraries(core_tests PRIVATE profile_io)
 
 add_executable(apk_import_probe
     apk_import_probe.cpp
@@ -27,6 +29,19 @@ find_package(Threads REQUIRED)
 target_link_libraries(scene_cache_tests PRIVATE Threads::Threads)
 add_test(NAME scene_cache COMMAND scene_cache_tests)
 set_tests_properties(scene_cache PROPERTIES TIMEOUT 60)
+add_executable(save_io_tests save_io_tests.cpp ../src/temporary_profile.cpp ../src/settings.cpp)
+target_include_directories(save_io_tests PRIVATE ../src)
+target_link_libraries(save_io_tests PRIVATE profile_io Threads::Threads)
+add_test(NAME save_io COMMAND save_io_tests)
+set_tests_properties(save_io PROPERTIES TIMEOUT 120)
+add_executable(save_adapter_tests save_adapter_tests.cpp ../src/hle/files.cpp ../src/hle/stdio.cpp ../src/hle/printf.cpp ../src/hle/errno.cpp)
+target_include_directories(save_adapter_tests PRIVATE ../src)
+target_link_libraries(save_adapter_tests PRIVATE profile_io Threads::Threads)
+add_test(NAME save_adapters COMMAND save_adapter_tests)
+set_tests_properties(save_adapters PROPERTIES TIMEOUT 120)
+add_test(NAME save_processes COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_save_process.py"
+    --probe "$<TARGET_FILE:save_io_tests>" -v)
+set_tests_properties(save_processes PROPERTIES TIMEOUT 120)
 add_test(NAME apk_import COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/test_apk_import.py" --importer "$<TARGET_FILE:apk_import_probe>")
 add_test(NAME asset_policy COMMAND "${Python3_EXECUTABLE}" -m unittest discover
@@ -43,8 +58,9 @@ add_test(NAME release_packaging COMMAND "${Python3_EXECUTABLE}" -m unittest disc
     -s "${CMAKE_CURRENT_SOURCE_DIR}" -p test_release_package.py -v)
 set_tests_properties(release_packaging PROPERTIES TIMEOUT 60)
 
-add_executable(profile_tests profile_tests.cpp ../src/temporary_profile.cpp ../src/settings.cpp)
+add_executable(profile_tests profile_tests.cpp ../src/temporary_profile.cpp ../src/settings.cpp ../src/log.cpp)
 target_include_directories(profile_tests PRIVATE ../src)
+target_link_libraries(profile_tests PRIVATE profile_io)
 add_test(NAME temporary_profile COMMAND profile_tests)
 set_tests_properties(temporary_profile PROPERTIES TIMEOUT 60)
 
