@@ -3,6 +3,7 @@
 #include <SDL_opengl.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <map>
 #include <mutex>
 #include <set>
@@ -10,6 +11,7 @@
 #include <vector>
 
 #include "hle/gles.h"
+#include "hle/presentation_target.h"
 #include "texpack.h"
 #include "hle/hle.h"
 #include "render/native.h"
@@ -588,14 +590,61 @@ bool g_normal_target = false;  // the game framebuffer has COLOR_ATTACHMENT1 (su
 namespace {
 PFNGLBLITFRAMEBUFFERPROC p_glBlitFramebuffer;
 PFNGLRENDERBUFFERSTORAGEMULTISAMPLEPROC p_glRenderbufferStorageMultisample;
-GLuint g_present_tex = 0, g_present_depth = 0;  // single-sample target (no MSAA)
-GLuint g_veil_rb = 0;
-GLuint g_normal_rb = 0;                         // surface normals (same sample count as the color target)
-GLuint g_msaa_color = 0, g_msaa_depth = 0;      // multisampled target
+GLuint g_present_tex = 0;  // single-sample resolve/presentation texture
+presentation::Target g_game_target;
 GLuint g_resolve_fbo = 0;
 int g_rw = 0, g_rh = 0;
 int g_samples = 0;
 double g_clear_depth = 1.0;   // the game's glClearDepth value
+
+struct PresentationGl {
+    presentation::Bindings bindings() {
+        GLint draw = 0, read = 0, rb = 0;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read);
+        glGetIntegerv(GL_RENDERBUFFER_BINDING, &rb);
+        return {GLuint(draw), GLuint(read), GLuint(rb)};
+    }
+    void restore(presentation::Bindings saved) {
+        p_glBindFramebuffer(GL_DRAW_FRAMEBUFFER, saved.draw);
+        p_glBindFramebuffer(GL_READ_FRAMEBUFFER, saved.read);
+        p_glBindRenderbuffer(GL_RENDERBUFFER, saved.renderbuffer);
+    }
+    GLuint framebuffer() { GLuint id = 0; p_glGenFramebuffers(1, &id); return id; }
+    void delete_framebuffer(GLuint id) { p_glDeleteFramebuffers(1, &id); }
+    void bind_framebuffer(GLuint id) { p_glBindFramebuffer(GL_FRAMEBUFFER, id); }
+    GLuint renderbuffer(int count, GLenum format, int w, int h) {
+        GLuint id = 0;
+        p_glGenRenderbuffers(1, &id);
+        if (!id) return 0;
+        p_glBindRenderbuffer(GL_RENDERBUFFER, id);
+        if (count) p_glRenderbufferStorageMultisample(GL_RENDERBUFFER, count, format, w, h);
+        else p_glRenderbufferStorage(GL_RENDERBUFFER, format, w, h);
+        GLint width = 0, height = 0;
+        p_glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &width);
+        p_glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &height);
+        if (width == w && height == h) return id;
+        p_glDeleteRenderbuffers(1, &id);
+        return 0;
+    }
+    void delete_renderbuffer(GLuint id) { p_glDeleteRenderbuffers(1, &id); }
+    int samples(GLuint id) {
+        p_glBindRenderbuffer(GL_RENDERBUFFER, id);
+        GLint count = 0;
+        p_glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_SAMPLES, &count);
+        return count;
+    }
+    void attach_color(int slot, GLuint rb) {
+        p_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + slot, GL_RENDERBUFFER, rb);
+    }
+    void attach_depth(GLuint rb) {
+        p_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rb);
+    }
+    void attach_texture(GLuint texture) {
+        p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    }
+    GLenum status() { return p_glCheckFramebufferStatus(GL_FRAMEBUFFER); }
+};
 
 void letterbox(int ww, int wh, int& x, int& y, int& w, int& h) {
     float s = std::min(float(ww) / g_rw, float(wh) / g_rh);
@@ -646,63 +695,45 @@ int max_msaa() {
 int msaa_samples() { return g_samples; }
 
 void set_msaa(int samples) {
-    samples = std::clamp(samples, 0, max_msaa());
-    if (samples == 1) samples = 2;
-    GLint prev = 0;
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev);
-    p_glBindFramebuffer(GL_FRAMEBUFFER, g_default_fbo);
-    if (samples) {
-        if (!g_msaa_color) p_glGenRenderbuffers(1, &g_msaa_color);
-        if (!g_msaa_depth) p_glGenRenderbuffers(1, &g_msaa_depth);
-        p_glBindRenderbuffer(GL_RENDERBUFFER, g_msaa_color);
-        p_glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, g_rw, g_rh);
-        p_glBindRenderbuffer(GL_RENDERBUFFER, g_msaa_depth);
-        p_glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, g_depth_fmt, g_rw, g_rh);
-        p_glBindRenderbuffer(GL_RENDERBUFFER, 0);
-        p_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, g_msaa_color);
-        p_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, g_msaa_depth);
-    } else {
-        p_glBindRenderbuffer(GL_RENDERBUFFER, g_present_depth);
-        p_glRenderbufferStorage(GL_RENDERBUFFER, g_depth_fmt, g_rw, g_rh);
-        p_glBindRenderbuffer(GL_RENDERBUFFER, 0);
-        p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_present_tex, 0);
-        p_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, g_present_depth);
+    const int requested = samples;
+    samples = std::clamp(samples, 0, std::max(0, max_msaa()));
+    if (samples == 1) samples = max_msaa() >= 2 ? 2 : 0;
+    PresentationGl gl;
+    auto attempt = [&](int count, GLenum format) {
+        auto result = presentation::change(gl, g_game_target, g_present_tex, g_rw, g_rh, count, format);
+        if (!result.accepted)
+            LOGW("MSAA proposal rejected: requested=%d candidate=%d depth=0x%x stage=%s status=0x%x; live target unchanged",
+                 requested, count, format, presentation::stage_name(result.stage), result.status);
+        return result;
+    };
+    auto result = attempt(samples, g_depth_fmt);
+    // Runtime failure keeps the COMPLETE previous target, depth format and Native
+    // effects. Startup has no target to retain, so try bounded legacy fallbacks.
+    if (!result.accepted && !g_game_target.fbo) {
+        if (g_depth_fmt != GL_DEPTH24_STENCIL8 && result.status != GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE)
+            result = attempt(samples, GL_DEPTH24_STENCIL8);
+        if (!result.accepted && samples) {
+            result = attempt(0, g_depth_fmt);
+            if (!result.accepted && g_depth_fmt != GL_DEPTH24_STENCIL8 && result.status != GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE)
+                result = attempt(0, GL_DEPTH24_STENCIL8);
+        }
     }
-    // second color attachment for surface normals; only written by native draws that select it
-    if (!g_normal_rb) p_glGenRenderbuffers(1, &g_normal_rb);
-    p_glBindRenderbuffer(GL_RENDERBUFFER, g_normal_rb);
-    if (samples) p_glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, 0x8059 /*RGB10_A2*/, g_rw, g_rh);
-    else p_glRenderbufferStorage(GL_RENDERBUFFER, 0x8059, g_rw, g_rh);
-    p_glBindRenderbuffer(GL_RENDERBUFFER, 0);
-    p_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + 1, GL_RENDERBUFFER, g_normal_rb);
-    g_normal_target = p_glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-    if (!g_normal_target) p_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + 1, GL_RENDERBUFFER, 0);
-    // third: coverage of fog drawn over the scene, so that lighting is not applied through it
-    g_veil_target = false;
-    if (g_normal_target) {
-        if (!g_veil_rb) p_glGenRenderbuffers(1, &g_veil_rb);
-        p_glBindRenderbuffer(GL_RENDERBUFFER, g_veil_rb);
-        if (samples) p_glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, g_rw, g_rh);
-        else p_glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, g_rw, g_rh);
-        p_glBindRenderbuffer(GL_RENDERBUFFER, 0);
-        p_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + 2, GL_RENDERBUFFER, g_veil_rb);
-        g_veil_target = p_glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-        if (!g_veil_target) p_glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + 2, GL_RENDERBUFFER, 0);
+    if (!result.accepted) {
+        if (!g_game_target.fbo) {
+            LOGE("No complete game framebuffer could be created; refusing to run with black output");
+            std::abort();
+        }
+        LOGW("MSAA change refused: requested=%d retained=%d depth=0x%x", requested, g_samples, g_depth_fmt);
+        return;
     }
-    GLenum st = p_glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    if (st != GL_FRAMEBUFFER_COMPLETE && g_depth_fmt != GL_DEPTH24_STENCIL8) {
-        LOGW("float depth buffer not accepted (0x%x); using 24-bit depth", st);
-        g_depth_fmt = GL_DEPTH24_STENCIL8;
-        p_glBindFramebuffer(GL_FRAMEBUFFER, GLuint(prev));
-        return set_msaa(samples);
-    }
-    if (st != GL_FRAMEBUFFER_COMPLETE) {
-        LOGE("game framebuffer incomplete with %dx MSAA (0x%x), disabling MSAA", samples, st);
-        if (samples) return set_msaa(0);
-    }
-    g_samples = samples;
-    p_glBindFramebuffer(GL_FRAMEBUFFER, GLuint(prev));
-    LOGI("anti-aliasing: %s; depth buffer: %s", samples ? (std::to_string(samples) + "x MSAA").c_str() : "off",
+    g_default_fbo = g_game_target.fbo;
+    g_samples = g_game_target.samples;
+    g_depth_fmt = g_game_target.depth_format;
+    g_normal_target = g_game_target.normal != 0;
+    g_veil_target = g_game_target.veil != 0;
+    LOGI("MSAA target committed: requested=%d actual=%d framebuffer=complete normals=%d fog_coverage=%d",
+         requested, g_samples, g_normal_target, g_veil_target);
+    LOGI("anti-aliasing: %s; depth buffer: %s", g_samples ? (std::to_string(g_samples) + "x MSAA").c_str() : "off",
          g_depth_fmt == GL_DEPTH24_STENCIL8 ? "24-bit" : "32-bit float");
 }
 
@@ -717,15 +748,14 @@ void present_init(int w, int h, int samples) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glBindTexture(GL_TEXTURE_2D, 0);
-    p_glGenRenderbuffers(1, &g_present_depth);
-    p_glBindRenderbuffer(GL_RENDERBUFFER, g_present_depth);
-    p_glRenderbufferStorage(GL_RENDERBUFFER, g_depth_fmt, w, h);
-    p_glBindRenderbuffer(GL_RENDERBUFFER, 0);
     // resolve target shares the single-sample color texture
     p_glGenFramebuffers(1, &g_resolve_fbo);
     p_glBindFramebuffer(GL_FRAMEBUFFER, g_resolve_fbo);
     p_glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, g_present_tex, 0);
-    p_glGenFramebuffers(1, &g_default_fbo);
+    if (p_glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        LOGE("Presentation resolve framebuffer incomplete");
+        std::abort();
+    }
     LOGI("game renders at %dx%d (max %dx MSAA)", w, h, max_msaa());
     set_msaa(samples);
     p_glBindFramebuffer(GL_FRAMEBUFFER, g_default_fbo);

@@ -445,6 +445,8 @@ int main(int argc, char** argv) {
     hle::gles_init_host();
     // the game always sees a fixed "device screen"; the frontend scales it to the window
     hle::present_init(g_config.screen_w, g_config.screen_h, settings::get_int("msaa", 4));
+    if (settings::get_int("msaa", 4) != hle::msaa_samples())
+        settings::set_int("msaa", hle::msaa_samples());
     if (render::init()) {
         render::set_enabled(settings::get_string("renderer", "legacy") == "native");
         render::set_anisotropy(settings::get_int("anisotropy", 16));
