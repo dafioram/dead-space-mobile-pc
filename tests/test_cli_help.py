@@ -33,6 +33,17 @@ class HelpTests(unittest.TestCase):
         documented = set(re.findall(r'(?<!\w)(--[a-z-]+|-[hv])(?!\w)', result.stdout))
         self.assertTrue(recognized <= documented, f"undocumented CLI flags: {recognized - documented}")
 
+    def test_invalid_hle_dispatch_exits_before_game_startup(self):
+        for suffix in ([], ["unknown"]):
+            with self.subTest(suffix=suffix), tempfile.TemporaryDirectory(prefix="deadspace-dispatch-cli-") as directory:
+                root = Path(directory)
+                result = subprocess.run([str(self.executable), "--log", str(root / "game.log"),
+                                         "--data", str(root / "userdata"), "--hle-dispatch", *suffix],
+                                        cwd=root, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("--hle-dispatch requires optimized or reference", result.stderr)
+                self.assertEqual(list(root.iterdir()), [], "invalid mode must exit before profiles/logs/window/game")
+
     def test_debug_guide_covers_command_names(self):
         root = Path(__file__).resolve().parents[1]
         guide = (root / "docs/debug_menu.md").read_text(encoding="utf-8")

@@ -212,6 +212,7 @@ int main(int argc, char** argv) {
     save_io::ProfileLock profile_lock;
     bool no_save = false;
     bool performance = false;
+    bool optimized_hle_dispatch = true;
     std::string assets, lib, data, logfile, shot_dir, apk_path, dev_dir;
     std::vector<u64> shot_frames;
     int fps_arg = -1;  // --fps N overrides the Frame Rate Limit setting
@@ -230,6 +231,15 @@ int main(int argc, char** argv) {
         else if (a == "--data") data = next();
         else if (a == "--no-save") no_save = true;
         else if (a == "--perf") performance = true;
+        else if (a == "--hle-dispatch") {
+            const std::string mode = next();
+            if (mode == "optimized") optimized_hle_dispatch = true;
+            else if (mode == "reference") optimized_hle_dispatch = false;
+            else {
+                std::fputs("--hle-dispatch requires optimized or reference\n", stderr);
+                return 2;
+            }
+        }
         else if (a == "--log") logfile = next();
         else if (a == "--width") g_config.screen_w = std::stoi(next()), res_set = true;
         else if (a == "--height") g_config.screen_h = std::stoi(next()), res_set = true;
@@ -298,6 +308,7 @@ int main(int argc, char** argv) {
     SDL_free(base_c);
     if (logfile.empty()) logfile = base + "deadspace.log";
     logging::open_file(logfile.c_str());
+    cpu::set_dispatch_optimized(optimized_hle_dispatch);
     if(performance) {
         perf::enable();
         LOGI("[perf] startup opt-in cap_override=%d (-1=use setting); no cache flushing or pacing changes",fps_arg);
