@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include "checked_size.h"
 
 using u8 = std::uint8_t;
 using u16 = std::uint16_t;
@@ -58,6 +59,11 @@ u32 data_alloc(u32 size, u32 align = 8);
 u32 data_strdup(const std::string& s);
 
 // Guest heap (malloc/free). Thread safe.
+// Validate before narrowing guest/host sizes; valid zero-size malloc still gets
+// one minimum block. Internal allocation exhaustion remains fail-fast.
+inline bool heap_request(uint64_t bytes, u32& rounded) {
+    return checked_size::round_up(bytes ? bytes : 1, 16, HEAP_END - HEAP_BASE, rounded);
+}
 u32 heap_alloc(u32 size, u32 align = 8);
 void heap_free(u32 addr);
 u32 heap_realloc(u32 addr, u32 size);
@@ -65,6 +71,14 @@ u32 heap_size(u32 addr);
 u32 heap_strdup(const char* s);
 
 // Page-granular regions (mmap, stacks).
+inline bool map_request(uint64_t bytes, u32& rounded) {
+    return bytes && checked_size::round_up(bytes, PAGE_SIZE, MAP_END - MAP_BASE, rounded);
+}
+inline bool map_range(u32 address, u32 bytes) {
+    u32 rounded = 0;
+    return !(address & (PAGE_SIZE - 1)) && address >= MAP_BASE &&
+           map_request(bytes, rounded) && uint64_t(address) + rounded <= MAP_END;
+}
 u32 map_alloc(u32 size);
 void map_free(u32 addr, u32 size);
 

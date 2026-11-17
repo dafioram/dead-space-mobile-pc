@@ -157,14 +157,24 @@ static u32 now_us_since_boot() {
 
 void register_libc() {
     // ---------------------------------------------------------- memory
-    reg("malloc", [](Ctx& c) { c.ret(mem::heap_alloc(c.arg(0))); });
+    reg("malloc", [](Ctx& c) {
+        u32 rounded = 0;
+        if (!mem::heap_request(c.arg(0), rounded)) { set_errno(G_ENOMEM); return c.ret(0); }
+        c.ret(mem::heap_alloc(c.arg(0)));
+    });
     reg("calloc", [](Ctx& c) {
         u64 n = u64(c.arg(0)) * c.arg(1);
+        u32 rounded = 0;
+        if (!mem::heap_request(n, rounded)) { set_errno(G_ENOMEM); return c.ret(0); }
         u32 a = mem::heap_alloc(u32(n));
         std::memset(mem::host(a), 0, size_t(n));
         c.ret(a);
     });
-    reg("realloc", [](Ctx& c) { c.ret(mem::heap_realloc(c.arg(0), c.arg(1))); });
+    reg("realloc", [](Ctx& c) {
+        u32 rounded = 0;
+        if (!mem::heap_request(c.arg(1), rounded)) { set_errno(G_ENOMEM); return c.ret(0); }
+        c.ret(mem::heap_realloc(c.arg(0), c.arg(1)));
+    });
     reg("free", [](Ctx& c) { mem::heap_free(c.arg(0)); });
     reg("sbrk", [](Ctx& c) { c.ret(0xFFFFFFFF); });
     reg("memcpy", [](Ctx& c) {
@@ -537,6 +547,7 @@ void register_libc() {
     });
     reg("mmap", [](Ctx& c) {
         u32 len = c.arg(1), flags = c.arg(3);
+        if (!len) { set_errno(G_EINVAL); return c.ret(0xFFFFFFFF); }
         s32 fd = s32(c.arg(4));
         u32 off = c.arg(5);
         u32 a = mem::map_alloc(len);
@@ -554,7 +565,8 @@ void register_libc() {
         c.ret(a);
     });
     reg("munmap", [](Ctx& c) {
-        if (c.arg(0) >= mem::MAP_BASE && c.arg(0) < mem::MAP_END) mem::map_free(c.arg(0), c.arg(1));
+        if (!mem::map_range(c.arg(0), c.arg(1))) { set_errno(G_EINVAL); return c.ret(0xFFFFFFFF); }
+        mem::map_free(c.arg(0), c.arg(1));
         c.ret(0);
     });
 

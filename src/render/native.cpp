@@ -1,4 +1,5 @@
 #include "render/native.h"
+#include "host_file.h"
 #include "render/vertex_prep.h"
 
 #include <SDL.h>
@@ -1341,7 +1342,7 @@ void do_reload_shaders() {
     std::string path;
     path.swap(g_reload_path);
     std::string src, result;
-    if (std::FILE* f = std::fopen(path.c_str(), "rb")) {
+    if (std::FILE* f = host_file::open(path, "rb")) {
         char buf[65536];
         for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) src.append(buf, n);
         std::fclose(f);

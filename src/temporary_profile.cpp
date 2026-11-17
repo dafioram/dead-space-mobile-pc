@@ -1,4 +1,5 @@
 #include "temporary_profile.h"
+#include "host_file.h"
 
 #include <random>
 #include <stdexcept>
@@ -18,10 +19,10 @@ void require_plain_entry(const fs::path& path, const fs::file_status& status) {
     // Junctions/reparse directories must not evade the portable symlink check.
     DWORD attributes = GetFileAttributesW(path.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT))
-        throw std::runtime_error("temporary profile cannot copy a reparse/inaccessible entry: " + path.string());
+        throw std::runtime_error("temporary profile cannot copy a reparse/inaccessible entry: " + host_file::utf8(path));
 #endif
     if (fs::is_symlink(status) || (!fs::is_regular_file(status) && !fs::is_directory(status)))
-        throw std::runtime_error("temporary profile refuses links or special files: " + path.string());
+        throw std::runtime_error("temporary profile refuses links or special files: " + host_file::utf8(path));
 }
 
 }  // namespace
@@ -37,7 +38,7 @@ void TemporaryProfile::prepare(const fs::path& requested_source, const fs::path&
     if (error && error != std::errc::no_such_file_or_directory) throw fs::filesystem_error("inspect userdata", source, error);
     if (present) {
         require_plain_entry(source, status);
-        if (!fs::is_directory(status)) throw std::runtime_error("userdata root is not a directory: " + source.string());
+        if (!fs::is_directory(status)) throw std::runtime_error("userdata root is not a directory: " + host_file::utf8(source));
         // Do not create the destination inside the source being copied (e.g.
         // --data pointing at the OS temp root), even under differently-cased paths.
         for (auto parent = fs::canonical(temporary_parent);; parent = parent.parent_path()) {

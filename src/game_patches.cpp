@@ -1,4 +1,5 @@
 #include "game_patches.h"
+#include "host_file.h"
 
 #include <algorithm>
 #include <cmath>
@@ -118,7 +119,7 @@ constexpr int kSensMin = 10, kSensMax = 300;
 
 std::vector<u8> read_file(const std::string& p) {
     std::vector<u8> v;
-    if (std::FILE* f = std::fopen(p.c_str(), "rb")) {
+    if (std::FILE* f = host_file::open(p, "rb")) {
         std::fseek(f, 0, SEEK_END);
         v.resize(size_t(std::ftell(f)));
         std::fseek(f, 0, SEEK_SET);
