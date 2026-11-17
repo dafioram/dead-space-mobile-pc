@@ -1304,7 +1304,16 @@ void frame() {
     if (idx < 0 || u32(idx) >= count) return;
     int samples = int(mem::r32(opts + u32(idx) * 24));
     hle::set_msaa(samples);
-    settings::set_int("msaa", samples);
+    const int accepted = hle::msaa_samples();
+    // Drivers may round sample counts or refuse the proposal. Persist and show
+    // the live framebuffer's setting, never the rejected request.
+    for (u32 i = 0; i < count; ++i) {
+        if (int(mem::r32(opts + i * 24)) != accepted) continue;
+        g_shown_index = int(i);
+        if (idx != g_shown_index) select(g_selector, g_shown_index);
+        break;
+    }
+    settings::set_int("msaa", accepted);
 }
 
 }  // namespace patches
