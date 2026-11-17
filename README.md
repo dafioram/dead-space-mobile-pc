@@ -28,10 +28,14 @@ Windows may warn that the installer is from an unknown publisher: it is not code
 - **Uninstalling**: Settings > Apps > Installed apps > *Dead Space Mobile PC Port*, or run
   `uninstall.exe` in the install folder. It asks whether to delete your saves too; texture packs you
   added are left alone.
-- **Which APK**: both the original, unmodified APK and the "fan-fixed" one work. The importer notes which
-  kind it was (the original has ATC textures, the fan-fixed one ETC2 under the same labels). If textures
-  look garbled, start the game once with `--atc-textures` (original APK) to check the other decoding and
-  report it. *(Only the fan-fixed APK has been tested by the author.)*
+- **Which APK**: original-layout ARM32 APKs are importable; the supplied APKs A/C/D
+  (D: Remastered) have identical baseline assets/core. APK B
+  has a recognized CPU-detection library variant awaiting independent user gameplay/audio checks.
+  Names alone do not establish compatibility. The legacy `assets/guest_libs` layout remains
+  importable with its existing converted-texture policy. **Reanimated/HD is detected but not imported
+  yet**; it fails before extraction, without changing existing game data.
+  See [APK support and isolated testing](docs/APK_IMPORT.md) and the
+  [exact-copy inventory](docs/ANDROID_ASSET_SUPPORT.md).
 - **Where things are** (all inside the install folder): `userdata/` saves and `port_settings.ini`,
   `gamedata/` the imported game files, `mods/textures/` texture packs, `deadspace.log` the last run's log.
 
@@ -44,6 +48,18 @@ your APK next to it (it is imported on first start) or run:
 deadspace --apk <path to Dead Space APK>      # first run: imports the game data into gamedata/
 deadspace                                     # afterwards
 ```
+
+For separate APK tests, extract without starting the game, then launch with a separate profile:
+
+```powershell
+.\deadspace.exe --apk "D:\Games\my-game.apk" --game-dir "D:\DSM-tests\A\gamedata" --import-only
+.\deadspace.exe --game-dir "D:\DSM-tests\A\gamedata" --data "D:\DSM-tests\A\userdata"
+```
+
+Use a fresh destination for each different APK. Imports never replace different existing data;
+identical data can be reused. `--data` selects saves/settings, **not** extracted assets.
+The optional `tools/prepare_apk_test.py` helper creates isolated EXE/data/user-launcher folders
+without running gameplay. These private folders contain game assets: never distribute them.
 
 ### Requirements
 

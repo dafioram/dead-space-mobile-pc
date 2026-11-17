@@ -93,9 +93,11 @@ def main():
             windres = args.mingw_prefix.resolve() / "bin/windres.exe"
             build_env = dict(os.environ, PATH=str(compiler.parent) + os.pathsep + os.environ.get("PATH", ""))
             subprocess.run([str(windres), "installer.rc", "-O", "coff", "-o", "installer.res"], cwd=work, env=build_env, check=True)
+            sha_source = args.source_root.resolve() / "src/sha256.cpp"
+            extra_sources = [str(sha_source)] if sha_source.exists() else []
             subprocess.run([str(compiler), "-std=c++20", "-O2", "-municode", "-mwindows", "-static",
                             "-include", str(work / "version.h"), "-I" + str(args.source_root.resolve() / "src"),
-                            str(ROOT / "installer/installer.cpp"), str(args.source_root.resolve() / "src/apk.cpp"),
+                            str(ROOT / "installer/installer.cpp"), str(args.source_root.resolve() / "src/apk.cpp"), *extra_sources,
                             str(work / "installer.res"), "-o", str(output), "-lz", "-lcomctl32", "-lcomdlg32",
                             "-lshell32", "-lole32", "-luuid", "-ladvapi32"], cwd=work, env=build_env, check=True)
             for name, expected in (("PAYLOAD_EXE", paths["deadspace.exe"].read_bytes()),
