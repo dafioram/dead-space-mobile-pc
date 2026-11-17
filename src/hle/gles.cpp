@@ -1672,4 +1672,31 @@ void register_gles() {
 #undef XV_TO_FV
 }
 
+void performance_snapshot(perf::Metrics& out) {
+    uint64_t bytes=0, capacity=0, rgba_equivalent=0;
+    uint64_t conversion_bytes=0, conversion_capacity=0;
+    for (const auto& conversion : g_conv) {
+        conversion_bytes += conversion.size();
+        conversion_capacity += conversion.capacity();
+    }
+    size_t scanned=0;
+    for (const auto& item : g_buf_shadow) {
+        if(scanned==perf::cache_scan_limit)break;
+        ++scanned; bytes+=item.second.size(); capacity+=item.second.capacity();
+    }
+    const bool buffers_truncated=scanned<g_buf_shadow.size();
+    scanned=0;
+    for (const auto& item : g_tex) {
+        if(scanned==perf::cache_scan_limit)break;
+        ++scanned;
+        if(item.second.w>0 && item.second.h>0)rgba_equivalent+=uint64_t(item.second.w)*uint64_t(item.second.h)*4;
+    }
+    out.insert(out.end(), {{"texture_metadata_entries",g_tex.size()},
+        {"level0_rgba_equivalent_bytes_scanned",rgba_equivalent}, {"texture_scan_truncated",scanned<g_tex.size()},
+        {"cpu_buffer_shadows",g_buf_shadow.size()}, {"cpu_buffer_bytes_scanned",bytes},
+        {"cpu_buffer_capacity_scanned",capacity}, {"buffer_scan_truncated",buffers_truncated}, {"mapped_buffers",g_buf_mapped.size()},
+        {"conversion_bytes", conversion_bytes}, {"conversion_capacity_bytes", conversion_capacity},
+        {"overlay_line_capacity_bytes", g_overlay.capacity()*sizeof(OverlayLine)},
+        {"overlay_rect_capacity_bytes", g_overlay_rects.capacity()*sizeof(OverlayRect)}});
+}
 }  // namespace hle

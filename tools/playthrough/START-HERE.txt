@@ -1,0 +1,54 @@
+LOW-END PC PLAYTHROUGH / CRASH AND MEMORY DIAGNOSTICS
+
+1. Extract the entire kit into a NEW writable folder on the low-end PC.
+   Do not replace an installed EXE. Windows x86-64; no admin/Python needed.
+2. Put your matching gamedata folder (assets + libDeadSpace.so) beside this EXE,
+   OR edit GameDir in Playthrough-Paths.json to your existing gamedata folder.
+   Use forward slashes in JSON paths, e.g. D:/Games/DeadSpace/gamedata.
+   The kit contains no game data. Existing game data is reused, not imported.
+3. Profile: this kit ALWAYS uses its own userdata folder. Start fresh, OR with
+   every game closed, COPY your complete existing userdata folder here before
+   first launch. Do not move it or copy isolated .sb/.bak files. Keep the source.
+   Progress/settings in this kit persist across launches. There is NO --no-save.
+4. Double-click Run-Playthrough.cmd. Leave its window open while playing.
+   Select your usual renderer and quality in Graphics; nothing selects Native
+   or downgrades graphics automatically. Launch resolution is 1280x720, cap 60.
+   MSAA/VSync/quality use your test profile settings. Native preparation stays
+   optimized; HLE dispatch and frame pacing use current main's implementations.
+5. Play normally. No stress test or special route is required. At a convenient
+   pause you can open the backtick console and type /perf mark chapter_2 etc.
+   Automatic level/world events are already logged. Close console to continue.
+6. If something fails, note chapter/location, last action, renderer, and whether
+   it was a crash, freeze, or visual/audio issue. If frozen, wait briefly for
+   memory samples, then decide yourself how to close it. The watcher never kills
+   or dumps a hung game. Do not repeatedly force a crash on your only progress.
+7. Each launch writes a NEW reports/playthrough-* folder. Keep the entire folder:
+     deadspace.log             in-game metrics every 10s, level/world events
+     process-memory.csv        external process memory/handles/threads every 5s
+     session.json              EXE identity, arguments, PID, times, exit code
+     console.log, stderr.log, bootstrap-stderr.log
+     crash.dmp                 best-effort minidump if the crash handler runs
+   Empty stderr logs are normal. No dump is expected after normal exit. Forced
+   termination, severe memory exhaustion and some driver failures may not dump.
+   A freeze stops in-game sampling, but the external CSV can continue.
+
+Send report folders PRIVATELY, including normal runs. Dumps can contain game
+memory/personal paths; do not post them to public issues. Do not include gamedata
+or userdata in a public ZIP. Exit/relaunch to make a fresh report; previous runs
+are not overwritten or automatically pruned. Watch free disk space on long runs.
+Save a copy of test userdata separately with the game closed between sessions.
+
+INTERPRETATION
+Resident memory is not the same as private committed memory. Guest frees can
+leave committed allocator space; vector/map capacity can remain after content
+is cleared. Peaks need not fall. JIT configured bytes are not actual resident
+code memory, and texture estimates are not measured VRAM. Metrics overlap and
+do not cover every host/driver allocation. Growth over a fresh playthrough may
+be normal warm-up, not a leak. Repeated equivalent checkpoint/load cycles and
+stable idle periods are the useful follow-up if a particular owner keeps growing.
+The build observes: it does NOT trim working sets, flush caches, change save
+logic, recover backups, or claim a leak is fixed or a cache is safe to release.
+Instrumentation has some overhead; it is not a benchmark against another EXE.
+
+The retained matching unstripped developer EXE is needed to symbolize dumps.
+Keep BUILD_INFO.txt with reports so evidence is associated with the right build.

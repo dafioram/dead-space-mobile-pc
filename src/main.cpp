@@ -18,6 +18,7 @@
 #include "apk.h"
 #include "cli_help.h"
 #include "cli_arguments.h"
+#include "performance_runtime.h"
 #include "config.h"
 #include "crash.h"
 #include "settings.h"
@@ -219,6 +220,8 @@ int main(int argc, char** argv) {
     bool optimized_native_prep = true;
     std::string assets, lib, data, logfile, shot_dir, apk_path, dev_dir, game_dir;
     bool file_option_error = false;
+    bool performance = false;
+    std::string crash_dir;
     std::vector<u64> shot_frames;
     int fps_arg = -1;  // --fps N overrides the Frame Rate Limit setting
     u64 exit_frame = 0, gl_trace_frame = 0;
@@ -245,6 +248,23 @@ int main(int argc, char** argv) {
             else if (mode == "reference") optimized_native_prep = false;
             else {
                 std::fputs("--native-prep requires optimized or reference\n", stderr);
+                return 2;
+            }
+        }
+        else if (a == "--perf") performance = true;
+        else if (a == "--perf-interval") {
+            const std::string seconds = next();
+            if (seconds != "1" && seconds != "5" && seconds != "10" && seconds != "30" && seconds != "60") {
+                std::fputs("--perf-interval requires 1, 5, 10, 30 or 60 seconds\n", stderr);
+                return 2;
+            }
+            perf::runtime_interval(unsigned(std::stoi(seconds)));
+            performance = true;
+        }
+        else if (a == "--crash-dir") {
+            crash_dir = next();
+            if (crash_dir.empty()) {
+                std::fputs("--crash-dir requires an existing directory\n", stderr);
                 return 2;
             }
         }
@@ -315,6 +335,13 @@ int main(int argc, char** argv) {
         std::fputs("Invalid game-file options: --apk/--game-dir need values and cannot be mixed with --assets/--lib. Use --help.\n", stderr);
         return 2;
     }
+    if (!crash_dir.empty()) {
+        std::error_code error;
+        if (!fs::is_directory(host_file::path(crash_dir), error)) {
+            std::fputs("--crash-dir requires an existing directory\n", stderr);
+            return 2;
+        }
+    }
     char* base_c = SDL_GetBasePath();
     std::string base = base_c ? base_c : "./";
     SDL_free(base_c);
@@ -323,7 +350,11 @@ int main(int argc, char** argv) {
     render::set_vertex_prep_optimized(optimized_native_prep);
     LOGI("native CPU prep: mode=%s (Native renderer only; no cross-draw geometry caching)",
          optimized_native_prep ? "optimized" : "reference");
-    crash::install(base);
+    if(performance) {
+        perf::enable();
+        LOGI("[perf] startup opt-in cap_override=%d (-1=use setting); no cache flushing or pacing changes",fps_arg);
+    }
+    crash::install(crash_dir.empty() ? base : crash_dir);
     if (crash_test) *static_cast<volatile int*>(nullptr) = 1;  // debug: verify crash reporting
 
     // Game files: imported from the user's APK into gamedata/ (once), or given explicitly.
@@ -535,6 +566,8 @@ int main(int argc, char** argv) {
         return hle::present_map(win_w, win_h, x * sx, y * sy, gx, gy);
     };
     while (!g_quit) {
+        const auto perf_start=perf::stamp();
+        uint64_t perf_sleep=0,perf_spin=0;
         SDL_GL_GetDrawableSize(win, &win_w, &win_h);
         run_script(frames + 1);
         dev::frame();
@@ -546,6 +579,17 @@ int main(int argc, char** argv) {
         }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            if (performance && e.type == SDL_WINDOWEVENT) {
+                const char* state = nullptr;
+                switch (e.window.event) {
+                case SDL_WINDOWEVENT_MINIMIZED: state = "minimized"; break;
+                case SDL_WINDOWEVENT_RESTORED: state = "restored"; break;
+                case SDL_WINDOWEVENT_FOCUS_GAINED: state = "focus-gained"; break;
+                case SDL_WINDOWEVENT_FOCUS_LOST: state = "focus-lost"; break;
+                default: break;
+                }
+                if (state) perf::event("window", state);
+            }
             float gx, gy;
             if (console::event(e)) continue;
             // loading screen "press any key to continue": any key or mouse button taps where the game waits for
@@ -627,6 +671,7 @@ int main(int argc, char** argv) {
             cpu::set_gl_trace(true);
             render::trace_next_frame();
         }
+        const auto perf_game_start=perf::stamp();
         render::begin_frame();
         native(kRenderer, "NativeOnDrawFrame", "()V", renderer);
         render::end_frame();
@@ -660,6 +705,7 @@ int main(int argc, char** argv) {
             SDL_GL_SetSwapInterval(settings::get_int("vsync", 1) ? 1 : 0);
             turbo_vsync_off = false;
         }
+        const auto perf_game_end=perf::stamp();
         if (int grab = input::grab()) {
             // grabbed: the button prompt, in place of the game's swipe / tap instructions
             std::string key = input::action_label("melee", input::using_pad());
@@ -707,7 +753,9 @@ int main(int argc, char** argv) {
             }
         patches::frame();
         hle::present_end(win_w, win_h);
+        const auto perf_swap_start=perf::stamp();
         SDL_GL_SwapWindow(win);
+        const auto perf_swap_end=perf::stamp();
         if (frames % 600 == 0) LOGI("frame %llu", (unsigned long long)frames);
         if (exit_frame && frames >= exit_frame) g_quit = true;
 
@@ -719,14 +767,27 @@ int main(int argc, char** argv) {
             u64 now = SDL_GetPerformanceCounter();
             if (now < next_tick) {
                 u64 ms = (next_tick - now) * 1000 / freq;
-                if (ms > 1) SDL_Delay(u32(ms - 1));
+                if (ms > 1) {
+                    auto t=perf::stamp();
+                    SDL_Delay(u32(ms - 1));
+                    if(performance)perf_sleep+=perf::stamp()-t;
+                }
+                const auto spin_start=perf::stamp();
                 while (SDL_GetPerformanceCounter() < next_tick) {}
+                if(performance)perf_spin+=perf::stamp()-spin_start;
             } else if (now - next_tick > freq / u64(fps_limit)) {
                 next_tick = now;  // more than a frame behind: resync instead of running fast to catch up
             }
         }
+        if(performance) {
+            const auto end=perf::stamp();
+            perf::runtime_frame({end-perf_start,perf_swap_start-perf_start,perf_game_end-perf_game_start,
+                                 perf_swap_end-perf_swap_start,perf_sleep,perf_spin},SDL_GetWindowFlags(win),
+                                 fps_limit,input::fast_forwarding(),dev::turbo()!=0);
+        }
     }
 
+    perf::runtime_finish();
     LOGI("shutting down");
     native(kActivity, "NativeOnPause", "()V", act);
     native(kActivity, "NativeOnStop", "()V", act);

@@ -135,6 +135,8 @@ Options: `--msaa N`, `--width W --height H` (game resolution, default = desktop 
 `--fps N` (frame cap for this run, 0 = off; overrides the Frame Rate Limit setting), `--verbose`, `--log FILE`.
 
 Run `deadspace --help` (or `-h`) for all supported flags without starting the game.
+For opt-in CPU/memory investigation, `--perf` adds bounded private telemetry;
+see [Performance diagnostics and user test plan](docs/PERFORMANCE_DIAGNOSTICS.md).
 Use `--assets DIR --lib FILE` for matching extracted game files elsewhere and
 `--data DIR` for a different userdata root (saves **and** settings).
 `--no-save` plays on a disposable copy of that root: autosaves/settings work in

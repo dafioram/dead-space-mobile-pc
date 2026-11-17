@@ -33,6 +33,8 @@ void log_guest_state() {
 }
 
 #ifdef _WIN32
+std::wstring g_dump_path;
+
 std::string module_of(void* addr, uintptr_t& offset) {
     HMODULE mod = nullptr;
     offset = uintptr_t(addr);
@@ -46,16 +48,23 @@ std::string module_of(void* addr, uintptr_t& offset) {
     return base ? base + 1 : name;
 }
 
-void write_dump(EXCEPTION_POINTERS* ep) {
-    std::string path = g_dir + "crash.dmp";
-    HANDLE f = CreateFileW(host_file::path(path).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return;
+DWORD write_dump(EXCEPTION_POINTERS* ep) {
+    // Prepare the Unicode path at startup and attempt the dump before taking the
+    // normal logger lock or symbolizing guest state on the faulting thread.
+    HANDLE f = CreateFileW(g_dump_path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return GetLastError();
     MINIDUMP_EXCEPTION_INFORMATION mei{GetCurrentThreadId(), ep, FALSE};
-    if (MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), f,
+    const BOOL written = MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), f,
                           MINIDUMP_TYPE(MiniDumpWithThreadInfo | MiniDumpWithIndirectlyReferencedMemory), ep ? &mei : nullptr,
-                          nullptr, nullptr))
-        LOGE("  minidump written to %s", path.c_str());
+                          nullptr, nullptr);
+    const DWORD error = written ? ERROR_SUCCESS : GetLastError();
     CloseHandle(f);
+    return error;
+}
+
+void log_dump_result(DWORD error) {
+    if (error) LOGE("  minidump failed (Windows error %lu): %scrash.dmp", error, g_dir.c_str());
+    else LOGE("  minidump written to %scrash.dmp", g_dir.c_str());
 }
 
 void log_backtrace() {
@@ -88,6 +97,7 @@ LONG WINAPI on_first_chance(EXCEPTION_POINTERS* ep) {
 
 LONG WINAPI on_exception(EXCEPTION_POINTERS* ep) {
     if (InterlockedExchange(&g_in_handler, 1)) return EXCEPTION_CONTINUE_SEARCH;
+    const DWORD dump_error = write_dump(ep);
     auto* er = ep->ExceptionRecord;
     uintptr_t off;
     std::string mod = module_of(er->ExceptionAddress, off);
@@ -105,7 +115,7 @@ LONG WINAPI on_exception(EXCEPTION_POINTERS* ep) {
     log_guest_state();
     LOGE("  host stack:");
     log_backtrace();
-    write_dump(ep);
+    log_dump_result(dump_error);
     std::fflush(stdout);
     return EXCEPTION_CONTINUE_SEARCH;
 }
@@ -114,12 +124,15 @@ LONG WINAPI on_exception(EXCEPTION_POINTERS* ep) {
 void on_signal(int sig) {
     if (g_in_handler) std::_Exit(3);
     g_in_handler = 1;
+#ifdef _WIN32
+    const DWORD dump_error = write_dump(nullptr);
+#endif
     LOGE("CRASH: %s", sig == SIGABRT ? "abort() called (assertion or fatal error, see stderr.log)" : "fatal signal");
     log_guest_state();
 #ifdef _WIN32
     LOGE("  host stack:");
     log_backtrace();
-    write_dump(nullptr);
+    log_dump_result(dump_error);
 #else
     void* frames[48];
     int n = ::backtrace(frames, 48);
@@ -139,6 +152,7 @@ void install(const std::string& dir) {
     if (!host_file::reopen(g_dir + "stderr.log", "w", stderr))
         LOGW("cannot redirect stderr to %sstderr.log", g_dir.c_str());
 #ifdef _WIN32
+    g_dump_path = host_file::path(g_dir + "crash.dmp").wstring();
     SetUnhandledExceptionFilter(on_exception);
     AddVectoredExceptionHandler(0, on_first_chance);
 #else

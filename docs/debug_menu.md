@@ -5,6 +5,12 @@ keyboard shortcuts, the in-game slash-command console, and an opt-in file-based
 developer interface. `deadspace --help` (or `-h`) lists all command-line flags
 supported by that executable and exits without loading assets, SDL or the game.
 
+Diagnostic builds also support `/perf status` and `/perf mark LABEL` (or
+`/perf_status` and `/perf_mark_LABEL`) after startup with `--perf` or
+`--perf-interval 10`. These read-only annotations do not change gameplay or free
+caches. See [PERFORMANCE_DIAGNOSTICS.md](PERFORMANCE_DIAGNOSTICS.md) and the separate
+playthrough kit instructions for persistent test profiles and external memory logs.
+
 ## Protect your saves first
 
 ```powershell

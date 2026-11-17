@@ -1,9 +1,11 @@
 #pragma once
+#include "performance.h"
 #include <SDL_opengl.h>
 
 #include <string>
 
 namespace hle {
+void performance_snapshot(perf::Metrics& out);  // CPU shadows/metadata, not VRAM
 // Load host GL entry points; call once with the GL context current.
 void gles_init_host();
 // Framebuffer the guest's "FBO 0" maps to (0 = the window).

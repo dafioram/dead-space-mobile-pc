@@ -3386,6 +3386,36 @@ void texture_deleted(GLuint tex) {
     g_tex_meta.erase(tex);
     g_tex_kind.erase(tex);
 }
+void performance_snapshot(perf::Metrics& out) {
+    uint64_t image_bytes = 0, image_capacity = 0;
+    size_t dead_meshes = 0, mesh_scanned = 0;
+    for (const auto& mesh : g_smesh) {
+        if (mesh_scanned == perf::cache_scan_limit) break;
+        ++mesh_scanned;
+        dead_meshes += mesh.dead;
+    }
+    size_t scanned = 0;
+    for (const auto& item : g_tex_images) {
+        if (scanned == perf::cache_scan_limit) break;
+        ++scanned;
+        image_bytes += item.second.px.size(); image_capacity += item.second.px.capacity();
+    }
+    out.insert(out.end(), {{"texture_meta_entries", g_tex_meta.size()}, {"lighting_images", g_tex_images.size()},
+        {"lighting_image_bytes_scanned", image_bytes}, {"lighting_image_capacity_scanned", image_capacity},
+        {"image_scan_truncated", scanned < g_tex_images.size()}, {"lamp_masks", g_lamp_masks.size()},
+        {"gobo_entries", g_gobo_info.size()}, {"samplers", g_samplers.size()},
+        {"scene_meshes", g_smesh.size()}, {"scene_mesh_capacity_bytes", g_smesh.capacity()*sizeof(SMesh)},
+        {"scene_dead_meshes_scanned", dead_meshes}, {"scene_mesh_scan_truncated", mesh_scanned < g_smesh.size()},
+        {"scene_keys", g_skey.size()}, {"scene_key_buckets", g_skey.bucket_count()},
+        {"fixture_facings", g_facing.size()}, {"fixture_facing_buckets", g_facing.bucket_count()},
+        {"vertex_prep_optimized", g_vertex_prep_optimized},
+        {"scratch_vertex_bytes", g_verts.size()*sizeof(float)}, {"scratch_vertex_capacity_bytes", g_verts.capacity()*sizeof(float)},
+        {"scratch_index_bytes", g_idx.size()*sizeof(u16)}, {"scratch_index_capacity_bytes", g_idx.capacity()*sizeof(u16)},
+        {"scratch_weld_bytes", (g_weld_slot.size()+g_weld_refs.size())*sizeof(u32)},
+        {"scratch_weld_capacity_bytes", (g_weld_slot.capacity()+g_weld_refs.capacity())*sizeof(u32)},
+        {"scene_vertex_bytes", g_sverts.size()*sizeof(float)}, {"scene_vertex_capacity_bytes", g_sverts.capacity()*sizeof(float)},
+        {"scene_index_bytes", g_sidx.size()*sizeof(u32)}, {"scene_index_capacity_bytes", g_sidx.capacity()*sizeof(u32)}});
+}
 void set_anisotropy(int level) {
     int v = 1;
     while (v * 2 <= std::clamp(level, 1, g_max_aniso)) v *= 2;

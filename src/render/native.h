@@ -8,6 +8,7 @@
 // lighting, no skinning extension, linear fog, alpha test, scissor, blend, depth, cull.
 #pragma once
 #include "vertex_array.h"
+#include "performance.h"
 #include <string>
 #include <vector>
 #include <SDL_opengl.h>
@@ -15,6 +16,7 @@
 #include "memory.h"
 
 namespace render {
+void performance_snapshot(perf::Metrics& out);  // main/render thread only, no GL queries
 
 // Call with the GL context current (after hle::gles_init_host). Returns false if shaders are
 // unavailable (then the legacy path stays active).

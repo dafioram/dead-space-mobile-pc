@@ -10,6 +10,7 @@
 #include "memory.h"
 
 namespace texpack {
+void performance_snapshot(perf::Metrics& out);  // CPU replacement cache, main thread only
 
 struct Image {
     int w = 0, h = 0;

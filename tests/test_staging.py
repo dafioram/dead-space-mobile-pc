@@ -84,6 +84,13 @@ class StagingTests(unittest.TestCase):
         self.assertTrue((self.output / "docs/ANDROID_ASSET_SUPPORT.md").is_file())
         self.assertFalse((self.output / "test-A").exists())
 
+    def test_performance_guide_is_allowlisted_without_diagnostic_logs(self):
+        (self.root / "docs/PERFORMANCE_DIAGNOSTICS.md").write_text("synthetic performance guide", encoding="utf-8")
+        (self.root / "docs/perf-private.log").write_text("synthetic private log", encoding="utf-8")
+        self.stage()
+        self.assertTrue((self.output / "docs/PERFORMANCE_DIAGNOSTICS.md").is_file())
+        self.assertFalse((self.output / "docs/perf-private.log").exists())
+
     def test_missing_binary_fails_before_staging(self):
         (self.build / "deadspace").unlink()
         with self.assertRaises(SystemExit):

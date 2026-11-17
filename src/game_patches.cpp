@@ -1109,6 +1109,7 @@ void on_load_level(cpu::Ctx& c) {
     std::string id;
     for (u32 p = mem::r32(c.reg(1)), e = mem::r32(c.reg(1) + 4); p && p < e && id.size() < 64; p += 2) id += char(mem::r16(p));
     LOGI("loading level %s", id.c_str());
+    if(perf::enabled())perf::event("load-level",id);
     render::scene_changed();
     if (g_level_override.empty() || id == g_level_override) return;
     LOGI("debug: loading %s instead", g_level_override.c_str());

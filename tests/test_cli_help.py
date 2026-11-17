@@ -18,7 +18,7 @@ class HelpTests(unittest.TestCase):
                 # Help must win even over earlier side-effecting options.
                 command = [str(self.executable), "--dump-audio", str(root / "audio.raw"),
                            "--log", str(root / "game.log"), "--data", str(root / "userdata"),
-                           "--apk", str(root / "not-an-apk.zip"), "--no-save", flag]
+                            "--apk", str(root / "not-an-apk.zip"), "--no-save", "--perf", flag]
                 result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=15)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("Usage: deadspace [options]", result.stdout)
@@ -54,6 +54,17 @@ class HelpTests(unittest.TestCase):
         console = (root / "src/console.cpp").read_text(encoding="utf-8")
         names = set(re.findall(r'\{"(/[a-z_]+)"', console))
         self.assertTrue(all(name in guide for name in names), "document every visible slash command")
+
+    def test_invalid_report_options_exit_before_startup(self):
+        for arguments in (("--perf-interval",), ("--perf-interval", "0"),
+                          ("--perf-interval", "10x"), ("--perf-interval", "9999999999999999999"),
+                          ("--crash-dir",), ("--crash-dir", "not-an-existing-directory")):
+            with self.subTest(arguments=arguments), tempfile.TemporaryDirectory(prefix="deadspace-report-cli-") as directory:
+                root = Path(directory)
+                result = subprocess.run([str(self.executable), "--log", str(root / "game.log"), *arguments],
+                                        cwd=root, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(list(root.iterdir()), [], "invalid reporting options must not start the game")
 
 
 if __name__ == "__main__":
