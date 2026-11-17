@@ -1,4 +1,5 @@
 #include "cpu.h"
+#include "hle_dispatch.h"
 
 #include <atomic>
 #include <cstdio>
@@ -25,6 +26,8 @@ struct HleEntry {
 };
 std::mutex g_hle_lock;
 std::vector<HleEntry> g_hle;  // index = SVC number
+hle_dispatch::Table<HleFn, mem::STUB_SIZE / 8> g_published_hle;
+bool g_dispatch_optimized = true;  // startup-only, before any guest thread is created
 
 std::atomic<u32> g_next_tid{1000};
 std::atomic<bool> g_gl_trace_on{false};  // debug GL call trace
@@ -122,18 +125,24 @@ public:
             jit->HaltExecution();
             return;
         }
-        HleFn fn = nullptr;
-        {
+        HleFn fn = hle_dispatch::resolve(g_published_hle, swi, g_dispatch_optimized, [](u32 index) -> HleFn {
             std::lock_guard lk(g_hle_lock);
-            if (swi < g_hle.size()) fn = g_hle[swi].fn;
-        }
+            return index < g_hle.size() ? g_hle[index].fn : nullptr;
+        });
         if (!fn) {
             LOGE("bad SVC %06x at %08x", swi, jit->Regs()[15]);
             std::abort();
         }
         Ctx c{this};
         if (g_gl_trace_on) {
-            const std::string& n = g_hle[swi].name;
+            // Registration can append/reallocate g_hle concurrently. Trace mode
+            // copies its name under the metadata lock, then releases it before
+            // invoking a handler (which may register another handler/re-enter).
+            std::string n;
+            {
+                std::lock_guard lk(g_hle_lock);
+                n = g_hle[swi].name;
+            }
             if (n.size() > 2 && n[0] == 'g' && n[1] == 'l') {
                 auto& r = jit->Regs();
                 LOGI("[gltrace] %s(%08x, %08x, %08x, %08x | %08x %08x %08x %08x)", n.c_str(), r[0], r[1], r[2], r[3],
@@ -273,6 +282,11 @@ static void write_stub(u32 idx) {
 }
 
 void set_gl_trace(bool on) { g_gl_trace_on = on; }
+void set_dispatch_optimized(bool on) {
+    g_dispatch_optimized = on;
+    LOGI("HLE dispatch: mode=%s slots=%u table_bytes=%zu (shared; guest synchronization unchanged)",
+         on ? "optimized" : "reference", unsigned(g_published_hle.capacity), g_published_hle.storage_bytes);
+}
 
 u32 register_hle(const std::string& name, HleFn fn) {
     std::lock_guard lk(g_hle_lock);
@@ -283,6 +297,10 @@ u32 register_hle(const std::string& name, HleFn fn) {
     }
     g_hle.push_back({name, fn});
     write_stub(idx);
+    if (!g_published_hle.publish_next(idx, fn)) {
+        LOGE("HLE dispatch publication failed at slot %u", idx);
+        std::abort();
+    }
     return mem::STUB_BASE + idx * 8;
 }
 

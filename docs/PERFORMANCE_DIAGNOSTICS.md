@@ -45,6 +45,54 @@ scratch reuse. Optional `vertex_prep_tests --benchmark` is synthetic only, not
 a gameplay CPU/FPS result or a measured improvement in RAM use. No game is
 agent-run. Game/driver CPU work outside these routines is not optimized here.
 
+## Shared HLE dispatch A/B (independent CPU experiment)
+
+`--hle-dispatch optimized` (default on this branch) looks up already-published
+guest-to-host function addresses through an acquire-loaded atomic pointer slot.
+`--hle-dispatch reference` always uses the original registry mutex/vector lookup.
+Both use the same EXE; startup logs identify the choice and table size. Neither
+flag selects a renderer or changes actual guest mutex/condition/semaphore logic.
+
+Registration still holds the existing mutex and preserves contiguous stub IDs,
+stub writes and the original capacity/exhaustion failure. It appends metadata,
+writes the stub, then release-publishes the function into a process-lifetime slot.
+Slots are never replaced or removed. Missing, null, out-of-capacity and not-yet-
+published functions use the OLD locked lookup, preserving its synchronization
+with an in-flight registration and leaving the existing bad-SVC abort in place.
+Return-to-host SVC handling and callback reentry are unchanged. Metadata/name
+reads remain locked; GL trace copies the name before releasing that lock rather
+than retaining a reference into a vector another thread can reallocate.
+
+The bounded table covers the original 1 MiB / 8-byte guest-stub capacity: 131072
+function-pointer slots, about **1 MiB shared storage on x86-64**, plus small
+bookkeeping. It is present in BOTH A/B modes, not per thread. This is not a RAM
+optimization; no reduction in commitment/residency is promised. JIT configuration,
+code generation, guest game logic, real synchronization objects, renderer quality,
+frame pacing, native failures and profile/save behavior are not changed.
+
+Use a fresh separate test folder and `--no-save`. For the first A/B pair select
+**Legacy** in both runs, matching the profiled case; Native can be tested later
+with renderer/settings held constant within its own pair. Prepared launchers
+hold Native CPU preparation at `--native-prep reference`, so the separate Native
+optimization is not mixed into this measurement. Both use the same wait mode,
+resolution/MSAA/cap, profile source and `--perf`. Settle 30 seconds after loading
+the same checkpoint, mark `dispatch_idle` and hold a fixed viewpoint for 60–90
+seconds, then mark `dispatch_route` and play a comparable route/combat/transition
+section. Quit normally and send complete private logs plus stutter/input/audio
+observations. Source/root installations and the earlier test folders are never
+replaced by these launchers. Do not change renderer mid-timed-comparison.
+
+Asset-free tests exercise the PRODUCTION publication/resolver helper with synthetic
+handlers: original lookup results, null/invalid/boundary IDs and full capacity,
+one-time publication, release/acquire visibility of preceding stub/metadata writes,
+concurrent serialized writers/readers/name copies, metadata vector reallocation,
+in-flight registration fallback, callback-style reentry and a published hit while
+the writer holds the metadata mutex. No guest instructions/JIT/game are executed.
+The optional `hle_dispatch_tests --benchmark` measures synthetic lookup/call cost
+only (without the tests' slow-call accounting); it is not gameplay performance
+evidence. The measured registry-lock sample budget was modest: actual acceptance
+requires the user's results, not an inferred whole-game speedup.
+
 ## General diagnostics
 
 Start with `--perf` to add bounded `[perf]` reports to the normal private game log.

@@ -221,6 +221,7 @@ int main(int argc, char** argv) {
     bool performance = false;
     frame_wait::Mode wait_mode = frame_wait::Mode::Timer;
     bool optimized_native_prep = true;
+    bool optimized_hle_dispatch = true;
     std::string assets, lib, data, logfile, shot_dir, apk_path, dev_dir, game_dir;
     bool file_option_error = false;
     std::vector<u64> shot_frames;
@@ -256,6 +257,15 @@ int main(int argc, char** argv) {
             else if (mode == "reference") optimized_native_prep = false;
             else {
                 std::fputs("--native-prep requires optimized or reference\n", stderr);
+                return 2;
+            }
+        }
+        else if (a == "--hle-dispatch") {
+            const std::string mode = next();
+            if (mode == "optimized") optimized_hle_dispatch = true;
+            else if (mode == "reference") optimized_hle_dispatch = false;
+            else {
+                std::fputs("--hle-dispatch requires optimized or reference\n", stderr);
                 return 2;
             }
         }
@@ -335,6 +345,7 @@ int main(int argc, char** argv) {
     render::set_vertex_prep_optimized(optimized_native_prep);
     LOGI("native CPU prep: mode=%s (Native renderer only; no cross-draw geometry caching)",
          optimized_native_prep ? "optimized" : "reference");
+    cpu::set_dispatch_optimized(optimized_hle_dispatch);
     if(performance) {
         perf::enable();
         LOGI("[perf] startup opt-in cap_override=%d (-1=use setting); diagnostics do not flush caches or change pacing",fps_arg);

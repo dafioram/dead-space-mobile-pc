@@ -46,6 +46,9 @@ using HleFn = void (*)(Ctx&);
 
 // Registers a host function and returns the guest address of its stub.
 u32 register_hle(const std::string& name, HleFn fn);
+// Startup-only A/B choice, before guest initialization/thread creation. Both
+// paths retain the locked slow fallback and the original invalid-SVC failures.
+void set_dispatch_optimized(bool on);
 // Name of the HLE function whose stub lives at addr ("" if none).
 std::string hle_name_at(u32 addr);
 
