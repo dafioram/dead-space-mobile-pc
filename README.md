@@ -222,6 +222,9 @@ with no lights: scene ambient x vertex colour. The native shader implements that
 Switch with F8, the Options row, or `renderer = native|legacy` in port_settings.ini. The legacy
 path stays as the fallback.
 
+Native CPU vertex/normal preparation uses the optimized path by default. For the
+retained reference calculations and validation scope, see [Native preparation](docs/NATIVE_PREPARATION.md).
+
 Enhancements on the native path:
 - **Texture filtering** (`anisotropy`, default 16): world (depth-tested) draws sample through the
   port's own sampler objects: trilinear + anisotropic filtering. Textures the game uploaded without
