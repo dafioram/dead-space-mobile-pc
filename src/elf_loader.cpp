@@ -1,4 +1,5 @@
 #include "elf_loader.h"
+#include "host_file.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -57,7 +58,7 @@ std::string demangle(const std::string& s) {
 }  // namespace
 
 bool load(const std::string& path, u32 base, Module& m, const Resolver& resolve) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(host_file::path(path), std::ios::binary);
     if (!f) {
         LOGE("cannot open %s", path.c_str());
         return false;

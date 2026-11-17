@@ -1,6 +1,9 @@
 #include "log.h"
+#include "host_file.h"
 
 #include <chrono>
+#include <cerrno>
+#include <cstring>
 #include <cstdarg>
 #include <mutex>
 
@@ -10,7 +13,19 @@ bool g_verbose = false;
 static std::FILE* g_file = nullptr;
 static std::mutex g_lock;
 
-void open_file(const char* path) { g_file = std::fopen(path, "w"); }
+void open_file(const char* path) {
+    std::FILE* file = host_file::open(path, "w");
+    const int error = errno;
+    std::lock_guard lk(g_lock);
+    if (g_file) std::fclose(g_file);
+    g_file = file;
+    if (!file) std::fprintf(stderr, "Cannot open log %s: %s\n", path, std::strerror(error));
+}
+void close_file() {
+    std::lock_guard lk(g_lock);
+    if (g_file) std::fclose(g_file);
+    g_file = nullptr;
+}
 
 void write(char level, const char* fmt, ...) {
     using namespace std::chrono;

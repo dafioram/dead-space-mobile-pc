@@ -1,7 +1,10 @@
 #include "jni/jni.h"
+#include "jni/array_bounds.h"
 
 #include <algorithm>
 #include <mutex>
+#include <new>
+#include <stdexcept>
 #include <set>
 #include <unordered_map>
 #include <utility>
@@ -135,15 +138,27 @@ static int elem_size(char e) {
 }
 
 ObjPtr make_array(char elem, u32 len) {
+    if (s32(len) < 0) {
+        throw_new("java/lang/NegativeArraySizeException", "negative array length");
+        return nullptr;
+    }
+    u32 bytes = 0, rounded = 0;
+    if (elem != 'L' && (!checked_size::product(len, elem_size(elem), mem::HEAP_END - mem::HEAP_BASE, bytes) ||
+                       !mem::heap_request(bytes, rounded))) {
+        throw_new("java/lang/OutOfMemoryError", "array byte extent exceeds guest heap");
+        return nullptr;
+    }
     auto o = make(std::string("[") + elem);
     o->elem = elem;
     o->len = len;
     if (elem != 'L') {
-        u32 bytes = std::max<u32>(1, len * elem_size(elem));
+        bytes = std::max<u32>(1, bytes);
         o->data = mem::heap_alloc(bytes);
         std::memset(mem::host(o->data), 0, bytes);
     } else {
-        o->objs.resize(len);
+        try { o->objs.resize(len); }
+        catch (const std::bad_alloc&) { throw_new("java/lang/OutOfMemoryError", "object array allocation"); return nullptr; }
+        catch (const std::length_error&) { throw_new("java/lang/OutOfMemoryError", "object array extent"); return nullptr; }
     }
     return o;
 }
@@ -469,25 +484,31 @@ template <int T> void get_array_elements(Ctx& c) {
 template <int T> void release_array_elements(Ctx& c) {}
 template <int T> void get_array_region(Ctx& c) {
     ObjPtr a = get(c.arg(1));
-    if (!a) return;
+    if (!a) return throw_new("java/lang/NullPointerException", "array");
     int es = elem_size(kPrim[T]);
-    u32 start = c.arg(2), len = c.arg(3), buf = c.arg(4);
-    if (start + len > a->len) {
+    s32 start = s32(c.arg(2)), len = s32(c.arg(3));
+    u32 buf = c.arg(4), address = 0, bytes = 0;
+    if (!array_range(a->len, start, len)) {
         throw_new("java/lang/ArrayIndexOutOfBoundsException", "");
         return;
     }
-    std::memcpy(mem::host(buf), mem::host(a->data + start * es), size_t(len) * es);
+    if (a->elem != kPrim[T] || !array_span(a->data, a->len, start, len, es, address, bytes) || !hle::io_buffer(buf, bytes))
+        return throw_new("java/lang/IllegalArgumentException", "invalid array type or guest buffer");
+    if (bytes) std::memcpy(mem::host(buf), mem::host(address), bytes);
 }
 template <int T> void set_array_region(Ctx& c) {
     ObjPtr a = get(c.arg(1));
-    if (!a) return;
+    if (!a) return throw_new("java/lang/NullPointerException", "array");
     int es = elem_size(kPrim[T]);
-    u32 start = c.arg(2), len = c.arg(3), buf = c.arg(4);
-    if (start + len > a->len) {
+    s32 start = s32(c.arg(2)), len = s32(c.arg(3));
+    u32 buf = c.arg(4), address = 0, bytes = 0;
+    if (!array_range(a->len, start, len)) {
         throw_new("java/lang/ArrayIndexOutOfBoundsException", "");
         return;
     }
-    std::memcpy(mem::host(a->data + start * es), mem::host(buf), size_t(len) * es);
+    if (a->elem != kPrim[T] || !array_span(a->data, a->len, start, len, es, address, bytes) || !hle::io_buffer(buf, bytes))
+        return throw_new("java/lang/IllegalArgumentException", "invalid array type or guest buffer");
+    if (bytes) std::memcpy(mem::host(address), mem::host(buf), bytes);
 }
 
 template <int... I> void reg_arrays(std::vector<cpu::HleFn>& t, std::integer_sequence<int, I...>) {
@@ -686,6 +707,7 @@ void init() {
     };
     t[172] = [](Ctx& c) {  // NewObjectArray
         auto a = make_array('L', c.arg(1));
+        if (!a) return c.ret(0);
         ObjPtr cls = get(c.arg(2));
         if (cls) a->cls = "[L" + cls->str + ";";
         ObjPtr init = get(c.arg(3));
@@ -733,14 +755,16 @@ void init() {
     t[220] = [](Ctx& c) {  // GetStringRegion
         auto u = utf8_to_utf16(string_value(c.arg(1)));
         u32 start = c.arg(2), len = c.arg(3);
-        if (start + len > u.size()) return throw_new("java/lang/StringIndexOutOfBoundsException", "");
-        std::memcpy(mem::host(c.arg(4)), u.data() + start, size_t(len) * 2);
+        if (!array_range(u32(u.size()), s32(start), s32(len))) return throw_new("java/lang/StringIndexOutOfBoundsException", "");
+        if (!hle::io_buffer(c.arg(4), u64(len) * 2)) return throw_new("java/lang/IllegalArgumentException", "invalid guest string buffer");
+        if (len) std::memcpy(mem::host(c.arg(4)), u.data() + start, size_t(len) * 2);
     };
     t[221] = [](Ctx& c) {  // GetStringUTFRegion
         auto u = utf8_to_utf16(string_value(c.arg(1)));
         u32 start = c.arg(2), len = c.arg(3);
-        if (start + len > u.size()) return throw_new("java/lang/StringIndexOutOfBoundsException", "");
+        if (!array_range(u32(u.size()), s32(start), s32(len))) return throw_new("java/lang/StringIndexOutOfBoundsException", "");
         std::string s = utf16_to_utf8(u.data() + start, len);
+        if (!hle::io_buffer(c.arg(4), s.size() + 1)) return throw_new("java/lang/IllegalArgumentException", "invalid guest string buffer");
         std::memcpy(mem::host(c.arg(4)), s.c_str(), s.size() + 1);
     };
     t[222] = [](Ctx& c) {  // GetPrimitiveArrayCritical
@@ -755,10 +779,15 @@ void init() {
     t[227] = t[22];          // DeleteWeakGlobalRef
     t[228] = [](Ctx& c) { c.ret(t_jni.exception ? 1 : 0); };  // ExceptionCheck
     t[229] = [](Ctx& c) {                                    // NewDirectByteBuffer
+        s64 capacity = s64(c.arg64(2));
+        if (capacity < 0 || capacity > INT32_MAX || !hle::io_buffer(c.arg(1), u64(capacity))) {
+            throw_new("java/lang/IllegalArgumentException", "invalid direct buffer extent");
+            return c.ret(0);
+        }
         auto o = make("java/nio/DirectByteBuffer");
         o->elem = 'B';
         o->data = c.arg(1);
-        o->len = u32(c.arg64(2));
+        o->len = u32(capacity);
         o->owns_data = false;
         c.ret(new_local(o));
     };

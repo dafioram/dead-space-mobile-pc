@@ -8,6 +8,7 @@ void write(char level, const char* fmt, ...)
 #endif
     ;
 void open_file(const char* path);
+void close_file();
 extern bool g_verbose;
 }  // namespace logging
 

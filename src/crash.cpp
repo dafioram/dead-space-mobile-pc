@@ -1,4 +1,5 @@
 #include "crash.h"
+#include "host_file.h"
 
 #include <csignal>
 #include <cstdio>
@@ -47,7 +48,7 @@ std::string module_of(void* addr, uintptr_t& offset) {
 
 void write_dump(EXCEPTION_POINTERS* ep) {
     std::string path = g_dir + "crash.dmp";
-    HANDLE f = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE f = CreateFileW(host_file::path(path).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (f == INVALID_HANDLE_VALUE) return;
     MINIDUMP_EXCEPTION_INFORMATION mei{GetCurrentThreadId(), ep, FALSE};
     if (MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), f,
@@ -135,7 +136,8 @@ void install(const std::string& dir) {
     g_dir = dir;
     if (!g_dir.empty() && g_dir.back() != '/' && g_dir.back() != '\\') g_dir += '/';
     // assertion messages from the C runtime / dynarmic go to stderr, which has no console
-    std::freopen((g_dir + "stderr.log").c_str(), "w", stderr);
+    if (!host_file::reopen(g_dir + "stderr.log", "w", stderr))
+        LOGW("cannot redirect stderr to %sstderr.log", g_dir.c_str());
 #ifdef _WIN32
     SetUnhandledExceptionFilter(on_exception);
     AddVectoredExceptionHandler(0, on_first_chance);

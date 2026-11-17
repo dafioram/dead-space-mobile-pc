@@ -11,6 +11,7 @@
 // While typing a /command, matching commands are suggested above the input line; Tab completes
 // the first one.
 #include "console.h"
+#include "host_file.h"
 #include "console_debug.h"
 #include "debugview.h"
 #include "render/native.h"
@@ -152,8 +153,8 @@ const std::vector<std::string>& level_ids() {
     static std::vector<std::string> v = [] {
         std::vector<std::string> r;
         std::error_code ec;
-        for (auto& e : std::filesystem::directory_iterator(hle::g_assets_dir + "/published/maps", ec)) {
-            std::string n = e.path().filename().string();
+        for (auto& e : std::filesystem::directory_iterator(host_file::path(hle::g_assets_dir + "/published/maps"), ec)) {
+            std::string n = host_file::utf8(e.path().filename());
             auto dot = n.find(".scene.sb");
             if (dot == std::string::npos || n.rfind("00_", 0) == 0 || n.find("test") != std::string::npos) continue;
             r.push_back(n.substr(0, dot));

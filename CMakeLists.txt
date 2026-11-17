@@ -14,6 +14,9 @@ add_library(profile_io STATIC src/save_io.cpp src/save_validation.cpp)
 target_include_directories(profile_io PUBLIC src)
 
 if (BUILD_TESTING)
+    if (DEADSPACE_BUILD_APP)
+        find_package(SDL2 REQUIRED)  # host Java adapter tests, no SDL/game initialization
+    endif()
     add_subdirectory(tests)
 endif()
 
