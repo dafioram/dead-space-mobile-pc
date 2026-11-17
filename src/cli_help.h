@@ -38,7 +38,9 @@ Logging:
   --log FILE                Main log destination (default: beside executable).
   --perf                    Opt-in CPU/frame/memory/cache diagnostics, once/second.
                              /perf mark LABEL annotates the private log. No dumps,
-                             cache flushing, gameplay changes or GPU timing claims.
+                              cache flushing, gameplay changes or GPU timing claims.
+  --hle-dispatch MODE        optimized (default) or reference; host-call lookup only.
+                             Does not remove game mutexes or select a renderer.
   --trace-input             Trace native player/HUD input events.
 
 Developer options (see docs/debug_menu.md):
