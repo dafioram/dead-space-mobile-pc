@@ -1,4 +1,5 @@
 #include "save_io.h"
+#include "host_file.h"
 #include "save_validation.h"
 #include "log.h"
 #include <algorithm>
@@ -27,10 +28,9 @@
 
 namespace save_io {
 namespace fs = std::filesystem;
-Path utf8_path(const std::string& path) { return Path(std::u8string(reinterpret_cast<const char8_t*>(path.data()), path.size())); }
+Path utf8_path(const std::string& path) { return host_file::path(path); }
 std::string path_utf8(const Path& path) {
-    auto s = path.u8string();
-    return std::string(reinterpret_cast<const char*>(s.data()), s.size());
+    return host_file::utf8(path);
 }
 std::string path_text(const Path& path) {
     std::string text = path_utf8(path);
@@ -831,7 +831,7 @@ bool ProfileLock::acquire(const Path& root) {
     unsigned shown = 0;
     fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end;
     for (; !ec && it != end; it.increment(ec)) {
-        auto name = it->path().filename().string();
+        auto name = path_utf8(it->path().filename());
         if (name.starts_with(".ds-save-") && name.ends_with(".tmp") && shown++ < 8)
             LOGW("[save-io] abandoned/uncommitted temporary retained path=%s; not loaded automatically", path_text(it->path()).c_str());
     }

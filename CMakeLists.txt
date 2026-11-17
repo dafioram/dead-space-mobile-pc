@@ -26,7 +26,7 @@ endif()
 
 if (BUILD_TESTING)
     if (DEADSPACE_BUILD_APP)
-        find_package(SDL2 REQUIRED)  # visible to the asset-free runtime adapter test
+        find_package(SDL2 REQUIRED)  # host Java adapter tests, no SDL/game initialization
     endif()
     add_subdirectory(tests)
 endif()

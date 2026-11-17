@@ -41,6 +41,7 @@
 #include "hle/hle.h"
 #include "jni/jni.h"
 #include "log.h"
+#include "host_file.h"
 #include "memory.h"
 
 Config g_config;
@@ -159,7 +160,7 @@ void write_png(const std::string& path, int ow, int oh, const std::vector<u8>& r
     std::vector<u8> z(zlen);
     compress2(z.data(), &zlen, raw.data(), uLong(raw.size()), 6);
     z.resize(zlen);
-    std::FILE* f = std::fopen(path.c_str(), "wb");
+    std::FILE* f = host_file::open(path, "wb");
     if (!f) return;
     auto be32 = [](u8* p, u32 v) { p[0] = u8(v >> 24), p[1] = u8(v >> 16), p[2] = u8(v >> 8), p[3] = u8(v); };
     auto chunk = [&](const char* type, const u8* data, u32 len) {
@@ -357,7 +358,7 @@ int main(int argc, char** argv) {
     const std::string gamedata = game_dir.empty() ? base + "gamedata" : game_dir;
     if (game_dir.empty() && apk_path.empty() && assets.empty() && !fs::exists(save_io::utf8_path(gamedata + "/libDeadSpace.so"))) {
         std::error_code ec;
-        for (auto& e : fs::directory_iterator(base, ec))
+        for (auto& e : fs::directory_iterator(host_file::path(base), ec))
             if (e.path().extension() == ".apk") {
                 apk_path = save_io::path_utf8(e.path());
                 break;
@@ -783,7 +784,7 @@ int main(int argc, char** argv) {
         for (u64 f : shot_frames)
             if (f == frames) {
                 std::string dir = shot_dir.empty() ? base + "shots" : shot_dir;
-                fs::create_directories(dir);
+                fs::create_directories(host_file::path(dir));
                 save_screenshot(dir + "/frame_" + std::to_string(frames) + ".bmp", g_config.screen_w, g_config.screen_h);
             }
         patches::frame();
@@ -831,7 +832,7 @@ int main(int argc, char** argv) {
     // manual removal, but can never redirect writes back to the original.
     if (no_save) profile_lock.release();  // allow removal of the private lock file on Windows
     if (auto error = temporary_profile.discard())
-        LOGW("temporary profile cleanup incomplete: %s (%s)", temporary_profile.data_path().string().c_str(), error.message().c_str());
+        LOGW("temporary profile cleanup incomplete: %s (%s)", host_file::utf8(temporary_profile.data_path()).c_str(), error.message().c_str());
     std::fflush(stdout);
     std::_Exit(0);  // guest threads are still running; skip static destructors
 }

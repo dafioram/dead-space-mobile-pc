@@ -14,7 +14,9 @@
 #include "game_patches.h"
 #include "hle/hle.h"
 #include "jni/jni.h"
+#include "jni/array_bounds.h"
 #include "log.h"
+#include "host_file.h"
 
 namespace jni {
 
@@ -79,7 +81,7 @@ std::FILE* g_audio_dump = nullptr;  // debug: raw PCM capture
 
 }  // namespace
 
-void audio_dump(const char* path) { g_audio_dump = std::fopen(path, "wb"); }
+void audio_dump(const char* path) { g_audio_dump = host_file::open(path, "wb"); }
 
 void audio_open(int rate, int channels, int buffer_frames) {
     SDL_AudioSpec want{}, have{};
@@ -142,7 +144,7 @@ void register_java_classes() {
         std::error_code ec;
         uintmax_t size;
         if (auto m = patches::asset(name)) size = m->size();
-        else size = fs::file_size(asset_path(name), ec);
+        else size = fs::file_size(host_file::path(asset_path(name)), ec);
         if (ec) LOGW("missing asset %s", name.c_str());
         else LOGD("AssetManager.openFd(%s) -> ok", name.c_str());
         if (ec) {
@@ -157,9 +159,10 @@ void register_java_classes() {
         std::string name = string_value(a[0].l());
         std::vector<std::string> names;
         std::error_code ec;
-        for (auto& e : fs::directory_iterator(asset_path(name), ec)) names.push_back(e.path().filename().string());
+        for (auto& e : fs::directory_iterator(host_file::path(asset_path(name)), ec)) names.push_back(host_file::utf8(e.path().filename()));
         std::sort(names.begin(), names.end());
         auto arr = make_array('L', u32(names.size()));
+        if (!arr) return JValue{};
         arr->cls = "[Ljava/lang/String;";
         for (size_t i = 0; i < names.size(); i++) arr->objs[i] = make_string(names[i]);
         LOGD("AssetManager.list(%s) -> %zu entries", name.c_str(), names.size());
@@ -180,10 +183,17 @@ void register_java_classes() {
         }
         ObjPtr arr = get(a[0].l());
         if (!arr) return JValue::I(-1);
-        u32 off = a.size() >= 3 ? u32(a[1].i()) : 0;
-        u32 len = a.size() >= 3 ? u32(a[2].i()) : arr->len;
+        s32 off = a.size() >= 3 ? a[1].i() : 0;
+        s32 len = a.size() >= 3 ? a[2].i() : s32(arr->len);
+        if (!array_range(arr->len, off, len)) {
+            throw_new("java/lang/IndexOutOfBoundsException", "asset read array extent"); return JValue::I(-1);
+        }
+        u32 address = 0, bytes = 0;
+        if (arr->elem != 'B' || !array_span(arr->data, arr->len, off, len, 1, address, bytes)) {
+            throw_new("java/lang/IllegalArgumentException", "invalid asset read buffer"); return JValue::I(-1);
+        }
         if (len == 0) return JValue::I(0);
-        size_t n = s->read(mem::host(arr->data + off), len);
+        size_t n = s->read(mem::host(address), bytes);
         return JValue::I(n == 0 ? -1 : int(n));
     });
     def("java/io/InputStream", "skip", [](const ObjPtr& t, const std::vector<JValue>& a, auto&) {
@@ -306,10 +316,15 @@ void register_java_classes() {
     def(at, "write", [](auto&, const std::vector<JValue>& a, const std::string& sig) {
         ObjPtr arr = get(a[0].l());
         if (!arr) return JValue::I(-3);
-        u32 off = u32(a[1].i()), n = u32(a[2].i());
+        s32 off = a[1].i(), count = a[2].i();
+        u32 address = 0, bytes = 0;
+        int es = arr->elem == 'S' ? 2 : 1;
+        if ((arr->elem != 'B' && arr->elem != 'S') || !array_span(arr->data, arr->len, off, count, es, address, bytes))
+            return JValue::I(-2);  // AudioTrack.ERROR_BAD_VALUE; no queue/stats/pacing changes on invalid input
+        if (!count) return JValue::I(0);
+        u32 n = u32(count);
         static std::atomic<u64> total{0};
         if (total.fetch_add(n) == 0) LOGI("audio: game started streaming (%u samples per write)", n);
-        int es = arr->elem == 'S' ? 2 : 1;
         if (!g_audio.dev) {
             // no audio device: pace the game's mixer in real time
             std::this_thread::sleep_for(std::chrono::microseconds(u64(n) * 1000000 / es / g_audio.channels /
@@ -323,7 +338,7 @@ void register_java_classes() {
         if (SDL_GetQueuedAudioSize(g_audio.dev) == 0 && writes > 10) underruns++;
         while (SDL_GetQueuedAudioSize(g_audio.dev) > g_audio.max_queued && !g_quit)
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        SDL_QueueAudio(g_audio.dev, mem::host(arr->data + off * es), n * es);
+        SDL_QueueAudio(g_audio.dev, mem::host(address), bytes);
         if(perf::enabled())perf::audio_observe(SDL_GetQueuedAudioSize(g_audio.dev),g_audio.max_queued,underruns);
         if (++writes % 1000 == 0) {
             LOGI("audio: %llu underruns so far, game mixes a %u-sample buffer in %.2f ms on average",
@@ -331,7 +346,7 @@ void register_java_classes() {
             busy = 0;
         }
         last_return = SDL_GetPerformanceCounter();
-        if (g_audio_dump) std::fwrite(mem::host(arr->data + off * es), 1, n * es, g_audio_dump);
+        if (g_audio_dump) std::fwrite(mem::host(address), 1, bytes, g_audio_dump);
         return JValue::I(int(n));
     });
 }

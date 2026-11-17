@@ -24,6 +24,7 @@
 //   call OBJ SYMBOL        call a game method on object OBJ (hex address)
 //   audit [DIST]           stand DIST m in front of every usable object; report where E picks wrong
 #include "devmode.h"
+#include "host_file.h"
 
 #include <atomic>
 #include <cstdarg>
@@ -610,12 +611,12 @@ void run(const std::string& line) {
 void read_commands() {
     std::string path = g_dir + "/cmd.txt";
     std::error_code ec;
-    if (!fs::exists(path, ec)) return;
-    std::ifstream f(path);
+    if (!fs::exists(host_file::path(path), ec)) return;
+    std::ifstream f(host_file::path(path));
     std::stringstream ss;
     ss << f.rdbuf();
     f.close();
-    fs::remove(path, ec);
+    fs::remove(host_file::path(path), ec);
     std::string all = ss.str();
     for (char& ch : all)
         if (ch == ';') ch = '\n';
@@ -632,9 +633,9 @@ void init(const std::string& dir, Host host) {
     g_host = std::move(host);
     g_active = true;
     std::error_code ec;
-    fs::create_directories(dir, ec);
-    fs::remove(dir + "/cmd.txt", ec);
-    std::ofstream(dir + "/out.txt", std::ios::trunc) << "";
+    fs::create_directories(host_file::path(dir), ec);
+    fs::remove(host_file::path(dir + "/cmd.txt"), ec);
+    std::ofstream(host_file::path(dir + "/out.txt"), std::ios::trunc) << "";
     input::set_test_mode(true);
 
     LOGI("dev mode: commands from %s/cmd.txt", dir.c_str());
@@ -646,7 +647,7 @@ int turbo() { return g_active ? g_turbo : 0; }
 
 void out(const std::string& line) {
     std::lock_guard lk(g_out_lock);
-    std::ofstream f(g_dir + "/out.txt", std::ios::app);
+    std::ofstream f(host_file::path(g_dir + "/out.txt"), std::ios::app);
     f << line << "\n";
 }
 

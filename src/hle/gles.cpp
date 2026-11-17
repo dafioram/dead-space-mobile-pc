@@ -13,6 +13,7 @@
 #include "hle/gles.h"
 #include "geometry_capture.h"
 #include "config.h"
+#include "host_file.h"
 #include "hle/presentation_target.h"
 #include "texpack.h"
 #include "hle/hle.h"
@@ -1431,7 +1432,7 @@ void register_gles() {
             static int n = 0;
             char name[512];
             std::snprintf(name, sizeof name, "%s/tex%04d_%x_%dx%d.bin", g_dump_dir.c_str(), n++, fmt, w, h);
-            if (std::FILE* f = std::fopen(name, "wb")) {
+            if (std::FILE* f = host_file::open(name, "wb")) {
                 std::fwrite(data, 1, size_t(size), f);
                 std::fclose(f);
             }

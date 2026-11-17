@@ -1,4 +1,5 @@
 #include "texpack.h"
+#include "host_file.h"
 
 #include <zlib.h>
 
@@ -71,7 +72,7 @@ u32 hash(const u8* rgba, int w, int h) {
 }
 
 bool load_png(const std::string& path, Image& out) {
-    std::FILE* f = std::fopen(path.c_str(), "rb");
+    std::FILE* f = host_file::open(path, "rb");
     if (!f) return false;
     std::vector<u8> d;
     u8 buf[65536];
@@ -151,7 +152,7 @@ bool save_png(const std::string& path, const u8* rgba, int w, int h) {
     uLongf zlen = compressBound(uLong(raw.size()));
     std::vector<u8> z(zlen);
     if (compress2(z.data(), &zlen, raw.data(), uLong(raw.size()), 6) != Z_OK) return false;
-    std::FILE* f = std::fopen(path.c_str(), "wb");
+    std::FILE* f = host_file::open(path, "wb");
     if (!f) return false;
     auto put32 = [](u8* p, u32 v) { p[0] = u8(v >> 24), p[1] = u8(v >> 16), p[2] = u8(v >> 8), p[3] = u8(v); };
     auto chunk = [&](const char* type, const u8* data, u32 len) {
@@ -182,14 +183,14 @@ void init(const std::string& base, bool packs_enabled, bool dump) {
     g_enabled = packs_enabled;
     const std::string root = base + "mods/textures";
     std::error_code ec;
-    fs::create_directories(root, ec);
+    fs::create_directories(host_file::path(root), ec);
     g_dump = dump;
     g_dump_dir = root + "/_dump";
-    if (g_dump) fs::create_directories(g_dump_dir, ec);
+    if (g_dump) fs::create_directories(host_file::path(g_dump_dir), ec);
     {  // a note for pack makers, written once
         const std::string readme = root + "/README.txt";
-        if (!fs::exists(readme, ec))
-            if (std::FILE* f = std::fopen(readme.c_str(), "wb")) {
+        if (!fs::exists(host_file::path(readme), ec))
+            if (std::FILE* f = host_file::open(readme, "wb")) {
                 std::fputs(kReadme, f);
                 std::fclose(f);
             }
@@ -197,16 +198,16 @@ void init(const std::string& base, bool packs_enabled, bool dump) {
     g_files.clear();
     if (g_enabled) {
         std::vector<fs::path> packs;
-        for (auto& e : fs::directory_iterator(root, ec))
-            if (e.is_directory() && e.path().filename().string().rfind("_", 0) != 0) packs.push_back(e.path());
+        for (auto& e : fs::directory_iterator(host_file::path(root), ec))
+            if (e.is_directory() && host_file::utf8(e.path().filename()).rfind("_", 0) != 0) packs.push_back(e.path());
         std::sort(packs.begin(), packs.end());
         for (auto& p : packs)
             for (auto& e : fs::recursive_directory_iterator(p, ec)) {
                 if (!e.is_regular_file()) continue;
-                std::string ext = e.path().extension().string(), stem = e.path().stem().string();
+                std::string ext = host_file::utf8(e.path().extension()), stem = host_file::utf8(e.path().stem());
                 for (char& ch : ext) ch = char(std::tolower(static_cast<unsigned char>(ch)));
                 for (char& ch : stem) ch = char(std::tolower(static_cast<unsigned char>(ch)));
-                if (ext == ".png" && stem.size() >= 8) g_files[stem] = e.path().string();
+                if (ext == ".png" && stem.size() >= 8) g_files[stem] = host_file::utf8(e.path());
             }
     }
     LOGI("texture packs: %s, %zu files in %s%s", g_enabled ? "on" : "off", g_files.size(), root.c_str(), g_dump ? " (dumping the game's textures to _dump)" : "");
@@ -223,7 +224,7 @@ const Image* on_upload(unsigned tex, const u8* rgba, int w, int h) {
         g_dumped[hs] = 1;
         const std::string path = g_dump_dir + "/" + hex8(hs) + ".png";
         std::error_code ec;
-        if (!fs::exists(path, ec)) save_png(path, rgba, w, h);
+        if (!fs::exists(host_file::path(path), ec)) save_png(path, rgba, w, h);
     }
     if (!g_enabled) return nullptr;
     auto it = g_colour.find(hs);

@@ -43,6 +43,10 @@ bool init() {
 void commit(u32 addr, u32 size) {
     u32 start = addr & ~(PAGE_SIZE - 1);
     u64 end = (u64(addr) + size + PAGE_SIZE - 1) & ~u64(PAGE_SIZE - 1);
+    if (end > (1ull << 32)) {
+        std::fprintf(stderr, "guest commit range overflow %08x+%x\n", addr, size);
+        std::abort();
+    }
     std::lock_guard lk(g_commit_lock);
 #ifdef _WIN32
     if (!VirtualAlloc(g_base + start, size_t(end - start), MEM_COMMIT, PAGE_READWRITE)) {
@@ -85,18 +89,21 @@ static u32 g_data_top = DATA_BASE;
 
 u32 data_alloc(u32 size, u32 align) {
     std::lock_guard lk(g_data_lock);
-    g_data_top = (g_data_top + align - 1) & ~(align - 1);
-    u32 a = g_data_top;
-    g_data_top += size;
-    if (g_data_top > DATA_BASE + DATA_SIZE) {
+    u32 a = 0;
+    if (!checked_size::round_up(g_data_top, align, DATA_BASE + DATA_SIZE, a) || size > DATA_BASE + DATA_SIZE - a) {
         std::fprintf(stderr, "HLE data region exhausted\n");
         std::abort();
     }
+    g_data_top = a + size;
     std::memset(host(a), 0, size);
     return a;
 }
 
 u32 data_strdup(const std::string& s) {
+    if (s.size() >= DATA_SIZE) {
+        std::fprintf(stderr, "HLE string size exceeds data region\n");
+        std::abort();
+    }
     u32 a = data_alloc(u32(s.size() + 1), 1);
     std::memcpy(host(a), s.c_str(), s.size() + 1);
     return a;
@@ -186,8 +193,12 @@ u32 large_alloc(u32 size) {
 
 u32 heap_alloc(u32 size, u32 align) {
     (void)align;  // all blocks are 16-byte aligned
-    if (size == 0) size = 1;
-    size = (size + GRAIN - 1) & ~(GRAIN - 1);
+    u32 rounded = 0;
+    if (!heap_request(size, rounded)) {
+        std::fprintf(stderr, "guest heap request overflow (%u bytes)\n", size);
+        std::abort();
+    }
+    size = rounded;
     std::lock_guard lk(g_heap_lock);
     u32 a;
     if (size <= SMALL_MAX) {
@@ -247,6 +258,11 @@ u32 heap_realloc(u32 addr, u32 size) {
 
 u32 heap_strdup(const char* s) {
     size_t n = std::strlen(s) + 1;
+    u32 rounded = 0;
+    if (!heap_request(n, rounded)) {
+        std::fprintf(stderr, "guest string size exceeds heap region\n");
+        std::abort();
+    }
     u32 a = heap_alloc(u32(n));
     std::memcpy(host(a), s, n);
     return a;
@@ -257,7 +273,9 @@ static std::mutex g_map_lock;
 static std::map<u32, u32> g_map_free = {{MAP_BASE, MAP_END - MAP_BASE}};
 
 u32 map_alloc(u32 size) {
-    size = (size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    u32 rounded = 0;
+    if (!map_request(size, rounded)) return 0;
+    size = rounded;
     u32 a = 0;
     {
         std::lock_guard lk(g_map_lock);
@@ -278,7 +296,13 @@ u32 map_alloc(u32 size) {
 }
 
 void map_free(u32 addr, u32 size) {
-    size = (size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    if (!map_range(addr, size)) {
+        std::fprintf(stderr, "invalid guest unmap range %08x+%x\n", addr, size);
+        return;
+    }
+    u32 rounded = 0;
+    map_request(size, rounded);
+    size = rounded;
     decommit(addr, size);
     std::lock_guard lk(g_map_lock);
     auto [it, ok] = g_map_free.emplace(addr, size);
