@@ -12,25 +12,35 @@ packs, a Quit button, skippable cutscenes and an extended Options menu.
 **No game data is included.** You need your own copy of the Android game as an APK file. This project is
 not affiliated with or endorsed by Electronic Arts; Dead Space is a trademark of Electronic Arts Inc.
 
+This README describes current `main`. Downloaded releases contain the code from their
+tagged commit, which may be older; check the release notes and included `BUILD_INFO.txt`.
+
+**Quick links:** [Install](#installing-windows) · [Saves and backups](#saves-and-backups) ·
+[Controls](#playing) · [Controller](#controller) · [Rendering](#rendering) ·
+[Troubleshooting](#troubleshooting) · [Building](#building)
+
 ## Installing (Windows)
 
-1. Download `DeadSpaceMobilePCPort-Setup.exe` from the
+1. Download the Windows installer, `DeadSpaceMobilePCPort-TAG-Setup.exe`, from the
    [Releases](../../releases) page and run it.
 2. Choose where to install (the default is a folder in your user profile; no administrator rights are
    needed) and pick **your Dead Space APK file** when asked. The installer copies the game's data out of
-   the APK into the install folder; this takes a moment and needs about 400 MB.
+   the APK into the install folder; this takes a moment. Allow about 400 MB for the installed
+   game, plus extra free space for staged extraction and any existing imported data.
 3. Start the game from the Start menu or the desktop shortcut.
 
 Windows may warn that the installer is from an unknown publisher: it is not code-signed.
 
 - **Updating**: run a newer installer and choose the same folder. Leave the APK field empty to keep the
-  game data that is already there; saves and settings are kept either way.
+  game data that is already there. Back up the complete `userdata` folder first, with the game closed;
+  the installer keeps saves and settings. Different existing game data is not overwritten by import.
 - **Uninstalling**: Settings > Apps > Installed apps > *Dead Space Mobile PC Port*, or run
   `uninstall.exe` in the install folder. It asks whether to delete your saves too; texture packs you
   added are left alone.
-- **Which APK**: original-layout ARM32 APKs are importable; the supplied APKs A/C/D
-  (D: Remastered) have identical baseline assets/core. APK B
-  has a recognized CPU-detection library variant awaiting independent user gameplay/audio checks.
+- **Which APK**: the inventoried original-layout ARM32 APKs A–D passed user-led gameplay checks.
+  They share the same stock assets; A/C/D (D: Remastered) share the baseline game core, while B
+  has a recognized CPU-detection library variant. These checks do not establish compatibility
+  with every APK or every existing save.
   Names alone do not establish compatibility. The legacy `assets/guest_libs` layout remains
   importable with its existing converted-texture policy. **Reanimated/HD is detected but not imported
   yet**; it fails before extraction, without changing existing game data.
@@ -41,12 +51,14 @@ Windows may warn that the installer is from an unknown publisher: it is not code
 
 ### Without the installer
 
-`deadspace.exe` is a single, statically linked program. Put it in a folder of its own and either place
-your APK next to it (it is imported on first start) or run:
+Download and extract the Windows portable ZIP (`deadspace-TAG-windows-x86_64-portable.zip`)
+into a new writable folder, keeping its documentation and dependency notices.
+`deadspace.exe` is statically linked and needs no separate SDL2 or MinGW runtime DLLs.
+Place your APK next to it (it is imported on first start), or run in PowerShell:
 
-```
-deadspace --apk <path to Dead Space APK>      # first run: imports the game data into gamedata/
-deadspace                                     # afterwards
+```powershell
+.\deadspace.exe --apk "D:\Games\A.apk"  # first run: imports into gamedata/
+.\deadspace.exe                        # afterwards
 ```
 
 For separate APK tests, extract without starting the game, then launch with a separate profile:
@@ -63,9 +75,30 @@ without running gameplay. These private folders contain game assets: never distr
 
 ### Requirements
 
-Windows 10 or 11, 64-bit; a graphics card and driver with OpenGL 3.0 or newer (for the new renderer; a legacy renderer is
-available in Options > Graphics); about 400 MB of disk space. A controller is optional: any pad SDL
+Windows 10 or 11, 64-bit; a graphics card and driver with OpenGL 3.0 or newer for the Native renderer
+(Legacy is available in Options > Graphics). Use a driver providing desktop OpenGL compatibility support;
+some Native enhancements require additional capabilities. Allow about 400 MB for the installed game,
+plus space for your APK, staged imports, saves and any texture packs. A controller is optional: any pad SDL
 recognises works, with the Dead Space remake's layout by default.
+
+## Saves and backups
+
+By default, saves and port settings live in `userdata/` beside the executable.
+`--data DIR` selects another **whole userdata root**, including `port_settings.ini`;
+it does not select game assets. A fresh portable folder does not migrate an existing profile.
+
+- Close the game before backing up or copying the **entire** userdata folder. Keep a separate copy
+  before updating, changing APKs or trying developer commands; do not mix individual checkpoint,
+  level or `.bak` files from different snapshots.
+- Normal saving uses checked per-file atomic replacement and previous-file `.bak` backups.
+  This is not a coordinated whole-profile backup, and backups are not restored automatically.
+  Structural validation does not guarantee a playable checkpoint or compatibility across versions.
+- `--no-save` plays on a temporary copy: autosaves/settings work there, but the original profile
+  is unchanged and progress is discarded on exit. **Omit it when you want to keep progress.**
+- Do not run multiple builds against the same profile, including older builds that do not respect
+  the profile lock. Failures and selected load files are logged as `[save-io]` / `[save-load]`.
+
+See [save/load reliability](docs/SAVE_LOAD_RELIABILITY.md) for guarantees and recovery cautions.
 
 ## Playing
 
@@ -96,8 +129,7 @@ highlight). The arrows beside //Options at the top of the Options screen turn it
 | hold Left Alt | free the cursor to click on screen (acts as touch) |
 | F11 / Alt+Enter | toggle fullscreen (borderless) |
 | F12 | screenshot (shots/) |
-| ` (~) | console (see below) |
-| ` (~) | console (see below) |
+| Backtick / ~ | console (see below) |
 | F9 | interaction report: writes what E would use and every usable object nearby to deadspace.log |
 | F10 | interaction debug view: hitbox (cyan), usable objects (white), what E would use (green) |
 | F5 | debug: painted vertex lighting normal / hidden / alone |
@@ -119,6 +151,9 @@ with smaller rows than the game's own pages. Turning a page with the keyboard hi
 - **Controls**: **Mouse Sensitivity** (bar, 10-300%), **Mouse Smoothing**, **Free Look (Standing)**,
   then one row per control: press its arrow, then the key or mouse button to use (Esc cancels). A key
   already used by another control swaps with it. **Reset Controls** (last row) restores the defaults.
+
+MSAA choices depend on the driver. The menu and saved setting reflect the accepted sample count;
+if a change cannot produce a complete framebuffer, the previous working target is retained.
 
 1-4 / mouse wheel (weapons), Mouse 4 (melee) and middle mouse (alt fire) are fixed extras.
 
@@ -181,8 +216,9 @@ buttons after any controller input and keys again after any key press, mouse cli
 Power node locks: using one opens a small dialog. While it is up the mouse is free and the menu keys
 or the controller work on its buttons (first press highlights, Space / Enter / A confirms).
 
-Quitting: the main menu has a **Quit** button at the top right (click it, or move the highlight up to it
-and confirm). It opens the game's own "Are you sure you want to exit?" prompt, which Esc / B on the main
+Quitting: **Quit** is the last button in the main menu's bottom bar, after Play / Options / Info / Extras.
+Click it, or navigate to it with the menu controls and confirm.
+It opens the game's own "Are you sure you want to exit?" prompt, which Esc / B on the main
 menu also does; confirming closes the game. The window's close button and Alt+F4 work at any time.
 
 Bench and store: while either is open the game is a menu, not gameplay: the camera does not move, the
@@ -207,20 +243,24 @@ value at a limited speed (src/lights.cpp, `smooth_fades`).
 The game's habit of showing the navigation line by itself when the player stands idle (which also
 tilts the camera down) is patched out; the line only appears on its key.
 
-Saves go to `userdata/` next to the executable.
-
 ### Rendering
 The game draws with OpenGL ES 1.1 (fixed function). Two paths are built in:
 - **Legacy**: each GL ES call is translated to desktop OpenGL's own fixed-function pipeline.
 - **Native**: the port mirrors the game's GL state, converts every draw's vertex data itself and draws
-  it through its own GLSL shader (modern OpenGL). Output matches the legacy path pixel for pixel
-  (checked with tools/framediff.py); it is the base for lighting and texture improvements to come.
+  it through its own GLSL shaders (modern OpenGL), with optional lighting and post-processing.
+  Baseline comparisons use `tools/framediff.py`; these are not a guarantee of pixel-identical output
+  in every scene, and enabling enhancements intentionally changes the image.
 
 World tints (the red alarm lighting, GameWorld::setTintOverride) reach the renderer as GL lighting
 with no lights: scene ambient x vertex colour. The native shader implements that ambient-only case.
 
 Switch with F8, the Options row, or `renderer = native|legacy` in port_settings.ini. The legacy
 path stays as the fallback.
+
+On a slower PC, try **Legacy** if Native cannot maintain your desired frame rate. Native's lighting
+and shadows add work; neither renderer has a universal performance guarantee. Keep the same
+resolution, frame cap and scene when comparing them. The default cap is 60 FPS; higher limits
+have not been comprehensively validated for gameplay and timing.
 
 Native CPU vertex/normal preparation uses the optimized path by default. For the
 retained reference calculations and validation scope, see [Native preparation](docs/NATIVE_PREPARATION.md).
@@ -237,9 +277,9 @@ Enhancements on the native path:
   (lights, glowing suit parts, screens) are blurred at 1/2, 1/4 and 1/8 resolution and added back.
   Sharpening: an unsharp mask limited to the local brightness range, so it adds no halos.
 - **Ambient occlusion** (`ambient_occlusion`, 0-3, default 1 = Low): soft shading in corners, recesses
-  and where characters' parts overlap, computed from the depth buffer alone (the game supplies no
-  normals or lights). Runs in the same pass as the effects above, so the HUD is untouched; bright
-  pixels (lights, glows) are left alone. Higher levels use more samples, a larger radius and more
+  and where characters' parts overlap, computed from depth and the port's reconstructed normals
+  when available. The HUD is untouched; bright pixels (lights, glows) are left alone.
+  Higher levels use more samples, a larger radius and more
   darkening.
 - **Reconstructed normals**: the game draws without surface normals, so the native renderer builds
   them. Per draw, face normals are averaged per vertex (vertices at the same position share one, so
@@ -383,7 +423,7 @@ Enhancements on the native path:
   shine more than dark or strongly coloured ones. Needs Dynamic Lights on.
 
 ### Debug views
-Three overlays, each toggled by a key or a console command (`/debug_off` turns all of them off):
+Four views, each toggled by a key or a console command (`/debug_off` turns all of them off):
 - **Vertex lighting** (F5, `/debug_vertexlight`, cycles): *hidden* draws the level's opaque,
   vertex-coloured meshes without their vertex colours (textures and added lights only); *alone* draws
   them with the vertex colours but no texture. Meshes without vertex colours are unaffected: where
@@ -419,11 +459,6 @@ highlighted one. Words in a command are joined with _ (spaces work too).
 
 Resource/restore commands can affect autosaves; use `--no-save` to keep them temporary.
 See [the debug guide](docs/debug_menu.md) for limits, ownership checks and oxygen behavior.
-
-Profile saves use checked per-file atomic replacement and previous-file backups.
-Failures and selected load files are logged as `[save-io]` / `[save-load]`; normal saving
-remains enabled. See [save/load reliability](docs/SAVE_LOAD_RELIABILITY.md) for limits
-and recovery cautions. Do not run older/newer builds against the same profile together.
 
 ### How E picks
 A box in front of Isaac (1.8 m deep, 1.4 m wide, floor to above head height) points where the
@@ -481,10 +516,28 @@ logged at first chance (`access violation (first chance)` plus a host stack).
 `tools/dev.py status` says whether the dev instance is running and, if it has exited, shows the crash
 report from its log. `send` and `status` exit with code 3 as soon as the game is not running.
 `tools/grabtest.sh ENEMY DIST` runs a grab test (slasher, lurker, swarm).
- (testing)
 `deadspace.exe --dev DIR` reads commands from `DIR/cmd.txt` while running; `tools/dev.py` drives
 it (`start`, `send "cmd; cmd"`, `stop`). Commands are listed at the top of `src/devmode.cpp`
 (teleport, goto an object, press keys, screenshots, `look`, `audit`, `god`...).
+
+## Troubleshooting
+
+- **Slow frame rate:** try Legacy in Options > Graphics (or F8), then compare at the same resolution
+  and frame cap. Update the GPU driver if OpenGL initialization fails. A feature's availability
+  depends on the driver, not just its displayed OpenGL version.
+- **Import refused:** read the log, confirm the APK layout is supported, and choose a fresh
+  `--game-dir` for different game data. Do not delete a working installation to force an import.
+- **Save/load problem:** close other instances and back up the whole profile before investigating.
+  Keep checkpoint/level pairs together; do not assume a successful parse proves a correct restore.
+- **Crash or other bug:** record the exact build/tag from `BUILD_INFO.txt`, OS/GPU/driver, renderer,
+  graphics settings, chapter/location and the actions leading up to it. Copy `deadspace.log` and
+  `stderr.log` before the next launch overwrites them. On Windows, keep `crash.dmp` too if created;
+  crash capture is best-effort, and a freeze or forced termination may produce no dump.
+
+Use [Issues](../../issues) for a reproducible description. Logs can reveal personal paths, and
+dumps can contain game memory: share sensitive evidence privately rather than attaching APKs,
+assets, profiles, dumps or recordings to a public issue. `--log FILE` changes the main log's path;
+`stderr.log` and Windows crash dumps still go beside the executable.
 
 ## Building
 
@@ -503,7 +556,8 @@ cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
 ninja -C build
 ```
 
-The Windows build is linked statically: `deadspace.exe` needs no extra DLLs.
+The Windows build statically links SDL2 and the compiler runtimes, so those DLLs do not need to be
+shipped separately. Windows system libraries and a working OpenGL driver are still required.
 
 The installer (`installer/installer.cpp`, a small Win32 program with the checked
 `deadspace.exe` and notices embedded as resources, and `src/apk.cpp` for the import)
