@@ -215,6 +215,7 @@ int main(int argc, char** argv) {
     TemporaryProfile temporary_profile;
     save_io::ProfileLock profile_lock;
     bool no_save = false;
+    bool optimized_native_prep = true;
     std::string assets, lib, data, logfile, shot_dir, apk_path, dev_dir, game_dir;
     bool file_option_error = false;
     std::vector<u64> shot_frames;
@@ -237,6 +238,15 @@ int main(int argc, char** argv) {
         else if (a == "--dump-audio") jni::audio_dump(next().c_str());
         else if (a == "--data") data = next();
         else if (a == "--no-save") no_save = true;
+        else if (a == "--native-prep") {
+            const std::string mode = next();
+            if (mode == "optimized") optimized_native_prep = true;
+            else if (mode == "reference") optimized_native_prep = false;
+            else {
+                std::fputs("--native-prep requires optimized or reference\n", stderr);
+                return 2;
+            }
+        }
         else if (a == "--log") logfile = next();
         else if (a == "--width") g_config.screen_w = std::stoi(next()), res_set = true;
         else if (a == "--height") g_config.screen_h = std::stoi(next()), res_set = true;
@@ -309,6 +319,9 @@ int main(int argc, char** argv) {
     SDL_free(base_c);
     if (logfile.empty()) logfile = base + "deadspace.log";
     logging::open_file(logfile.c_str());
+    render::set_vertex_prep_optimized(optimized_native_prep);
+    LOGI("native CPU prep: mode=%s (Native renderer only; no cross-draw geometry caching)",
+         optimized_native_prep ? "optimized" : "reference");
     crash::install(base);
     if (crash_test) *static_cast<volatile int*>(nullptr) = 1;  // debug: verify crash reporting
 
