@@ -1,5 +1,6 @@
 #include "render/native.h"
 #include "geometry_capture.h"
+#include "render/vertex_prep.h"
 
 #include <SDL.h>
 
@@ -123,6 +124,7 @@ struct State {
 Array g_arr[A_COUNT];
 
 bool g_available = false, g_enabled = false;
+bool g_vertex_prep_optimized = true;
 bool g_trace_draws = false, g_trace_next = false;
 
 // ---------------------------------------------------------------- shader
@@ -471,93 +473,24 @@ void p_glUniform3fv_(GLint loc, const float* v) {
     if (p_glUniform3fv_raw) p_glUniform3fv_raw(loc, 1, v);
 }
 GLint u_mv = -1, u_nmat = -1, u_gbuf = -1;
-constexpr int kStride = 15;  // pos4, color4, tex4, normal3
+constexpr int kStride = vertex_prep::stride;  // pos4, color4, tex4, normal3
 
-float read_component(const u8* e, GLenum type, int k) {
-    switch (type) {
-    case GL_BYTE: return float(static_cast<const signed char*>(static_cast<const void*>(e))[k]);
-    case GL_UNSIGNED_BYTE: return float(e[k]);
-    case GL_SHORT: { int16_t v; std::memcpy(&v, e + 2 * k, 2); return v; }
-    case GL_UNSIGNED_SHORT: { uint16_t v; std::memcpy(&v, e + 2 * k, 2); return v; }
-    case 0x140C: { int32_t v; std::memcpy(&v, e + 4 * k, 4); return v / 65536.0f; }  // GL_FIXED
-    default: { float v; std::memcpy(&v, e + 4 * k, 4); return v; }
-    }
-}
 int type_size(GLenum t) {
-    switch (t) {
-    case GL_BYTE: case GL_UNSIGNED_BYTE: return 1;
-    case GL_SHORT: case GL_UNSIGNED_SHORT: return 2;
-    default: return 4;
-    }
+    return vertex_prep::type_size(t);
 }
 
 // Per-vertex normals for an indexed triangle list: area-weighted face normals summed over every
 // triangle that touches a vertex. Vertices at the same position (split for texture seams) share one
 // sum, so seams do not show.
-std::vector<u32> g_weld_slot, g_weld_rep;
+std::vector<u32> g_weld_slot, g_weld_refs;  // rewritten every draw; indices or normal offsets for A/B mode
 void build_normals(const std::vector<u16>& idx, u32 n) {
-    u32 cap = 16;
-    while (cap < n * 2) cap <<= 1;
-    g_weld_slot.assign(cap, 0xFFFFFFFFu);
-    g_weld_rep.resize(n);
-    for (u32 i = 0; i < n; i++) {
-        const float* p = &g_verts[size_t(i) * kStride];
-        u32 b[3];
-        std::memcpy(b, p, 12);
-        u32 h = (b[0] * 0x9E3779B1u) ^ (b[1] * 0x85EBCA77u) ^ (b[2] * 0xC2B2AE3Du);
-        h ^= h >> 15;
-        for (u32 s = h & (cap - 1);; s = (s + 1) & (cap - 1)) {
-            u32 j = g_weld_slot[s];
-            if (j == 0xFFFFFFFFu) {
-                g_weld_slot[s] = i;
-                g_weld_rep[i] = i;
-                break;
-            }
-            if (std::memcmp(&g_verts[size_t(j) * kStride], p, 12) == 0) {
-                g_weld_rep[i] = j;
-                break;
-            }
-        }
-    }
-    for (size_t t = 0; t + 2 < idx.size(); t += 3) {
-        u32 i0 = idx[t], i1 = idx[t + 1], i2 = idx[t + 2];
-        if (i0 >= n || i1 >= n || i2 >= n) continue;
-        const float *a = &g_verts[size_t(i0) * kStride], *b = &g_verts[size_t(i1) * kStride], *c = &g_verts[size_t(i2) * kStride];
-        float e1[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]}, e2[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
-        float fn[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
-        for (u32 v : {i0, i1, i2}) {
-            float* d = &g_verts[size_t(g_weld_rep[v]) * kStride + 12];
-            d[0] += fn[0], d[1] += fn[1], d[2] += fn[2];
-        }
-    }
-    for (u32 i = 0; i < n; i++) {
-        u32 r = g_weld_rep[i];
-        if (r != i) std::memcpy(&g_verts[size_t(i) * kStride + 12], &g_verts[size_t(r) * kStride + 12], 12);
-    }
+    if (g_vertex_prep_optimized) vertex_prep::normals_optimized(g_verts, idx, n, g_weld_slot, g_weld_refs);
+    else vertex_prep::normals_reference(g_verts, idx, n, g_weld_slot, g_weld_refs);
 }
 
 void build_vertices(u32 lo, u32 n) {
-    g_verts.assign(size_t(n) * kStride, 0.0f);
-    for (u32 i = 0; i < n; i++) {
-        float* v = &g_verts[size_t(i) * kStride];
-        v[3] = 1;                               // pos.w
-        v[4] = v[5] = v[6] = v[7] = 1;          // color
-        v[8] = v[9] = 0, v[10] = 0, v[11] = 1;  // tex0 (s, t, r, q)
-    }
-    struct Slot { int which, off, max; };
-    const Slot slots[] = {{A_VERTEX, 0, 4}, {A_COLOR, 4, 4}, {A_TEX0, 8, 4}};
-    for (auto& s : slots) {
-        const Array& a = g_arr[s.which];
-        if (!a.enabled || !a.data) continue;
-        int stride = a.stride ? a.stride : a.size * type_size(a.type);
-        int cnt = std::min(a.size, s.max);
-        bool norm_color = s.which == A_COLOR && a.type == GL_UNSIGNED_BYTE;
-        for (u32 i = 0; i < n; i++) {
-            const u8* e = a.data + size_t(lo + i) * stride;
-            float* v = &g_verts[size_t(i) * kStride + s.off];
-            for (int k = 0; k < cnt; k++) v[k] = read_component(e, a.type, k) * (norm_color ? 1.0f / 255.0f : 1.0f);
-        }
-    }
+    if (g_vertex_prep_optimized) vertex_prep::vertices_optimized(g_verts, lo, n, g_arr[A_VERTEX], g_arr[A_COLOR], g_arr[A_TEX0]);
+    else vertex_prep::vertices_reference(g_verts, lo, n, g_arr[A_VERTEX], g_arr[A_COLOR], g_arr[A_TEX0]);
 }
 
 // The world tint (alarm lighting, a hallucination's blackout) is the light-model colour the level is
@@ -3338,6 +3271,7 @@ void set_enabled(bool on) {
     if (was != g_enabled) LOGI("renderer: %s", g_enabled ? "native" : "legacy");
 }
 bool enabled() { return g_enabled; }
+void set_vertex_prep_optimized(bool on) { g_vertex_prep_optimized = on; }
 
 // ---- matrices
 void matrix_mode(GLenum mode) { g_matrix_mode = mode == GL_PROJECTION ? 1 : mode == GL_TEXTURE ? 2 : 0; }
@@ -3465,6 +3399,7 @@ void performance_snapshot(perf::Metrics& out) {
         {"image_scan_truncated", scanned < g_tex_images.size()}, {"lamp_masks", g_lamp_masks.size()},
         {"gobo_entries", g_gobo_info.size()}, {"samplers", g_samplers.size()},
         {"scene_meshes", g_smesh.size()}, {"scene_mesh_capacity_bytes", g_smesh.capacity()*sizeof(SMesh)},
+        {"vertex_prep_optimized", g_vertex_prep_optimized},
         {"scene_vertex_bytes", g_sverts.size()*sizeof(float)}, {"scene_vertex_capacity_bytes", g_sverts.capacity()*sizeof(float)},
         {"scene_index_bytes", g_sidx.size()*sizeof(u32)}, {"scene_index_capacity_bytes", g_sidx.capacity()*sizeof(u32)}});
 }

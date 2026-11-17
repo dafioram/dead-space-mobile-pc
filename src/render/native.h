@@ -7,6 +7,7 @@
 // positions, short/float texcoords, ubyte colours), one texture unit with MODULATE, no GL
 // lighting, no skinning extension, linear fog, alpha test, scissor, blend, depth, cull.
 #pragma once
+#include "vertex_array.h"
 #include "performance.h"
 #include <string>
 #include <vector>
@@ -24,6 +25,7 @@ bool init();
 bool available();
 void set_enabled(bool on);
 bool enabled();
+void set_vertex_prep_optimized(bool on);  // startup A/B switch; Native CPU preparation only
 
 // ---- state mirror, fed by the GLES translation layer for every call it receives (always,
 // so the renderer can be switched on at any time)
@@ -141,13 +143,6 @@ void scissor(int x, int y, int w, int h);
 void viewport(int x, int y, int w, int h);
 void polygon_offset(float factor, float units);
 
-struct Array {
-    bool enabled = false;
-    int size = 4;
-    GLenum type = GL_FLOAT;
-    int stride = 0;
-    const u8* data = nullptr;  // host pointer (guest memory or buffer shadow)
-};
 enum { A_VERTEX, A_NORMAL, A_COLOR, A_TEX0, A_TEX1, A_COUNT };
 void set_array(int which, const Array& a);
 

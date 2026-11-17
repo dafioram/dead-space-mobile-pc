@@ -220,6 +220,7 @@ int main(int argc, char** argv) {
     bool no_save = false;
     bool performance = false;
     frame_wait::Mode wait_mode = frame_wait::Mode::Timer;
+    bool optimized_native_prep = true;
     std::string assets, lib, data, logfile, shot_dir, apk_path, dev_dir, game_dir;
     bool file_option_error = false;
     std::vector<u64> shot_frames;
@@ -246,6 +247,15 @@ int main(int argc, char** argv) {
         else if (a == "--frame-wait") {
             if (!frame_wait::parse_mode(next(), wait_mode)) {
                 std::fputs("--frame-wait requires timer or legacy\n", stderr);
+                return 2;
+            }
+        }
+        else if (a == "--native-prep") {
+            const std::string mode = next();
+            if (mode == "optimized") optimized_native_prep = true;
+            else if (mode == "reference") optimized_native_prep = false;
+            else {
+                std::fputs("--native-prep requires optimized or reference\n", stderr);
                 return 2;
             }
         }
@@ -322,6 +332,9 @@ int main(int argc, char** argv) {
     SDL_free(base_c);
     if (logfile.empty()) logfile = base + "deadspace.log";
     logging::open_file(logfile.c_str());
+    render::set_vertex_prep_optimized(optimized_native_prep);
+    LOGI("native CPU prep: mode=%s (Native renderer only; no cross-draw geometry caching)",
+         optimized_native_prep ? "optimized" : "reference");
     if(performance) {
         perf::enable();
         LOGI("[perf] startup opt-in cap_override=%d (-1=use setting); diagnostics do not flush caches or change pacing",fps_arg);

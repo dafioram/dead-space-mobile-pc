@@ -4,6 +4,49 @@ For the separate limiter-wait A/B experiment, see `FRAME_WAIT_PLAYTEST.md`.
 Both A/B modes use diagnostics; the independent `--frame-wait` option selects
 the waiting policy, not `--perf`.
 
+## Native CPU preparation A/B (independent optimization experiment)
+
+`--native-prep optimized` (default on this branch) changes only Native-renderer
+CPU vertex conversion and indexed-triangle normal preparation. `--native-prep
+reference` retains the original calculations as a same-EXE control. Neither flag
+selects the renderer: choose **Native** explicitly for both comparison runs.
+Startup logs name the mode; `native_cache vertex_prep_optimized=0/1` identifies
+the requested mode in each diagnostic report. With Legacy rendering selected,
+these routines are not used and no benefit is expected.
+
+The optimized converter dispatches type/component counts per array rather than
+per component, and initializes each output record in one pass. It preserves
+unaligned loads, array offsets/strides, missing-array defaults, ubyte color
+normalization, fixed-point conversion, unknown-format float fallback and float
+NaN propagation. Normal preparation keeps exact-bit seam welding, the same hash/
+probe order, area-weighted sums, triangle/corner accumulation order and invalid
+index handling. It derives normal offsets in existing per-draw scratch rather
+than repeatedly deriving addresses per triangle corner. No cross-draw/frame
+geometry cache, pointer-only reuse, additional retained allocation, quality
+reduction, skipped geometry, GL-state/upload policy, JIT budget or frame-limiter
+change is included. Both paths read current input contents every draw.
+
+Use the separately prepared EXE folder, installed complete `--game-dir`, and
+disposable `--no-save` profile. Keep the same wait mode, resolution/cap, VSync,
+MSAA, Native settings, checkpoint and viewpoint/route. Compare reference then
+optimized; allow 30 seconds settling, mark `prep_idle`, stand 60–90 seconds,
+then mark `prep_route` and play a comparable route/combat/transition section.
+Check seams/lighting, animated/moving objects, effects, menus and renderer
+switching. Quit normally; send each complete private `deadspace.log` and any
+visual/stutter observations. Both prepared modes use `--perf`; a no-diagnostics
+control and external CPU capture are separate experiments. Do not overwrite
+the previous test EXE/folders or compare a Legacy-renderer run as the Native
+optimization's control. Your earlier build remains valid for Legacy profiling.
+
+Synthetic tests compare complete output records bit-for-bit for formats,
+component counts, alignment/strides/defaults, mutated inputs, IEEE edge cases,
+weld seams/signed zero/NaN identities, winding, repeated/invalid indices and
+scratch reuse. Optional `vertex_prep_tests --benchmark` is synthetic only, not
+a gameplay CPU/FPS result or a measured improvement in RAM use. No game is
+agent-run. Game/driver CPU work outside these routines is not optimized here.
+
+## General diagnostics
+
 Start with `--perf` to add bounded `[perf]` reports to the normal private game log.
 Disabled by default; startup-only, before guest allocation/thread creation. This
 does not change frame caps, sleeps/spins, gameplay, native cleanup, cache eviction,

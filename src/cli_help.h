@@ -36,6 +36,8 @@ Display and graphics:
   --fps N                   Frame cap for this run; 0 = unlimited.
   --frame-wait MODE          timer (default) or legacy; same frame cap/deadline.
                              Windows high-resolution wait, else legacy SDL path.
+  --native-prep MODE         optimized (default) or reference; Native CPU vertices/
+                             normals only. Does not select or change Legacy renderer.
   --msaa N                  Anti-aliasing: 0, 2, 4 or 8 samples.
   --atc-textures            Force original-APK ATC texture decoding.
                              Renderer selection is in Options > Graphics / F8.
