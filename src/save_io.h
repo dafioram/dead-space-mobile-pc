@@ -45,6 +45,8 @@ bool failed_fd(int fd);
 uint64_t failure_epoch();
 bool atomic_text(const Path& path, std::string_view text);
 void describe_library(const Path& path);
+struct RegistryCounts { uint64_t descriptors=0, streams=0; bool valid=false; };
+RegistryCounts diagnostic_registry_counts();  // records, not independent kernel-handle counts
 
 class ProfileLock {
     intptr_t handle_ = -1;

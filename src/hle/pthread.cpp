@@ -17,6 +17,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 struct GMutex {
+    perf::OwnedResource diagnostic{perf::Owner::mutex};
     std::mutex m;
     std::condition_variable cv;
     u32 owner = 0;
@@ -65,6 +66,7 @@ struct GMutex {
 };
 
 struct GCond {
+    perf::OwnedResource diagnostic{perf::Owner::condition};
     std::mutex m;
     std::condition_variable cv;
     int waiters = 0;
@@ -72,6 +74,7 @@ struct GCond {
 };
 
 struct GSem {
+    perf::OwnedResource diagnostic{perf::Owner::semaphore};
     std::mutex m;
     std::condition_variable cv;
     u32 count = 0;

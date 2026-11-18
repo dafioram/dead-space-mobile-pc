@@ -35,6 +35,7 @@ struct Object;
 using ObjPtr = std::shared_ptr<Object>;
 
 struct Object {
+    perf::OwnedResource diagnostic{perf::Owner::java_object};
     std::string cls;   // binary class name, e.g. "java/lang/String"
     std::string str;   // java.lang.String value (UTF-8); class name for java.lang.Class objects
     // arrays
@@ -59,6 +60,7 @@ ObjPtr make(const std::string& cls);
 ObjPtr make_string(const std::string& s);
 ObjPtr make_array(char elem, u32 len);
 ObjPtr class_object(const std::string& name);
+void performance_snapshot(perf::Metrics& out);
 std::string string_value(jref r);
 
 // Pending Java exception on this thread

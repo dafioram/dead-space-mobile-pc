@@ -11,14 +11,17 @@ import tempfile
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--probe", required=True)
+    parser.add_argument("--census-helper", required=True)
+    parser.add_argument("--kit-template", type=Path)
     args = parser.parse_args()
-    source = Path(__file__).resolve().parents[1] / "tools/playthrough"
+    source = args.kit_template or Path(__file__).resolve().parents[1] / "tools/playthrough"
     with tempfile.TemporaryDirectory(prefix="deadspace-playthrough-test-") as temporary:
         root = Path(temporary)
         kit = root / "kit-测试 & % portable"
         shutil.copytree(source, kit)
         exe = kit / "deadspace.exe"
         shutil.copy2(args.probe, exe)
+        shutil.copy2(args.census_helper, kit / "handle-census.exe")
         command = ["powershell.exe", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
                    "-File", str(kit / "Watch-Playthrough.ps1")]
         # Missing inputs must fail before creating a profile or starting a child.
@@ -39,6 +42,9 @@ def main():
         metadata = json.loads((first / "session.json").read_text(encoding="utf-8-sig"))
         assert metadata["state"] == "exited" and metadata["exit_code"] == 0, metadata
         assert metadata["watcher_errors"] == 0
+        assert metadata["handle_census_attempts"] >= 1 and metadata["handle_census_failures"] == 0, metadata
+        handles = list(csv.DictReader((first / "handle-types.csv").open(encoding="utf-8")))
+        assert handles and all(row["valid"] == "1" for row in handles), handles
         rows = list(csv.DictReader((first / "process-memory.csv").open(encoding="utf-8")))
         assert len(rows) >= 2 and int(rows[0]["private_bytes"]) > 0, rows
         console = (first / "console.log").read_text(encoding="utf-8")

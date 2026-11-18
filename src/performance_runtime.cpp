@@ -7,6 +7,8 @@
 #include "log.h"
 #include "settings.h"
 #include "config.h"
+#include "jni/jni.h"
+#include "save_io.h"
 #include <SDL.h>
 #include <algorithm>
 #include <map>
@@ -16,6 +18,9 @@
 namespace perf {
 namespace {
 FrameWindow frames;
+HitchWindow hitches;
+uint64_t frame_serial=0;
+bool manual_capture=false;
 uint64_t last_time = 0, reports = 0;
 unsigned interval_seconds = 1;
 ProcessSample previous;
@@ -77,6 +82,26 @@ void report(uint64_t now, bool final) {
     texpack::performance_snapshot(m); metrics_line("png_cache",m); m.clear();
     lights::performance_snapshot(m); metrics_line("scene_cache",m);
     metrics_line("audio",audio_sample());
+    metrics_line("owners",owner_sample());
+    m.clear();jni::performance_snapshot(m);metrics_line("jni_owners",m);
+    const auto registry=save_io::diagnostic_registry_counts();
+    LOGI("[perf] io_registry valid=%d descriptor_records=%llu stream_records=%llu (overlapping registry records, not OS handle counts)",
+         registry.valid,(unsigned long long)registry.descriptors,(unsigned long long)registry.streams);
+    auto frame_line=[&](const char* kind,const FrameRecord& record) {
+        const auto& f=record.frame;
+        LOGI("[perf] %s frame=%llu scene=%llu age_ms=%.3f loop_ms=%.3f work_ms=%.3f game_render_ms=%.3f swap_ms=%.3f sleep_ms=%.3f spin_ms=%.3f",
+             kind,(unsigned long long)record.serial,(unsigned long long)record.scene,
+             record.when_ns<=now?double(now-record.when_ns)/1e6:0,double(f.loop_ns)/1e6,
+             double(f.work_ns)/1e6,double(f.game_render_ns)/1e6,double(f.swap_ns)/1e6,double(f.sleep_ns)/1e6,double(f.spin_ns)/1e6);
+    };
+    for(size_t i=0;i<hitches.slow_count();++i)frame_line("hitch",hitches.slow(i));
+    if(hitches.dropped())LOGI("[perf] hitch_omitted=%llu (worst 16 retained, threshold 50ms)",(unsigned long long)hitches.dropped());
+    hitches.reset_slow();
+    if(manual_capture) {
+        LOGI("[perf] history_begin retained=%zu max_frames=180; manual marker, no PCM or GPU timing",hitches.recent_count());
+        for(size_t i=0;i<hitches.recent_count();++i)frame_line("history",hitches.recent(i));
+        LOGI("[perf] history_end");manual_capture=false;
+    }
     auto events = take_events();
     for (const auto& e : events.entries)
         LOGI("[perf] event type=%s label=%s age_ms=%.1f",e.type.c_str(),e.label.c_str(),e.when_ns<=now?double(now-e.when_ns)/1e6:0);
@@ -103,12 +128,24 @@ void runtime_frame(Frame f,uint32_t flags,int cap,bool ff,bool accelerated) {
     effective_cap=cap;fast_forward=ff;turbo=accelerated;
     auto now=now_ns();
     if(!last_time) {
-        LOGI("[perf] enabled version=2 interval_seconds=%u max_frames=4096 max_cache_scan=4096 max_threads=64; CPU 100%%=one logical core; bytes are not MiB; no GPU timing/VRAM claim; --fps override see startup log", interval_seconds);
+        LOGI("[perf] enabled version=3 interval_seconds=%u max_frames=4096 max_cache_scan=4096 max_threads=64 history_frames=180 hitch_threshold_ms=50 max_hitches=16 F3=manual-marker; CPU 100%%=one logical core; bytes are not MiB; no GPU timing/VRAM claim; --fps override see startup log", interval_seconds);
         safe_report(now,false);
         return;  // baseline excludes this first frame, which precedes the baseline sample
     }
     frames.add(f);
-    if(now-last_time>=uint64_t(interval_seconds)*1000000000ull)safe_report(now,false);
+    hitches.add({++frame_serial,now,scene_serial(),f});
+    manual_capture=take_capture_request() || manual_capture;
+    if(now-last_time>=uint64_t(interval_seconds)*1000000000ull || (manual_capture && now-last_time>=1000000000ull))safe_report(now,false);
 }
-void runtime_finish() { if(enabled() && !failed && last_time)safe_report(now_ns(),true); }
+void runtime_finish() {
+    if(enabled() && !failed && last_time) {
+        manual_capture=take_capture_request() || manual_capture;
+        safe_report(now_ns(),true);
+    }
+}
+double runtime_worst_ms() {
+    uint64_t worst=0;
+    for(size_t i=0;i<hitches.recent_count();++i)worst=std::max(worst,hitches.recent(i).frame.loop_ns);
+    return double(worst)/1e6;
+}
 }  // namespace perf

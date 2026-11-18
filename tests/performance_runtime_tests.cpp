@@ -9,6 +9,7 @@
 #include "config.h"
 #include "settings.h"
 #include "log.h"
+#include "save_io.h"
 #include <SDL.h>
 #include <cstdarg>
 #include <cstdio>
@@ -43,6 +44,8 @@ namespace mem { void performance_snapshot(perf::Metrics& out){out.push_back({"he
 namespace texpack { void performance_snapshot(perf::Metrics& out){out.push_back({"replacement_bytes_scanned",1024});} }
 namespace lights { void performance_snapshot(perf::Metrics& out){out.push_back({"cached_nodes",5});} }
 namespace settings { int get_int(const std::string&,int fallback){return fallback;} }
+namespace jni { void performance_snapshot(perf::Metrics& out){out.push_back({"reference_slots",2});} }
+namespace save_io { RegistryCounts diagnostic_registry_counts(){return {0,0,true};} }
 int main() {
     try {
         perf::runtime_frame({},0,60,false,false);perf::runtime_finish();require(logs.empty(),"disabled reporter has no side effects");
@@ -57,9 +60,13 @@ int main() {
         require(contains("lighting_images=2") && contains("sampler_elapsed_ms="),"cache adapter and sampler cost");
         require(contains("interval_seconds=10") && !perf::runtime_interval(1),"interval logged and fixed after baseline");
         size_t baseline=logs.size();
-        perf::runtime_frame({16000000,2000000,1000000,500000,12000000,1500000},SDL_WINDOW_MINIMIZED,30,false,false);
+        perf::runtime_frame({60000000,2000000,1000000,500000,12000000,1500000},SDL_WINDOW_MINIMIZED,30,false,false);
         require(logs.size()==baseline,"long interval does not report on each frame");
+        require(perf::runtime_worst_ms()==60,"diagnostic HUD exposes recent worst frame");
+        perf::event("mark","synthetic-noticed-issue");
         perf::runtime_finish();
+        require(contains("hitch frame=") && contains("history_begin") && contains("history_end"),"slow frames and marker history emitted");
+        require(contains("java_object_live=") && contains("reference_slots=2") && contains("io_registry"),"owner adapters exposed");
         require(contains("final=1") && contains("minimized=1") && contains("limiter_spin=1.500"),"final partial interval and phase measurements");
         fail_adapter=true;perf::runtime_finish();
         require(contains("sampler stopped after diagnostic failure"),"sampler failure does not escape into gameplay");

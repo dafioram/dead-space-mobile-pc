@@ -579,6 +579,9 @@ int main(int argc, char** argv) {
         }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            if(performance && e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_F3 && !e.key.repeat) {
+                perf::event("mark","F3-noticed-issue");continue;
+            }
             if (performance && e.type == SDL_WINDOWEVENT) {
                 const char* state = nullptr;
                 switch (e.window.event) {
@@ -734,7 +737,8 @@ int main(int argc, char** argv) {
             }
             if (settings::get_int("show_fps", 0) && fps > 0) {
                 char txt[32];
-                std::snprintf(txt, sizeof txt, "%d FPS", int(fps + 0.5f));
+                if(performance)std::snprintf(txt,sizeof txt,"%d FPS | worst %.1f ms",int(fps+0.5f),perf::runtime_worst_ms());
+                else std::snprintf(txt, sizeof txt, "%d FPS", int(fps + 0.5f));
                 float px = std::max(2.0f, float(g_config.screen_h / 360));
                 float tw = float(std::strlen(txt)) * 6 * px, x = (g_config.screen_w - tw) * 0.5f, y = 3 * px;
                 hle::overlay_rect(x - 2 * px, y - 2 * px, tw + 3 * px, 11 * px, 0x00000090u);

@@ -486,6 +486,11 @@ void set_profile_root(const Path& root) {
     if (ec) profile_root = fs::absolute(root).lexically_normal();
 }
 int open(const Path& path, int flags, int mode) { return open_impl(path, flags, mode); }
+RegistryCounts diagnostic_registry_counts() {
+    std::unique_lock lock(registry_mutex,std::try_to_lock);
+    if(!lock.owns_lock())return {};
+    return {entries.size(),streams.size(),true};
+}
 int close(int fd) {
     auto entry = lookup(fd);
     if (!entry) return os_close(fd);

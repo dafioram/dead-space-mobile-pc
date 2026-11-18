@@ -1,5 +1,39 @@
 # CPU and memory diagnostics (opt-in, not an optimization)
 
+## Detailed portable playthrough capture
+
+The extended diagnostic branch adds bounded audio cadence/backpressure histograms,
+pre/post-write PCM queue ranges with format-derived duration, instrumented ownership
+counters, and a process-local Windows handle-type helper. It does not change the
+audio queue limit, timers/cleanup, gameplay, renderer, cache policy or save rules.
+`tools/playthrough/START-HERE.txt` describes the portable setup and measurements.
+
+With diagnostics enabled, F3 reserves a manual issue marker and dumps up to 180
+recent completed frame phase records at the next eligible report (at most once per
+second). Reports also retain the worst 16 frames >=50 ms since the previous report;
+other threshold crossings are counted. The FPS overlay, if enabled in Graphics,
+adds the worst frame in that recent history. This is not GPU timing and does not
+identify a function or sound event. Manual dumps themselves incur logging cost.
+
+Windows `handle-census.exe` uses process-local `ProcessHandleInformation`, not a
+system handle scan. The external watcher invokes it approximately every 30 seconds
+for only its own child's PID and exact creation time. It duplicates a bounded set
+of representative handles into the helper solely to query object **types**, checks
+the duplicate's type index against the captured bucket to detect reuse, and closes
+its own copies. It never queries object names, requests debug privileges, changes
+target handles, suspends/terminates a process or captures game memory. Unsupported
+queries produce explicit invalid/error rows, not a zero-handle or leak claim. The
+helper's own handle table is queried only to verify those duplicates' type indexes.
+
+Owner gauges count host wrapper objects/references, not necessarily one kernel
+handle each. JNI and I/O registry snapshots use try-lock and explicitly report
+unavailable/busy data. Timer observations do not close the existing raw per-thread
+timer: the purpose is to identify that retention without changing the experiment.
+Queue times exclude hardware/backend latency. Histograms are fixed-size and log
+disjoint upper-bound ranges, not exact percentile samples. No PCM is collected.
+
+## Original reporting and interpretation
+
 Start with `--perf` to add bounded `[perf]` reports to the normal private game log.
 For a full playthrough, `--perf-interval 10` enables the same reporting every ten
 seconds (accepted intervals: 1, 5, 10, 30 or 60 seconds). Frame/event storage remains

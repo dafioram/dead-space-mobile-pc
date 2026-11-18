@@ -8,12 +8,15 @@
 #include <map>
 #include <stdexcept>
 #ifdef TEST_REAL_JAVA_ADAPTER
+#define SDL_MAIN_HANDLED
+#include <SDL.h>
 #include "config.h"
 #include "game_patches.h"
 #include "host_file.h"
 #include <chrono>
 #include <fstream>
 Config g_config;
+namespace jni {void audio_open(int,int,int);}
 std::atomic<bool> g_quit{false};
 namespace patches {std::shared_ptr<const std::vector<u8>> asset(const std::string&){return {};}}
 #endif
@@ -56,6 +59,8 @@ void java_adapter_cases() {
     auto manager=jni::make("android/content/res/AssetManager");auto name=jni::new_local(jni::make_string("\xe8\xb5\x84\xe4\xba\xa7/input.bin"));
     auto stream=jni::get(java_call(36,manager,"open","(Ljava/lang/String;)Ljava/io/InputStream;",{jni::JValue::L(name)}));
     require(stream && api(228,{jni::env()})==0,"real Java asset adapter opens synthetic Unicode asset");
+    auto owner_metric=[](const char* name){for(auto m:perf::owner_sample())if(std::string(m.name)==name)return m.value;return uint64_t(-1);};
+    require(owner_metric("asset_file_live")==1,"real asset file ownership observed");
     auto array=jni::make_array('B',8);auto ref=jni::new_local(array);std::fill_n(mem::host(array->data),8,u8(0x44));
     auto read=[&](int start,int count){return java_call(51,stream,"read","([BII)I",{jni::JValue::L(ref),jni::JValue::I(start),jni::JValue::I(count)});};
     require(read(-1,3)==UINT32_MAX,"asset read rejects negative offset");exception("java/lang/IndexOutOfBoundsException");
@@ -66,7 +71,16 @@ void java_adapter_cases() {
     auto audio=[&](int start,int count){return s32(java_call(51,track,"write","([BII)I",{jni::JValue::L(ref),jni::JValue::I(start),jni::JValue::I(count)}));};
     require(audio(-1,4)==-2 && audio(7,2)==-2 && audio(0,-1)==-2,"real audio adapter returns BAD_VALUE before queue/pacing on invalid extents");
     require(audio(8,0)==0,"valid empty audio write");
+    SDL_setenv("SDL_AUDIODRIVER","dummy",1);
+    require(SDL_InitSubSystem(SDL_INIT_AUDIO)==0,"synthetic dummy audio subsystem");
+    jni::audio_open(44100,2,2048);
+    require(audio(0,8)==8,"valid synthetic PCM still queues through the production adapter");
+    auto observed=perf::audio_sample();
+    auto metric=[&](const char* name){for(auto m:observed)if(std::string(m.name)==name)return m.value;return uint64_t(-1);};
+    require(metric("window_writes")==1 && metric("window_write_bytes")==8 && metric("rate_hz")==44100,"actual audio adapter metadata observed");
+    SDL_QuitSubSystem(SDL_INIT_AUDIO);
     java_call(63,stream,"close","()V",{}); // CallVoidMethodA
+    require(owner_metric("asset_file_live")==0,"real asset file close observed");
     fs::remove_all(root);
 }
 #endif
@@ -157,6 +171,7 @@ std::string g_assets_dir,g_data_dir;
 }
 namespace logging {bool g_verbose=false;void write(char,const char*,...) {}}
 int main(){try{
+    perf::enable();
     require(mem::init(),"synthetic guest address reservation");stack=mem::heap_alloc(256);
     hle::register_libc();allocation_cases();jni_cases();
     std::cout<<"Allocation and JNI adapter boundary tests passed; no game/guest instructions/JIT executed\n";return 0;

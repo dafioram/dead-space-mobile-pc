@@ -69,6 +69,7 @@ jref add_ref(const ObjPtr& o, u8 kind) {
         g_refs.push_back(o);
         g_ref_kind.push_back(kind);
     }
+    if(perf::enabled())perf::acquired(kind==1?perf::Owner::local_ref:perf::Owner::global_ref);
     return (idx + 1) << 2 | kind;
 }
 }  // namespace
@@ -101,6 +102,7 @@ void delete_ref(jref r) {
     std::lock_guard lk(g_lock);
     u32 idx = (r >> 2) - 1;
     if (idx >= g_refs.size() || !g_refs[idx]) return;
+    if(perf::enabled())perf::released(g_ref_kind[idx]==1?perf::Owner::local_ref:perf::Owner::global_ref);
     g_refs[idx].reset();
     g_ref_kind[idx] = 0;
     g_ref_free.push_back(idx);
@@ -189,6 +191,16 @@ void def_superclass(const std::string& cls, const std::string& super) { g_super[
 
 u32 env() { return g_env; }
 u32 vm() { return g_vm; }
+
+void performance_snapshot(perf::Metrics& out) {
+    std::unique_lock lock(g_lock,std::try_to_lock);
+    if(!lock.owns_lock()){out.push_back({"snapshot_busy",1});return;}
+    out.push_back({"snapshot_busy",0});
+    out.insert(out.end(),{{"reference_slots",g_refs.size()},{"reference_capacity_bytes",g_refs.capacity()*sizeof(ObjPtr)},
+        {"free_reference_slots",g_ref_free.size()},{"class_cache_entries",g_classes.size()},
+        {"method_entries",g_methods.size()},{"field_entries",g_fields.size()},
+        {"registered_native_entries",g_registered.size()}});
+}
 
 // ---------------------------------------------------------------- signatures
 namespace {

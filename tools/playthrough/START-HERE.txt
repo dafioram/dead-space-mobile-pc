@@ -1,4 +1,4 @@
-LOW-END PC PLAYTHROUGH / CRASH AND MEMORY DIAGNOSTICS
+DETAILED LOW-END PC PLAYTHROUGH / HANDLES, AUDIO, HITCHES AND MEMORY
 
 1. Extract the entire kit into a NEW writable folder on the low-end PC.
    Do not replace an installed EXE. Windows x86-64; no admin/Python needed.
@@ -10,14 +10,20 @@ LOW-END PC PLAYTHROUGH / CRASH AND MEMORY DIAGNOSTICS
    every game closed, COPY your complete existing userdata folder here before
    first launch. Do not move it or copy isolated .sb/.bak files. Keep the source.
    Progress/settings in this kit persist across launches. There is NO --no-save.
+   To continue the previous playthrough, COPY that kit's whole userdata here with
+   the game closed. Keep both EXEs (deadspace.exe and handle-census.exe) together.
 4. Double-click Run-Playthrough.cmd. Leave its window open while playing.
    Select your usual renderer and quality in Graphics; nothing selects Native
    or downgrades graphics automatically. Launch resolution is 1280x720, cap 60.
    MSAA/VSync/quality use your test profile settings. Native preparation stays
    optimized; HLE dispatch and frame pacing use current main's implementations.
-5. Play normally. No stress test or special route is required. At a convenient
-   pause you can open the backtick console and type /perf mark chapter_2 etc.
-   Automatic level/world events are already logged. Close console to continue.
+5. Play normally. Press F3 just after noticing a stutter or delayed footstep.
+   It records a manual marker and up to 180 recent completed frames (about 3s
+   at 60 FPS). It may cause a short diagnostic logging pause of its own.
+   F3 is reserved for marking while this launcher's diagnostics are enabled.
+   You can also use the backtick console: /perf mark audio_lag or chapter_2 etc.
+   Show FPS in Graphics now adds the worst time of the recent 180 frames in ms.
+   Automatic level/world events remain logged. Close the console to continue.
 6. If something fails, note chapter/location, last action, renderer, and whether
    it was a crash, freeze, or visual/audio issue. If frozen, wait briefly for
    memory samples, then decide yourself how to close it. The watcher never kills
@@ -25,12 +31,46 @@ LOW-END PC PLAYTHROUGH / CRASH AND MEMORY DIAGNOSTICS
 7. Each launch writes a NEW reports/playthrough-* folder. Keep the entire folder:
      deadspace.log             in-game metrics every 10s, level/world events
      process-memory.csv        external process memory/handles/threads every 5s
+     handle-types.csv          process-only handle type census about every 30s
      session.json              EXE identity, arguments, PID, times, exit code
      console.log, stderr.log, bootstrap-stderr.log
      crash.dmp                 best-effort minidump if the crash handler runs
    Empty stderr logs are normal. No dump is expected after normal exit. Forced
    termination, severe memory exhaustion and some driver failures may not dump.
    A freeze stops in-game sampling, but the external CSV can continue.
+
+SUGGESTED SHORT TEST (you operate the game)
+Continue into the mines with your usual Native settings. Stand still briefly,
+walk/jog on the hard rock surface, then stop and listen. Press F3 when lag or a
+hitch is noticeable, and write a short note of what you were doing. A normal
+level transition is useful if convenient; do not force a crash or repeat the
+whole campaign just for this test. A short Legacy comparison is optional.
+
+WHAT IS NEW
+- Each report retains up to 16 worst frames exceeding 50ms, including their own
+  game/render, swap and limiter times. Omitted hitches are counted, not hidden.
+- Audio reports include requested/obtained device details, driver, pre/post-write
+  queue ranges in bytes and microseconds, write gaps and backpressure wait buckets.
+  Buckets are disjoint ranges (le2ms means above 1ms and at most 2ms, etc.).
+  The first observed write gap is zero. No PCM or sound contents are recorded.
+- Owners include wait timers, timers surviving their creating thread's exit,
+  diagnostic thread-query handles, JNI objects/references, asset files and guest
+  mutex/condition/semaphore wrappers. Snapshots of JNI and I/O registries can be
+  skipped if busy, and are explicitly marked; these do not pause waiting on locks.
+- The separate helper reads only the launched PID after verifying its creation
+  time. It queries handle TYPES, never object names, and cannot suspend/terminate
+  the game. It needs no administrator elevation. If the Windows query fails,
+  the CSV records valid=0/error, the session counts failures and gameplay continues.
+  Keep handle-census-errors.log too if present. The helper is not a system trace.
+- OS handle totals/types and port object counts are different overlapping views.
+  Only instrumented owners have exact create/release counts; an unattributed
+  Event or Semaphore is not automatically a driver leak. Census snapshots are
+  not complete create/close histories, and numeric handles can be reused.
+- The existing raw wait-timer cleanup policy is deliberately unchanged. A zero
+  wait_timer_closed counter is an observation, not a new cleanup mechanism.
+- Queue duration is only queued PCM, NOT event-to-speaker latency. It excludes
+  unknown backend/hardware buffering and does not identify footstep triggers.
+  Zero underruns do not prove low latency. Audio buffer limits are unchanged.
 
 Send report folders PRIVATELY, including normal runs. Dumps can contain game
 memory/personal paths; do not post them to public issues. Do not include gamedata

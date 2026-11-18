@@ -8,6 +8,12 @@ std::atomic<bool> active{false};
 namespace {
 std::atomic<uint64_t> jit_count{0}, jit_bytes{0};
 std::atomic<uint64_t> audio_queue{0}, audio_threshold{0}, audio_underruns{0}, audio_writes{0};
+std::array<std::atomic<uint64_t>, size_t(Owner::count)> owner_created{}, owner_closed{}, owner_live{};
+std::atomic<unsigned> audio_rate{0}, audio_channels{0}, audio_sample_bytes{0}, audio_device_frames{0};
+std::mutex audio_lock;
+AudioWindow audio_window;
+std::atomic<uint64_t> scene{0};
+std::atomic<bool> capture_request{false};
 std::mutex event_lock;
 std::vector<Event> events;
 uint64_t events_dropped = 0;
@@ -81,13 +87,113 @@ void audio_observe(uint64_t queued, uint64_t threshold, uint64_t underruns) {
     audio_writes.fetch_add(1, std::memory_order_relaxed);
 }
 Metrics audio_sample() {
-    return {{"audio_queue_last_write_bytes", audio_queue.load(std::memory_order_relaxed)},
+    Metrics result{{"audio_queue_last_write_bytes", audio_queue.load(std::memory_order_relaxed)},
             {"audio_backpressure_threshold_bytes", audio_threshold.load(std::memory_order_relaxed)},
             {"audio_underruns", audio_underruns.load(std::memory_order_relaxed)},
             {"audio_observed_writes", audio_writes.load(std::memory_order_relaxed)}};
+    AudioWindow window;
+    { std::lock_guard lock(audio_lock); window=audio_window; audio_window=AudioWindow{}; }
+    auto values=window.metrics();
+    result.insert(result.end(),values.begin(),values.end());
+    const uint64_t bytes_per_second=uint64_t(audio_rate.load())*audio_channels.load()*audio_sample_bytes.load();
+    result.insert(result.end(),{{"rate_hz",audio_rate.load()},{"channels",audio_channels.load()},
+        {"bytes_per_sample",audio_sample_bytes.load()},{"device_buffer_frames",audio_device_frames.load()}});
+    const auto writes=std::find_if(values.begin(),values.end(),[](auto m){return std::string(m.name)=="window_writes";});
+    result.push_back({"queue_duration_valid",bytes_per_second && writes!=values.end() && writes->value});
+    for (auto name : {"queue_before_min_bytes","queue_before_max_bytes","queue_after_min_bytes","queue_after_max_bytes"}) {
+        for (auto m:values) if(std::string(m.name)==name) {
+            const char* unit=std::string(name)=="queue_before_min_bytes"?"queue_before_min_us":
+                std::string(name)=="queue_before_max_bytes"?"queue_before_max_us":
+                std::string(name)=="queue_after_min_bytes"?"queue_after_min_us":"queue_after_max_us";
+            result.push_back({unit,bytes_per_second?m.value*1000000/bytes_per_second:0});
+        }
+    }
+    return result;
 }
+void acquired(Owner owner) noexcept {
+    if(!enabled())return;
+    const auto i=size_t(owner);
+    owner_created[i].fetch_add(1,std::memory_order_relaxed);
+    owner_live[i].fetch_add(1,std::memory_order_relaxed);
+}
+void released(Owner owner) noexcept {
+    if(!enabled())return;
+    const auto i=size_t(owner);
+    owner_closed[i].fetch_add(1,std::memory_order_relaxed);
+    owner_live[i].fetch_sub(1,std::memory_order_relaxed);
+}
+Metrics owner_sample() {
+    static const char* names[][3] = {
+        {"wait_timer_created","wait_timer_closed","wait_timer_live"},
+        {"exited_thread_timer_observed","exited_thread_timer_released","exited_thread_timer_retained"},
+        {"asset_file_opened","asset_file_closed","asset_file_live"},
+        {"mutex_created","mutex_destroyed","mutex_live"},
+        {"condition_created","condition_destroyed","condition_live"},
+        {"semaphore_created","semaphore_destroyed","semaphore_live"},
+        {"java_object_created","java_object_destroyed","java_object_live"},
+        {"local_ref_created","local_ref_deleted","local_ref_live"},
+        {"global_ref_created","global_ref_deleted","global_ref_live"},
+        {"diagnostic_thread_handle_created","diagnostic_thread_handle_closed","diagnostic_thread_handle_live"}};
+    Metrics result;
+    for(size_t i=0;i<size_t(Owner::count);++i) {
+        result.push_back({names[i][0],owner_created[i].load()});
+        result.push_back({names[i][1],owner_closed[i].load()});
+        result.push_back({names[i][2],owner_live[i].load()});
+    }
+    return result;
+}
+void AudioWindow::add(AudioWrite w) {
+    ++writes_; bytes_+=w.write_bytes;
+    before_min_=std::min(before_min_,w.before_bytes);before_max_=std::max(before_max_,w.before_bytes);
+    after_min_=std::min(after_min_,w.after_bytes);after_max_=std::max(after_max_,w.after_bytes);
+    gap_sum_+=w.gap_ns;gap_max_=std::max(gap_max_,w.gap_ns);
+    wait_sum_+=w.wait_ns;wait_max_=std::max(wait_max_,w.wait_ns);
+    auto bucket=[](uint64_t ns) {
+        const uint64_t upper[]={1000000,2000000,5000000,10000000,20000000,50000000,100000000};
+        size_t i=0;while(i<7 && ns>upper[i])++i;return i;
+    };
+    ++gaps_[bucket(w.gap_ns)];++waits_[bucket(w.wait_ns)];
+}
+Metrics AudioWindow::metrics() const {
+    Metrics result{{"window_writes",writes_},{"window_write_bytes",bytes_},
+        {"queue_before_min_bytes",writes_?before_min_:0},{"queue_before_max_bytes",before_max_},
+        {"queue_after_min_bytes",writes_?after_min_:0},{"queue_after_max_bytes",after_max_},
+        {"write_gap_mean_us",writes_?gap_sum_/writes_/1000:0},{"write_gap_max_us",gap_max_/1000},
+        {"backpressure_mean_us",writes_?wait_sum_/writes_/1000:0},{"backpressure_max_us",wait_max_/1000}};
+    static const char* gap_names[]={"gap_le1ms","gap_le2ms","gap_le5ms","gap_le10ms","gap_le20ms","gap_le50ms","gap_le100ms","gap_gt100ms"};
+    static const char* wait_names[]={"wait_le1ms","wait_le2ms","wait_le5ms","wait_le10ms","wait_le20ms","wait_le50ms","wait_le100ms","wait_gt100ms"};
+    for(size_t i=0;i<8;++i){result.push_back({gap_names[i],gaps_[i]});result.push_back({wait_names[i],waits_[i]});}
+    return result;
+}
+void audio_configure(unsigned rate,unsigned channels,unsigned bytes,unsigned device_frames) {
+    if(!enabled())return;
+    audio_rate=rate;audio_channels=channels;audio_sample_bytes=bytes;audio_device_frames=device_frames;
+}
+void audio_write(AudioWrite write) {
+    if(!enabled())return;
+    std::lock_guard lock(audio_lock);audio_window.add(write);
+}
+void HitchWindow::add(FrameRecord record) {
+    recent_[total_%capacity]=record;++total_;
+    if(record.frame.loop_ns<50000000)return;
+    if(slow_count_==slow_capacity){
+        ++dropped_;
+        auto smallest=std::min_element(slow_.begin(),slow_.end(),[](const auto& a,const auto& b){return a.frame.loop_ns<b.frame.loop_ns;});
+        if(record.frame.loop_ns>smallest->frame.loop_ns)*smallest=record;
+        return;
+    }
+    slow_[slow_count_++]=record;
+}
+const FrameRecord& HitchWindow::recent(size_t index) const {
+    const auto first=total_>capacity?total_-capacity:0;
+    return recent_[(first+index)%capacity];
+}
+uint64_t scene_serial(){return scene.load(std::memory_order_relaxed);}
+bool take_capture_request(){return capture_request.exchange(false);}
 void event(const std::string& type, const std::string& text) {
     if (!enabled()) return;
+    if(type=="load-level")scene.fetch_add(1,std::memory_order_relaxed);
+    if(type=="mark")capture_request.store(true);
     std::lock_guard lock(event_lock);
     if (events.size() >= 32) { ++events_dropped; return; }
     events.push_back({label(type), label(text), now_ns()});

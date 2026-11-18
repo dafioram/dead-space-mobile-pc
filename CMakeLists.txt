@@ -20,6 +20,13 @@ if (WIN32)
     target_link_libraries(performance_diagnostics PUBLIC psapi)
 endif()
 
+if (WIN32)
+    add_executable(handle_census tools/handle_census.cpp)
+    target_include_directories(handle_census PRIVATE src)
+    set_target_properties(handle_census PROPERTIES OUTPUT_NAME "handle-census")
+    target_link_options(handle_census PRIVATE -static)
+endif()
+
 if (BUILD_TESTING)
     if (DEADSPACE_BUILD_APP)
         find_package(SDL2 REQUIRED)  # host Java adapter tests, no SDL/game initialization

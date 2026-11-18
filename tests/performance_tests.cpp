@@ -58,6 +58,33 @@ void allocator() {
     for(auto& t:workers)t.join();
     require(metric(memory(),"heap_live_blocks")==0 && metric(memory(),"heap_counter_errors")==0,"concurrent allocator counters balance");
 }
+void detailed_observers() {
+    auto before=metric(perf::owner_sample(),"asset_file_live");
+    { perf::OwnedResource file(perf::Owner::asset_file);
+      require(metric(perf::owner_sample(),"asset_file_live")==before+1,"owned resource acquisition"); }
+    require(metric(perf::owner_sample(),"asset_file_live")==before,"owned resource lifetime balanced");
+    perf::AudioWindow audio;
+    audio.add({22528,24576,2048,10000000,2000000});
+    audio.add({20000,22048,2048,120000000,0});
+    const auto values=audio.metrics();
+    require(metric(values,"window_writes")==2 && metric(values,"queue_before_min_bytes")==20000,"audio bounded queue range");
+    require(metric(values,"gap_le10ms")==1 && metric(values,"gap_gt100ms")==1 && metric(values,"backpressure_mean_us")==1000,"audio cadence and wait buckets");
+    perf::audio_configure(44100,2,2,1024);
+    perf::audio_write({24576,26624,2048,11000000,2000000});
+    auto sample=perf::audio_sample();
+    require(metric(sample,"queue_after_max_us")==150929 && metric(sample,"device_buffer_frames")==1024,"PCM queue duration is format-derived, not end-to-end latency");
+    require(metric(perf::audio_sample(),"window_writes")==0,"interval audio histogram resets");
+    perf::HitchWindow history;
+    for(uint64_t i=1;i<=200;++i)history.add({i,i*1000000,3,{i==190?100000000ull:i==200?200000000ull:16000000ull}});
+    require(history.recent_count()==180 && history.recent(0).serial==21 && history.recent(179).serial==200,"bounded ordered frame history");
+    require(history.slow_count()==2,"hitch threshold");
+    for(uint64_t i=0;i<40;++i)history.add({201+i,0,3,{50000000+i*1000000}});
+    require(history.slow_count()==16 && history.dropped()==26,"bounded worst-hitch retention");
+    uint64_t worst=0;
+    for(size_t i=0;i<history.slow_count();++i)worst=std::max(worst,history.slow(i).frame.loop_ns);
+    require(worst==200000000,"overflow preserves worst observed hitch");
+    history.reset_slow();require(history.slow_count()==0 && history.recent_count()==180,"draining hitches preserves rolling history");
+}
 }
 int main() {
     try {
@@ -66,6 +93,7 @@ int main() {
         require(perf::command("/perf").find("disabled")!=std::string::npos,"startup opt-in required");
         frames();
         perf::enable();
+        detailed_observers();
         perf::AllocationGauge gauge;gauge.add(32);gauge.add(64);gauge.remove(32);
         require(gauge.bytes==64 && gauge.blocks==1 && gauge.peak_bytes==96,"allocation gauge");
         gauge.remove(100);require(gauge.errors==1 && gauge.bytes==64,"underflow is diagnostic only");

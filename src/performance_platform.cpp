@@ -82,6 +82,7 @@ void thread_enter() {
 #ifdef _WIN32
     HANDLE h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, DWORD(id));
     if (!h) { ++dropped; return; }
+    acquired(Owner::thread_query);
     threads.push_back({id, ++generation, h});
 #else
     clockid_t clock;
@@ -96,7 +97,7 @@ void thread_leave() {
     auto it = std::find_if(threads.begin(), threads.end(), [&](auto e) { return e.id == id; });
     if (it == threads.end()) return;
 #ifdef _WIN32
-    CloseHandle(it->handle);
+    if(CloseHandle(it->handle))released(Owner::thread_query);
 #endif
     threads.erase(it);
 }

@@ -1,4 +1,5 @@
 #include "hle/timing.h"
+#include "performance.h"
 
 #include <mutex>
 #include <thread>
@@ -81,6 +82,16 @@ void sleep_ns(int64_t ns) {
     // high-resolution waitable timer (Windows 10 1803+), falling back to Sleep
     thread_local HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
                                                        TIMER_ALL_ACCESS);
+    // Observe the existing raw timer's lifetime, without adding a CloseHandle
+    // or otherwise changing the timer/cleanup policy being investigated.
+    struct TimerObservation {
+        bool counted;
+        explicit TimerObservation(HANDLE handle) : counted(handle && perf::enabled()) {
+            if(counted)perf::acquired(perf::Owner::wait_timer);
+        }
+        ~TimerObservation() { if(counted)perf::acquired(perf::Owner::retired_thread_timer); }
+    };
+    thread_local TimerObservation observation(timer);
     if (timer) {
         LARGE_INTEGER due;
         due.QuadPart = -(ns / 100);  // relative, 100 ns units

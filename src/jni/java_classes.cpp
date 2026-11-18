@@ -31,6 +31,7 @@ ObjPtr g_asset_manager;
 // An open asset: either a file or a patched in-memory copy (see game_patches.cpp).
 struct AssetStream {
     std::FILE* f = nullptr;
+    bool counted_file = false;
     std::shared_ptr<const std::vector<u8>> mem;
     size_t pos = 0;
     bool open() const { return f || mem; }
@@ -56,6 +57,7 @@ struct AssetStream {
     }
     void close() {
         if (f) std::fclose(f);
+        if (counted_file) { perf::released(perf::Owner::asset_file); counted_file=false; }
         f = nullptr;
         mem.reset();
     }
@@ -99,6 +101,11 @@ void audio_open(int rate, int channels, int buffer_frames) {
     // allow ~3 game buffers of latency before write() blocks
     g_audio.max_queued = u32(std::max(buffer_frames, 1024) * channels * 2 * 3);
     LOGI("audio: %d Hz, %d ch, game buffer %d frames", rate, channels, buffer_frames);
+    if (perf::enabled()) {
+        perf::audio_configure(unsigned(have.freq),have.channels,SDL_AUDIO_BITSIZE(have.format)/8,have.samples);
+        LOGI("[perf] audio_device driver=%s obtained_rate=%d channels=%u format=0x%x device_frames=%u queue_policy_bytes=%u; queue duration excludes backend/hardware latency",
+             SDL_GetCurrentAudioDriver(),have.freq,unsigned(have.channels),unsigned(have.format),unsigned(have.samples),g_audio.max_queued);
+    }
 }
 
 ObjPtr activity() { return g_activity; }
@@ -129,6 +136,7 @@ void register_java_classes() {
         auto st = std::make_shared<AssetStream>();
         st->mem = patches::asset(name);
         if (!st->mem) st->f = assets::open_file(asset_path(name));
+        if (st->f && perf::enabled()) { perf::acquired(perf::Owner::asset_file);st->counted_file=true; }
         if (!st->mem && !st->f) LOGW("missing asset %s", name.c_str());
         else LOGD("AssetManager.open(%s) -> %s", name.c_str(), st->mem ? "patched" : "ok");
         if (!st->open()) {
@@ -335,11 +343,21 @@ void register_java_classes() {
         static u64 last_return = 0, busy = 0, writes = 0, underruns = 0;
         u64 t_in = SDL_GetPerformanceCounter();
         if (last_return) busy += t_in - last_return;
-        if (SDL_GetQueuedAudioSize(g_audio.dev) == 0 && writes > 10) underruns++;
+        const u32 queued_before=SDL_GetQueuedAudioSize(g_audio.dev);
+        if (queued_before == 0 && writes > 10) underruns++;
+        const auto wait_start=perf::stamp();
+        thread_local uint64_t previous_write=0;
+        const auto gap=previous_write && wait_start?wait_start-previous_write:0;
+        if(perf::enabled())previous_write=wait_start;
         while (SDL_GetQueuedAudioSize(g_audio.dev) > g_audio.max_queued && !g_quit)
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        const auto wait_end=perf::stamp();
         SDL_QueueAudio(g_audio.dev, mem::host(address), bytes);
-        if(perf::enabled())perf::audio_observe(SDL_GetQueuedAudioSize(g_audio.dev),g_audio.max_queued,underruns);
+        if(perf::enabled()) {
+            const auto after=SDL_GetQueuedAudioSize(g_audio.dev);
+            perf::audio_observe(after,g_audio.max_queued,underruns);
+            perf::audio_write({queued_before,after,bytes,gap,wait_end-wait_start});
+        }
         if (++writes % 1000 == 0) {
             LOGI("audio: %llu underruns so far, game mixes a %u-sample buffer in %.2f ms on average",
                  (unsigned long long)underruns, n, busy * 1000.0 / SDL_GetPerformanceFrequency() / 1000);
