@@ -78,6 +78,22 @@ class ReleaseTests(unittest.TestCase):
             if sys.platform != "win32":
                 self.assertTrue(mode & stat.S_IXUSR)
 
+    def test_rendering_guides_round_trip_without_allowing_other_docs(self):
+        self.populate()
+        (self.stage / "docs").mkdir()
+        names = ("RENDERING.md", "NATIVE_PREPARATION.md")
+        for name in names:
+            (self.stage / "docs" / name).write_text("synthetic rendering guide", encoding="utf-8")
+        self.checksums()
+        archive = release.package(self.stage, self.root / "out", "windows-x86_64", self.commit, self.tag)
+        with zipfile.ZipFile(archive) as z:
+            for name in names:
+                self.assertIn(archive.stem + "/docs/" + name, z.namelist())
+        (self.stage / "docs" / "unrelated.md").write_text("not allowlisted", encoding="utf-8")
+        self.checksums()
+        with self.assertRaises(ValueError):
+            release.verify_stage(self.stage, "windows-x86_64", self.commit, self.tag)
+
     def test_wrong_provenance_and_modified_binary_rejected(self):
         self.populate()
         for commit, tag in (("2" * 40, self.tag), (self.commit, "v1.2")):

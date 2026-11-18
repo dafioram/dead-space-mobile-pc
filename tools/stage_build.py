@@ -52,7 +52,7 @@ def main():
     debug_guide = root / "docs" / "debug_menu.md"
     if debug_guide.exists():
         files[debug_guide] = "docs/debug_menu.md"
-    for name in ("APK_IMPORT.md", "ANDROID_ASSET_SUPPORT.md"):
+    for name in ("APK_IMPORT.md", "ANDROID_ASSET_SUPPORT.md", "RENDERING.md", "NATIVE_PREPARATION.md"):
         guide = root / "docs" / name
         if guide.exists():
             files[guide] = "docs/" + name
