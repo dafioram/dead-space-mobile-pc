@@ -1,10 +1,12 @@
 # Android APK / asset compatibility inventory
 
-Status: inventory plus **scoped original-layout importer implementation**, awaiting
-user acceptance. See [APK import and isolated tests](APK_IMPORT.md) for current
+Status: **scoped original-layout importer implementation merged into main**;
+the inventoried A–D copies passed subsequent user-led gameplay checks. This does
+not establish exhaustive save compatibility or support for other packages.
+See [APK import and isolated tests](APK_IMPORT.md) for current
 commands, safety policy and runtime-test boundaries. The survey sections below
 record the earlier read-only comparisons; they are not claims of playtesting.
-Maintained on `feat/android-asset-support`, based on production main `9ede69c`.
+The original implementation was based on production main `9ede69c`.
 Five supplied Android APKs have now been assessed. A–D are direct ARM32 packages
 with identical assets. **E (Reanimated 1.3) adds an ARM64 host/JIT wrapper around
 the same ARM32 game core, a nested stock asset layout and a separate HD texture
@@ -23,7 +25,7 @@ interactive gameplay/persistence testing is reserved for the user.
 | ID / label | Reported version / package | Game-core architecture | Assets | Native library | Assessment |
 | --- | --- | --- | --- | --- | --- |
 | A | 1.2.0 / 1200; `com.eamobile.deadspace_full_azn` | ELF32 ARM (`EM_ARM=40`), `lib/armeabi/libDeadSpace.so` | Group A, 1,731 files; identical to installed baseline | Library A; identical to installed baseline | Existing baseline data/layout, not an additional asset-support target |
-| B | 1.2.0 / 1200; same package | ELF32 ARM (`EM_ARM=40`), same path; no ARM64 library found | Group A; all 1,731 files match APK A by SHA-256 | Library B; same layout/symbols, nine changed bytes in CPU detection | Same asset support; native-library variant is a static-layout-compatible candidate, **not independently runtime-tested** |
+| B | 1.2.0 / 1200; same package | ELF32 ARM (`EM_ARM=40`), same path; no ARM64 library found | Group A; all 1,731 files match APK A by SHA-256 | Library B; same layout/symbols, nine changed bytes in CPU detection | Same asset support; recognized native-library variant subsequently passed user-led gameplay checks |
 | C | 1.2.0 / 1200; same package | ELF32 ARM (`EM_ARM=40`), same path; no ARM64 library found | Group A; all 1,731 files match APK A by SHA-256 | Library A; identical to installed baseline | Same game-core/asset support as baseline; Android Java/manifest/resource changes are separate from PC runtime support |
 | D — Remastered | 1.2.0 / 1200; same package | ELF32 ARM (`EM_ARM=40`), same path; scan of all ZIP members found no other ELF header | Group A; all 1,731 files match APK A by SHA-256 | Library A; identical to installed baseline | Same game core/assets; Android frontend changes, **not an ARM64 core or remastered game-asset variant** |
 | E — Reanimated | 1.3 / 13; `com.deadspace.reanimated` | ELF64 AArch64 host (`EM_AARCH64=183`) plus ELF32 ARM guest | Nested group-A stock subset (1,729 identical files; two INIs absent), plus 222 HD KTX textures and splash images | Guest library A at `assets/game/libDeadSpace32.so`; new ARM64 host `lib/arm64-v8a/libdsr.so` | Genuine ARM64 Android host + additional HD pack; **current PC importer/PNG texture-pack path does not directly support this packaging** |
@@ -108,8 +110,10 @@ binary, who changed it or why.
 All bytes outside that span match. No broad rebuild, symbol-address shift, new
 game architecture or new asset collection was found. This is encouraging for the
 existing fixed-address hook profile, but CPU capability selection is executable
-behavior: a compatible layout is **not** a completed runtime/audio validation of
-library B. Neither library is replaced or patched by this survey.
+behavior: a compatible layout alone is **not** runtime/audio validation of
+library B. Subsequent user-led gameplay checks of B passed; they do not turn
+the original static survey into exhaustive runtime coverage. Neither library is
+replaced or patched by this survey.
 
 APK B also differs in signing records (`META-INF/CERT.RSA`, `CERT.SF`,
 `MANIFEST.MF`). Signatures/certificates were not authenticated in this quick pass.

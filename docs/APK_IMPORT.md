@@ -8,9 +8,11 @@ All interactive playtesting is user-led.
 
 The exact supplied A–D packages use `lib/armeabi/libDeadSpace.so` and identical
 stock assets. A/C/D contain the installed baseline core; B contains the recognized
-CPU-detection variant. Extraction/static identity is **not** an independent
-gameplay/audio/save-reload pass for each package. In particular B needs user audio
-confirmation. See [the inventory](ANDROID_ASSET_SUPPORT.md) for exact identities.
+CPU-detection variant. User-led gameplay checks of these A–D copies subsequently
+passed, including the B case. This is scoped acceptance of the tested copies,
+not exhaustive save/reload coverage or compatibility with every APK. Extraction
+and static identity alone do not establish gameplay compatibility.
+See [the inventory](ANDROID_ASSET_SUPPORT.md) for exact identities.
 
 Import candidates, in preference order:
 

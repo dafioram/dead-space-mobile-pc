@@ -97,6 +97,15 @@ class StagingTests(unittest.TestCase):
             self.stage()
         self.assertFalse(self.output.exists())
 
+    def test_rendering_guides_are_allowlisted_without_other_docs(self):
+        for name in ("RENDERING.md", "NATIVE_PREPARATION.md"):
+            (self.root / "docs" / name).write_text("synthetic rendering guide", encoding="utf-8")
+        (self.root / "docs" / "unrelated.md").write_text("not allowlisted", encoding="utf-8")
+        self.stage()
+        for name in ("RENDERING.md", "NATIVE_PREPARATION.md"):
+            self.assertTrue((self.output / "docs" / name).is_file())
+        self.assertFalse((self.output / "docs" / "unrelated.md").exists())
+
     def test_renamed_guest_code_is_rejected(self):
         (self.build / "deadspace").write_bytes(b"dex\n035\0synthetic")
         with self.assertRaises(SystemExit) as result:

@@ -49,7 +49,8 @@ def verify_stage(stage, platform, commit, tag):
     if not required <= paths.keys() or not any(n.startswith("licenses/") for n in paths):
         raise ValueError("incomplete release staging")
     # Older release tags do not contain these explicitly allowlisted guides.
-    optional_docs = {"docs/debug_menu.md", "docs/APK_IMPORT.md", "docs/ANDROID_ASSET_SUPPORT.md", "docs/PERFORMANCE_DIAGNOSTICS.md"}
+    optional_docs = {"docs/debug_menu.md", "docs/APK_IMPORT.md", "docs/ANDROID_ASSET_SUPPORT.md",
+                     "docs/RENDERING.md", "docs/NATIVE_PREPARATION.md", "docs/PERFORMANCE_DIAGNOSTICS.md"}
     if any(n not in required | optional_docs and not n.startswith("licenses/") for n in paths):
         raise ValueError("unexpected file outside the release allowlist")
     info = paths["BUILD_INFO.txt"].read_text(encoding="utf-8").splitlines()
