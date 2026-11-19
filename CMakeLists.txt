@@ -59,6 +59,7 @@ add_executable(deadspace
     src/devmode.cpp
     src/objects.cpp
     src/interact.cpp
+    src/ammo_pickup.cpp
     src/lights.cpp
     src/texpack.cpp
     src/debugview.cpp

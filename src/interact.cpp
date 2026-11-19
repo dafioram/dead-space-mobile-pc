@@ -1,4 +1,5 @@
 #include "interact.h"
+#include "ammo_pickup.h"
 #include "interaction_geometry.h"
 
 #include <algorithm>
@@ -106,6 +107,7 @@ struct Cand {
     Box lz;
     bool usable, kinesis, overlap;
     float score;
+    pickup::Eligibility ammo = pickup::Eligibility::unknown;
 };
 
 std::string fmt(const char* f, ...) {
@@ -137,7 +139,7 @@ bool send_use(u32 obj) {
     return cpu::call(mem::r32(mem::r32(obj) + 8), {obj, g_evbuf}) & 0xff;
 }
 
-std::vector<Cand> gather(const View& v, u32 world, bool report) {
+std::vector<Cand> gather(const View& v, u32 world, u32 player_object, bool report) {
     std::vector<Cand> out;
     Zone player{v, {{-kHalfWidth, kBottom, -kBack}, {kHalfWidth, kTop, kReach}}};
     for (u32 o : objs::world_objects(world)) {
@@ -166,6 +168,8 @@ std::vector<Cand> gather(const View& v, u32 world, bool report) {
             found = true;
         }
         if (!found) continue;
+        if (c.usable && c.overlap && c.cls == "GameObjectPickup")
+            c.ammo = pickup::ammo_eligibility(o, player_object);
         out.push_back(c);
     }
     std::sort(out.begin(), out.end(), [](const Cand& a, const Cand& b) { return a.score < b.score; });
@@ -174,8 +178,7 @@ std::vector<Cand> gather(const View& v, u32 world, bool report) {
 
 const Cand* pick(const std::vector<Cand>& cands, const View& v, bool& kinesis) {
     kinesis = false;
-    for (auto& c : cands)
-        if (c.usable && c.overlap) return &c;
+    if (const auto* candidate = pickup::reachable(cands)) return candidate;
     // kinesis: zone centre inside the cone along the line of sight
     const Cand* best = nullptr;
     float best_cos = kKinesisCos;
@@ -205,7 +208,9 @@ void report_all(const std::vector<Cand>& cands, const View& v) {
         emit(true, fmt("  %08x %-26s usable=%d kinesis=%d in-hitbox=%d score=%.2f local x %.2f..%.2f y %.2f..%.2f z "
                        "%.2f..%.2f",
                        c.obj, c.cls.c_str(), c.usable, c.kinesis, c.overlap, c.score, c.lz.lo.x, c.lz.hi.x, c.lz.lo.y,
-                       c.lz.hi.y, c.lz.lo.z, c.lz.hi.z));
+                        c.lz.hi.y, c.lz.lo.z, c.lz.hi.z));
+        if (c.ammo != pickup::Eligibility::unknown)
+            emit(true, c.ammo == pickup::Eligibility::blocked ? "    ammo capacity: blocked" : "    ammo capacity: accepts at least part");
     }
 }
 
@@ -214,7 +219,7 @@ void report_all(const std::vector<Cand>& cands, const View& v) {
 bool use(u32 player, u32 world, float look_yaw, bool report) {
     if (!player || !world) return false;
     View v = view_of(player, look_yaw);
-    auto cands = gather(v, world, report);
+    auto cands = gather(v, world, player, report);
     if (report) report_all(cands, v);
     bool kin;
     const Cand* c = pick(cands, v, kin);
@@ -243,7 +248,7 @@ void draw_box(u32 world, const Vec3 c[8], unsigned rgba) {
 void draw_debug(u32 player, u32 world, float look_yaw) {
     if (!player || !world) return;
     View v = view_of(player, look_yaw);
-    auto cands = gather(v, world, false);
+    auto cands = gather(v, world, player, false);
     bool kin;
     const Cand* best = pick(cands, v, kin);
     for (auto& c : cands) {
@@ -268,7 +273,7 @@ void draw_debug(u32 player, u32 world, float look_yaw) {
 std::string pick_name(u32 player, u32 world, float look_yaw) {
     if (!player || !world) return "";
     View v = view_of(player, look_yaw);
-    auto cands = gather(v, world, false);
+    auto cands = gather(v, world, player, false);
     bool kin;
     const Cand* c = pick(cands, v, kin);
     return c ? fmt("%s %08x", c->cls.c_str(), c->obj) : "";
@@ -357,7 +362,7 @@ std::string preview(u32 player, u32 world, float look_yaw) {
     if (!player || !world) return "no player";
     report_encounters(player, world);
     View v = view_of(player, look_yaw);
-    auto cands = gather(v, world, true);
+    auto cands = gather(v, world, player, true);
     report_all(cands, v);
     bool kin;
     const Cand* c = pick(cands, v, kin);
