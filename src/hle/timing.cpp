@@ -6,6 +6,7 @@
 #include <thread>
 
 #ifdef _WIN32
+#include "log.h"
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
@@ -28,6 +29,7 @@ struct WindowsTimer {
     static void close(Handle timer) {
         if (CloseHandle(timer)) perf::released(perf::Owner::wait_timer);
         else {
+            LOGW("timing: thread wait timer close failed (Windows error %lu)", GetLastError());
             perf::timer_error(perf::TimerError::close, GetLastError());
             perf::acquired(perf::Owner::retired_thread_timer);
         }
@@ -112,8 +114,8 @@ void sleep_ns(int64_t ns) {
         return;
     }
 #ifdef _WIN32
-    // Same high-resolution one-shot timer, reuse, rounding and Sleep fallback.
-    // Normal thread exit now releases this thread's handle; no cross-thread sweep.
+    // Same high-resolution one-shot timer and fallback, owned by its sleeping thread.
+    // Reuse until normal thread exit; no cross-thread cleanup of active waits.
     thread_local detail::ThreadTimer<WindowsTimer> timer;
     if (timer.wait(ns)) return;
     Sleep(DWORD((ns + 999999) / 1000000));
