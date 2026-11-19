@@ -19,6 +19,7 @@
 #include "cli_help.h"
 #include "cli_arguments.h"
 #include "performance_runtime.h"
+#include "attribution.h"
 #include "config.h"
 #include "crash.h"
 #include "settings.h"
@@ -222,6 +223,8 @@ int main(int argc, char** argv) {
     std::string assets, lib, data, logfile, shot_dir, apk_path, dev_dir, game_dir;
     bool file_option_error = false;
     bool performance = false;
+    std::string detail_mode = "sampled";
+    bool geometry_capture = false;
     std::string crash_dir;
     std::vector<u64> shot_frames;
     int fps_arg = -1;  // --fps N overrides the Frame Rate Limit setting
@@ -253,6 +256,14 @@ int main(int argc, char** argv) {
             }
         }
         else if (a == "--perf") performance = true;
+        else if (a == "--perf-detail") {
+            detail_mode = next();
+            if(detail_mode!="off" && detail_mode!="sampled" && detail_mode!="full") {
+                std::fputs("--perf-detail requires off, sampled or full\n",stderr);return 2;
+            }
+            performance = true;
+        }
+        else if (a == "--perf-geometry") { geometry_capture=true;performance=true; }
         else if (a == "--perf-interval") {
             const std::string seconds = next();
             if (seconds != "1" && seconds != "5" && seconds != "10" && seconds != "30" && seconds != "60") {
@@ -352,6 +363,7 @@ int main(int argc, char** argv) {
     LOGI("native CPU prep: mode=%s (Native renderer only; no cross-draw geometry caching)",
          optimized_native_prep ? "optimized" : "reference");
     if(performance) {
+        attribution::configure(detail_mode,geometry_capture);
         perf::enable();
         LOGI("[perf] startup opt-in cap_override=%d (-1=use setting); no cache flushing or pacing changes",fps_arg);
     }
@@ -572,6 +584,7 @@ int main(int argc, char** argv) {
     while (!g_quit) {
         const auto perf_start=perf::stamp();
         perf::stages_begin(perf_start);
+        if(performance)attribution::frame_begin();
         uint64_t perf_sleep=0,perf_spin=0;
         SDL_GL_GetDrawableSize(win, &win_w, &win_h);
         run_script(frames + 1);
@@ -810,6 +823,7 @@ int main(int argc, char** argv) {
             perf::Frame frame{end-perf_start,perf_swap_start-perf_start,perf_game_end-perf_game_start,
                               perf_swap_end-perf_swap_start,perf_sleep,perf_spin};
             frame.stages=perf::stages_finish(end);
+            attribution::frame_end();
             frame.between_ns=previous_end ? perf_start-previous_end : 0;
             frame.start_interval_ns=previous_start ? perf_start-previous_start : 0;
             frame.swap_call_interval_ns=previous_swap ? perf_swap_start-previous_swap : 0;

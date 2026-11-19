@@ -51,11 +51,12 @@ def main():
         assert str(kit / "userdata") in console and "synthetic-no-game-executed" in console, console
         assert str(first) in console and "--no-save" not in console
         assert "--perf-interval\n10" in console
+        assert "--perf-detail\nsampled" in console and "--perf-geometry" not in console
         # A new run must keep previous evidence and persistent fixture progress.
         evidence = (first / "console.log").read_bytes()
         (game / "exit-code.txt").write_text("17")
         (game / "hold-ms.txt").write_text("0")
-        result = subprocess.run(command, capture_output=True, timeout=30)
+        result = subprocess.run(command + ["-DetailMode", "off", "-Geometry"], capture_output=True, timeout=30)
         assert result.returncode == 17, result.stdout + result.stderr
         assert (first / "console.log").read_bytes() == evidence
         runs = list((kit / "reports").iterdir())
@@ -63,6 +64,8 @@ def main():
         second = next(path for path in runs if path != first)
         metadata = json.loads((second / "session.json").read_text(encoding="utf-8-sig"))
         assert metadata["exit_code"] == 17 and metadata["exit_hex"] == "0x00000011", metadata
+        assert "--perf-geometry" in metadata["arguments"]
+        assert metadata["arguments"][metadata["arguments"].index("--perf-detail")+1] == "off"
         assert (kit / "userdata/synthetic-progress.txt").read_text().splitlines() == ["fixture-run"] * 2
     print("watcher Unicode/quoting, samples, persistent profile, new reports and failure exit passed; no game executed")
 

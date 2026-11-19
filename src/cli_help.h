@@ -47,6 +47,10 @@ Logging:
                              Default: beside executable. Use a fresh directory.
   --perf                    Opt-in CPU/frame/memory/cache diagnostics, once/second.
   --perf-interval SECONDS   Enable reports every 1, 5, 10, 30 or 60 seconds (default 1).
+  --perf-detail MODE        off, sampled (default: HLE 1/16 frames), or full.
+                              Fixture detail covers all frames; top HLE lists bounded.
+  --perf-geometry           Optional bounded draw metadata/anomaly history on F3.
+                              No images/assets dumped and no geometry suppressed.
                              F3 marks an issue and captures 180 recent frame records.
                              /perf mark LABEL annotates the private log. No dumps,
                              cache flushing, gameplay changes or GPU timing claims.

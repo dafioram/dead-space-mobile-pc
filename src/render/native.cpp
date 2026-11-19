@@ -1,4 +1,5 @@
 #include "render/native.h"
+#include "attribution.h"
 #include "host_file.h"
 #include "render/vertex_prep.h"
 
@@ -1983,6 +1984,7 @@ const GoboInfo& gobo_info(GLuint tex, float u0, float v0, float u1, float v1) {
 
 void fan_floor(u32 n) {
     perf::StageScope stage(perf::Stage::fixtures);
+    attribution::Scope detail(attribution::fan_analysis);
     if (n != 4 || !g_arr[A_TEX0].enabled || !g_st.unit[0].tex) return;
     Mat4 world = g_view_inv * g_mv.top();
     const float* tm = g_tex[0].top().m;
@@ -2048,6 +2050,7 @@ std::unordered_map<GLuint, std::array<u8, 256>> g_lamp_masks;  // per texture: w
 // be read back from the graphics card later (a read-back stalls the frame it happens in).
 void texture_pixels_impl(GLuint tex, const u8* rgba, int w, int h) {
     perf::StageScope stage(perf::Stage::fixtures);
+    attribution::Scope detail(attribution::texture_copy);
     if (!tex || w < 1 || h < 1 || w > 4096 || h > 4096) return;
     TexImage ti;
     const int sx = std::max(1, w / 256), sy = std::max(1, h / 256);
@@ -2060,6 +2063,7 @@ void texture_pixels_impl(GLuint tex, const u8* rgba, int w, int h) {
 }
 
 const TexImage& tex_image(GLuint tex) {
+    attribution::Scope detail(attribution::texture_lookup);
     auto it = g_tex_images.find(tex);
     if (it != g_tex_images.end()) return it->second;
     TexImage ti;
@@ -2071,7 +2075,8 @@ const TexImage& tex_image(GLuint tex) {
     if (w >= 1 && h >= 1 && w <= 4096 && h <= 4096) {
         std::vector<u8> full(size_t(w) * size_t(h) * 4);
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, full.data());
+        { attribution::Scope readback(attribution::texture_readback);
+          glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, full.data()); }
         if (glGetError() == GL_NO_ERROR) {
             int sx = std::max(1, w / 256), sy = std::max(1, h / 256);
             ti.w = w / sx, ti.h = h / sy;
@@ -2094,6 +2099,7 @@ u32 g_pglow_ms = 0;
 #define GLOW_REJ(why) do { static int k_ = 0; if (g_shadow_debug && (k_++ % 300) < 2) LOGI("glow rejected (%s): %u verts tex %u col %.2f %.2f %.2f", why, n, g_st.unit[0].tex, g_st.color[0], g_st.color[1], g_st.color[2]); } while (0)
 void glow(u32 n) {
     perf::StageScope stage(perf::Stage::fixtures);
+    attribution::Scope detail(attribution::glow_analysis);
     if (n < 4 || n > 240 || g_glows.size() >= 24 || g_idx.size() < 3) return;
     const float* m = g_mv.top().m;
     // eye-space centre and reach
@@ -2268,6 +2274,7 @@ void glow_frame_end() {
 
 void beacon(u32 lo, u32 n) {
     perf::StageScope stage(perf::Stage::fixtures);
+    attribution::Scope detail(attribution::beacon_analysis);
     if (n < 12 || n > 600) return;
     Mat4 world = g_view_inv * g_mv.top();
     static std::vector<float> v;
@@ -2525,6 +2532,8 @@ void lamp_scan(u32 lo, u32 n) {
     // when it is drawn again; entering a room would otherwise stall on all its meshes at once)
     if (g_ms_scan > 2.5) return;
     perf::StageScope stage(perf::Stage::fixtures);
+    attribution::fixture_work(mesh_key,n,uint32_t(g_idx.size()/3));
+    attribution::Scope detail(attribution::fixture_scan);
     StopWatch sw(g_ms_scan);
     g_lamp_done[key] = 1;
     const TexImage& ti = tex_image(g_st.unit[0].tex);
@@ -2534,6 +2543,7 @@ void lamp_scan(u32 lo, u32 n) {
     auto& masks = g_lamp_masks;
     auto mi = masks.find(g_st.unit[0].tex);
     if (mi == masks.end()) {
+        attribution::Scope detail(attribution::texture_mask);
         std::array<u8, 256> mk{};
         bool any = false;
         for (int y = 0; y < ti.h; y++)
@@ -2551,6 +2561,8 @@ void lamp_scan(u32 lo, u32 n) {
     const bool vc = g_arr[A_COLOR].enabled;
     std::vector<Lamp> found;  // this mesh's bright patches
     double mesh_area = 0, bright_area = 0;
+    {
+    attribution::Scope detail(attribution::mesh_sampling);
     for (size_t t = 0; t + 2 < g_idx.size(); t += 3) {
         u32 id[3] = {g_idx[t], g_idx[t + 1], g_idx[t + 2]};
         if (id[0] >= n || id[1] >= n || id[2] >= n) continue;
@@ -2616,12 +2628,14 @@ void lamp_scan(u32 lo, u32 n) {
                     hit->n += wa;
                 }
     }
+    }
     // A mesh where much of the surface is bright is a white wall or floor, not a row of lamps.
     if (bright_area > 0.2 * mesh_area) {
         if (g_shadow_debug) LOGI("lamps: mesh of %u vertices is a bright surface (%.1f of %.1f m2): no lamps taken from it", n, bright_area, mesh_area);
         return;
     }
     int taken = 0;
+    attribution::Scope merge_detail(attribution::fixture_merge);
     for (const Lamp& f : found) {
         if (f.n < kLampMinArea || f.n > kLampMaxArea) continue;
         // (one fixture can span two meshes: joined with what is already known there)
@@ -2712,6 +2726,7 @@ size_t g_solid_count() {
 // scene is drawn into it as the game draws the frame, so walls, props and characters block the light.
 void setup_frame_lights() {
     perf::StageScope stage(perf::Stage::fixtures);
+    attribution::Scope detail(attribution::light_setup);
     g_ntiles = 0;
     if (g_lights <= 0) return;
     beacon_lights();
@@ -2829,6 +2844,7 @@ bool box_in_reach(const float* lo, const float* hi, const float* p, float reach)
 // surroundings are open (or unknown) all round.
 bool open_direction(const float* pos, float out[3]) {
     perf::StageScope stage(perf::Stage::fixtures);
+    attribution::Scope detail(attribution::open_direction);
     StopWatch sw(g_ms_open);
     g_n_open++;
     const float kReach = 3.0f;
@@ -3601,6 +3617,14 @@ void draw_elements(GLenum mode, int count, GLenum type, const void* indices) {
     if (hi - lo + 1 > 65535) return;  // (never seen; would need 32-bit indices)
     for (auto& i : g_idx) i = u16(i - lo);
     build_vertices(lo, hi - lo + 1);
+    if(attribution::geometry_enabled()) {
+        attribution::Draw d;
+        const auto source=reinterpret_cast<uintptr_t>(g_arr[A_VERTEX].data),base=reinterpret_cast<uintptr_t>(mem::g_base);
+        d.source=source>=base && source-base<=UINT32_MAX?u32(source-base):0;
+        d.mode=mode;d.count=unsigned(count);d.lo=lo;d.hi=hi;
+        const Mat4 transform=g_view_inv*g_mv.top();std::copy_n(transform.m,16,d.transform.begin());
+        attribution::geometry_draw(d,g_verts.data(),hi-lo+1,kStride,g_idx.data(),g_idx.size());
+    }
     // see-through meshes that are really solid objects (hanging cables) are drawn solid
     bool made_solid = false;
     if (g_shadow_debug && g_st.blend && hi - lo + 1 == 159) {

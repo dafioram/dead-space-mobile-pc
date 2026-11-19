@@ -57,6 +57,7 @@ class HelpTests(unittest.TestCase):
 
     def test_invalid_report_options_exit_before_startup(self):
         for arguments in (("--perf-interval",), ("--perf-interval", "0"),
+                          ("--perf-detail",), ("--perf-detail", "bogus"),
                           ("--perf-interval", "10x"), ("--perf-interval", "9999999999999999999"),
                           ("--crash-dir",), ("--crash-dir", "not-an-existing-directory")):
             with self.subTest(arguments=arguments), tempfile.TemporaryDirectory(prefix="deadspace-report-cli-") as directory:

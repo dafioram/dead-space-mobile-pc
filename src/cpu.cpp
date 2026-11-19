@@ -1,4 +1,5 @@
 #include "cpu.h"
+#include "attribution.h"
 
 #include <atomic>
 #include <cstdio>
@@ -140,6 +141,7 @@ public:
                      mem::r32(r[13]), mem::r32(r[13] + 4), mem::r32(r[13] + 8), mem::r32(r[13] + 12));
             }
         }
+        attribution::Scope detail(attribution::hle_base + std::min<uint32_t>(swi, attribution::hle_capacity));
         fn(c);
     }
 
@@ -232,7 +234,10 @@ u32 call_v(u32 fn, const u32* args, int nargs, u32* r1_out) {
     TState& t = t_state;
     if (!t.attached) thread_attach();
     int d = t.depth;
-    if (int(t.cpus.size()) <= d) t.cpus.emplace_back(std::make_unique<Cpu>(d == 0 ? (64u << 20) : (16u << 20)));
+    if (int(t.cpus.size()) <= d) {
+        attribution::Scope detail(attribution::jit_setup);
+        t.cpus.emplace_back(std::make_unique<Cpu>(d == 0 ? (64u << 20) : (16u << 20)));
+    }
     Cpu* c = t.cpus[d].get();
 
     u32 sp = d == 0 ? t.info.stack_base + t.info.stack_size : t.cpus[d - 1]->jit->Regs()[13];
@@ -251,7 +256,8 @@ u32 call_v(u32 fn, const u32* args, int nargs, u32* r1_out) {
 
     t.depth++;
     c->running = true;
-    while (c->running) c->jit->Run();
+    { attribution::Scope detail(attribution::guest_run);
+      while (c->running) c->jit->Run(); }
     t.depth--;
     if (r1_out) *r1_out = R[1];
     return R[0];
@@ -282,6 +288,7 @@ u32 register_hle(const std::string& name, HleFn fn) {
         std::abort();
     }
     g_hle.push_back({name, fn});
+    attribution::register_hle(idx,name);
     write_stub(idx);
     return mem::STUB_BASE + idx * 8;
 }

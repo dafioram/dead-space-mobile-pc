@@ -1,6 +1,6 @@
 # User-run only. Observes only the process it launches; never kills or suspends it.
 [CmdletBinding()]
-param()
+param([ValidateSet('off','sampled','full')][string]$DetailMode='sampled',[switch]$Geometry)
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
@@ -50,6 +50,8 @@ try {
         '--width', '1280', '--height', '720', '--fps', '60',
         '--native-prep', 'optimized', '--perf-interval', '10',
         '--crash-dir', $run, '--log', (Join-Path $run 'deadspace.log'))
+    $arguments += @('--perf-detail', $DetailMode)
+    if ($Geometry) { $arguments += '--perf-geometry' }
     $commandLine = ($arguments | ForEach-Object { Quote-Argument $_ }) -join ' '
     $metadata = [ordered]@{
         version = 2; start_utc = [DateTime]::UtcNow.ToString('o'); exe = $exe
@@ -63,7 +65,7 @@ try {
         handle_helper_sha256 = (Get-FileHash -LiteralPath $censusExe -Algorithm SHA256).Hash
     }
     $metadata | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $run 'session.json') -Encoding UTF8
-    Write-Host 'LOW-END FRAME-STAGE DIAGNOSTICS: persistent test progress; scoped thread-timer cleanup.'
+    Write-Host "LOW-END ATTRIBUTION DIAGNOSTICS: detail=$DetailMode geometry=$Geometry; persistent test profile."
     Write-Host "Profile: $profile"
     Write-Host "Reports: $run"
     Write-Host 'Leave this window open. Choose graphics/renderer in-game. Quit normally yourself.'

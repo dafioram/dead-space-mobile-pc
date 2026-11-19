@@ -1,4 +1,5 @@
 #include "performance_runtime.h"
+#include "attribution.h"
 #include "memory.h"
 #include "render/native.h"
 #include "hle/gles.h"
@@ -138,6 +139,7 @@ void report(uint64_t now, bool final) {
     for(size_t i=0;i<hitches.slow_count();++i)frame_line("hitch",hitches.slow(i));
     if(hitches.dropped())LOGI("[perf] hitch_omitted=%llu (worst 16 retained, threshold 50ms)",(unsigned long long)hitches.dropped());
     hitches.reset_slow();
+    attribution::report(manual_capture);
     if(manual_capture) {
         LOGI("[perf] history_begin retained=%zu max_frames=180; manual marker, no PCM or GPU timing",hitches.recent_count());
         for(size_t i=0;i<hitches.recent_count();++i)frame_line("history",hitches.recent(i));
@@ -170,7 +172,7 @@ void runtime_frame(Frame f,uint32_t flags,int cap,bool ff,bool accelerated) {
     effective_cap=cap;fast_forward=ff;turbo=accelerated;
     auto now=now_ns();
     if(!last_time) {
-        LOGI("[perf] enabled version=4 interval_seconds=%u max_frames=4096 max_cache_scan=4096 max_threads=64 history_frames=180 hitch_threshold_ms=50 max_hitches=16 F3=manual-marker; exclusive main-thread stages; exact still-scene counts; thread-exit timer close enabled even without --perf; CPU 100%%=one logical core; bytes are not MiB; no GPU timing/VRAM claim; --fps override see startup log", interval_seconds);
+        LOGI("[perf] enabled version=5 interval_seconds=%u max_frames=4096 max_cache_scan=4096 max_threads=64 history_frames=180 hitch_threshold_ms=50 max_hitches=16 F3=manual-marker; exclusive main-thread stages plus bounded detail attribution; exact still-scene counts; thread-exit timer close enabled even without --perf; CPU 100%%=one logical core; bytes are not MiB; no GPU timing/VRAM claim; --fps override see startup log", interval_seconds);
         safe_report(now,false);
         return;  // baseline excludes this first frame, which precedes the baseline sample
     }

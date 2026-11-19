@@ -1,4 +1,11 @@
-WINDOWS LOW-END DIAGNOSTICS / FRAME STAGES, TIMER CLEANUP AND OWNERSHIP
+WINDOWS LOW-END DIAGNOSTICS / FIXTURE AND GUEST-HLE ATTRIBUTION
+
+NEW: Run-Playthrough.cmd enables bounded fixture detail and HLE sampling.
+Run-Attribution-Off.cmd keeps old diagnostics but disables the new detail layer.
+Run-Full-Attribution.cmd profiles HLE every frame (short repro; higher overhead).
+Run-Geometry.cmd optionally captures bounded draw metadata on F3. No images or
+game assets are dumped; no geometry is hidden. All use this kit's own userdata.
+Read docs/LOW_END_ATTRIBUTION.md for bounds, timing meaning and overhead A/B steps.
 
 1. Extract the entire kit into a NEW writable folder on the low-end PC.
    Do not replace an installed EXE. Windows x86-64; no admin/Python needed.
