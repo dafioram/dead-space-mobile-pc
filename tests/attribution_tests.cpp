@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -62,9 +63,13 @@ int main(int argc,char** argv){try{
         attribution::Draw d;d.mode=4;d.count=3;d.source=42;d.transform={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
         for(int i=0;i<600;++i)attribution::geometry_draw(d,vertices,3,3,indices,3);
         indices[2]=9;attribution::geometry_draw(d,vertices,3,3,indices,3);
+        indices[2]=2;vertices[3]=std::numeric_limits<float>::infinity();
+        attribution::geometry_draw(d,vertices,3,3,indices,3);vertices[3]=100;
+        for(int i=0;i<2000;++i)attribution::geometry_draw(d,vertices,3,3,indices,3);
         attribution::frame_end();
         for(int i=0;i<10;++i)attribution::report(true);
         require(contains("flags=4") && contains("flags=2") && contains("geometry_end"),"long-edge/index suspects reported, not suppressed");
+        require(contains("flags=1") && contains("vertices_checked=0"),"nonfinite evidence retained and exhausted scan budget explicit");
         unsigned dumps=0;for(auto& l:logs)if(l.find("geometry_begin")!=std::string::npos)++dumps;
         require(dumps==8,"geometry dump count bounded");
     }else attribution::report(false);

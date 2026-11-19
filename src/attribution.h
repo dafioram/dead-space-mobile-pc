@@ -44,8 +44,8 @@ private:
 };
 // Metadata only: no source vertex/index/texture payload is retained or dumped.
 struct Draw {
-    uint64_t serial=0,scene=0;
-    uint32_t source=0,mode=0,count=0,lo=0,hi=0,flags=0,vertices_checked=0,triangles_checked=0;
+    uint64_t serial=0,scene=0,source_id=0;
+    uint32_t source=0,texture=0,mode=0,count=0,lo=0,hi=0,flags=0,vertices_checked=0,triangles_checked=0;
     std::array<float,16> transform{};
     std::array<float,3> local_lo{},local_hi{},world_lo{},world_hi{};
     float max_edge=0;
