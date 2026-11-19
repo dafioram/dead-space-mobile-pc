@@ -1,9 +1,11 @@
 #include "hle/timing.h"
+#include "hle/thread_timer.h"
 
 #include <mutex>
 #include <thread>
 
 #ifdef _WIN32
+#include "log.h"
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
@@ -13,6 +15,26 @@
 namespace timing {
 
 namespace {
+#ifdef _WIN32
+struct WindowsTimer {
+    using Handle = HANDLE;
+    static Handle create() {
+        return CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    }
+    static void close(Handle timer) {
+        if (!CloseHandle(timer)) LOGW("timing: thread wait timer close failed (Windows error %lu)", GetLastError());
+    }
+    static bool wait(Handle timer, int64_t ns) {
+        LARGE_INTEGER due;
+        due.QuadPart = -(ns / 100);  // relative, 100 ns units
+        if (due.QuadPart == 0) due.QuadPart = -1;
+        if (!SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) return false;
+        WaitForSingleObject(timer, INFINITE);
+        // Preserve the existing return/fallback behavior, including on wait failure.
+        return true;
+    }
+};
+#endif
 struct Base {
     int64_t real_ns;
     steady::time_point steady_at;
@@ -78,18 +100,10 @@ void sleep_ns(int64_t ns) {
         return;
     }
 #ifdef _WIN32
-    // high-resolution waitable timer (Windows 10 1803+), falling back to Sleep
-    thread_local HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
-                                                       TIMER_ALL_ACCESS);
-    if (timer) {
-        LARGE_INTEGER due;
-        due.QuadPart = -(ns / 100);  // relative, 100 ns units
-        if (due.QuadPart == 0) due.QuadPart = -1;
-        if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
-            WaitForSingleObject(timer, INFINITE);
-            return;
-        }
-    }
+    // Same high-resolution one-shot timer and fallback, owned by its sleeping thread.
+    // Reuse until normal thread exit; no cross-thread cleanup of active waits.
+    thread_local detail::ThreadTimer<WindowsTimer> timer;
+    if (timer.wait(ns)) return;
     Sleep(DWORD((ns + 999999) / 1000000));
 #else
     timespec ts{time_t(ns / 1000000000), long(ns % 1000000000)};
