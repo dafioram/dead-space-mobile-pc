@@ -3621,6 +3621,8 @@ void draw_elements(GLenum mode, int count, GLenum type, const void* indices) {
         attribution::Draw d;
         const auto source=reinterpret_cast<uintptr_t>(g_arr[A_VERTEX].data),base=reinterpret_cast<uintptr_t>(mem::g_base);
         d.source=source>=base && source-base<=UINT32_MAX?u32(source-base):0;
+        d.source_id=(uint64_t(source)^(uint64_t(source)>>29))*0x9e3779b97f4a7c15ull;
+        d.texture=g_st.unit[0].tex;
         d.mode=mode;d.count=unsigned(count);d.lo=lo;d.hi=hi;
         const Mat4 transform=g_view_inv*g_mv.top();std::copy_n(transform.m,16,d.transform.begin());
         attribution::geometry_draw(d,g_verts.data(),hi-lo+1,kStride,g_idx.data(),g_idx.size());

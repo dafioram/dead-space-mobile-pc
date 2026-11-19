@@ -56,6 +56,7 @@ matched comparison. No timing is subtracted to make results look faster.
 OFF by default. With Run-Geometry.cmd press F3 promptly after a streak and note
 the enemy/explosion/action and persistence. Native draws (including dynamic bodies)
 record guest source address, mode/count/index range, model-to-world transform,
+texture ID and per-run source identity (also for host-side VBO shadow copies),
 and sampled local/world bounds AFTER guest vertex generation. No pre-skinning
 skeleton is captured, so these cannot prove deformation is responsible.
 

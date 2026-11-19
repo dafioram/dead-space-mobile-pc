@@ -41,8 +41,8 @@ uint64_t thread_cpu() {
 #endif
 }
 void draw_line(const char* kind,const Draw& d) {
-    LOGI("[detail] geometry kind=%s draw=%llu scene=%llu source=%08x mode=%x count=%u index_lo=%u index_hi=%u flags=%u vertices_checked=%u triangles_checked=%u max_edge=%.3f local_bounds=%.3f,%.3f,%.3f:%.3f,%.3f,%.3f world_bounds=%.3f,%.3f,%.3f:%.3f,%.3f,%.3f transform=%.4g,%.4g,%.4g,%.4g/%.4g,%.4g,%.4g,%.4g/%.4g,%.4g,%.4g,%.4g/%.4g,%.4g,%.4g,%.4g",
-        kind,(unsigned long long)d.serial,(unsigned long long)d.scene,d.source,d.mode,d.count,d.lo,d.hi,d.flags,d.vertices_checked,d.triangles_checked,d.max_edge,
+    LOGI("[detail] geometry kind=%s draw=%llu scene=%llu source=%08x source_id=%llx texture=%u mode=%x count=%u index_lo=%u index_hi=%u flags=%u vertices_checked=%u triangles_checked=%u max_edge=%.3f local_bounds=%.3f,%.3f,%.3f:%.3f,%.3f,%.3f world_bounds=%.3f,%.3f,%.3f:%.3f,%.3f,%.3f transform=%.4g,%.4g,%.4g,%.4g/%.4g,%.4g,%.4g,%.4g/%.4g,%.4g,%.4g,%.4g/%.4g,%.4g,%.4g,%.4g",
+        kind,(unsigned long long)d.serial,(unsigned long long)d.scene,d.source,(unsigned long long)d.source_id,d.texture,d.mode,d.count,d.lo,d.hi,d.flags,d.vertices_checked,d.triangles_checked,d.max_edge,
         d.local_lo[0],d.local_lo[1],d.local_lo[2],d.local_hi[0],d.local_hi[1],d.local_hi[2],
         d.world_lo[0],d.world_lo[1],d.world_lo[2],d.world_hi[0],d.world_hi[1],d.world_hi[2],
         d.transform[0],d.transform[1],d.transform[2],d.transform[3],d.transform[4],d.transform[5],d.transform[6],d.transform[7],
@@ -101,7 +101,8 @@ Scope::~Scope() {
 }
 bool geometry_enabled() { return geometry && perf::enabled(); }
 void fixture_work(uint64_t key,uint32_t vertices,uint32_t triangles) {
-    if(!collecting)return;fixture_key=key;fixture_vertices+=vertices;fixture_triangles+=triangles;
+    if(!collecting)return;
+    fixture_key=key;fixture_vertices+=vertices;fixture_triangles+=triangles;
 }
 void geometry_draw(Draw d,const float* vertices,uint32_t vertex_count,unsigned stride,const uint16_t* indices,size_t count) {
     if(!geometry_enabled())return;
@@ -126,9 +127,13 @@ void geometry_draw(Draw d,const float* vertices,uint32_t vertex_count,unsigned s
             if(!std::isfinite(squared))d.flags|=1;else d.max_edge=std::max(d.max_edge,std::sqrt(squared));}}
     if(d.max_edge>20)d.flags|=4; // heuristic, not a verdict; never suppress/modify a draw
     recent[recent_total++%recent.size()]=d;
-    if(d.flags){bool duplicate=false;for(size_t i=0;i<std::min<uint64_t>(suspect_total,suspects.size());++i)
-        if(suspects[i].source==d.source && suspects[i].count==d.count && suspects[i].flags==d.flags){suspects[i]=d;duplicate=true;break;}
-        if(!duplicate)suspects[suspect_total++%suspects.size()]=d;}
+    if(d.flags){
+        bool duplicate=false;
+        for(size_t i=0;i<std::min<uint64_t>(suspect_total,suspects.size());++i) {
+            if(suspects[i].source==d.source && suspects[i].source_id==d.source_id && suspects[i].texture==d.texture && suspects[i].count==d.count && suspects[i].lo==d.lo && suspects[i].flags==d.flags){suspects[i]=d;duplicate=true;break;}
+        }
+        if(!duplicate)suspects[suspect_total++%suspects.size()]=d;
+    }
     geometry_ns+=perf::now_ns()-start;
 }
 void report(bool marker) {
