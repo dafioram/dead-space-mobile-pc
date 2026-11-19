@@ -29,8 +29,9 @@ struct WindowsTimer {
     static void close(Handle timer) {
         if (CloseHandle(timer)) perf::released(perf::Owner::wait_timer);
         else {
-            LOGW("timing: thread wait timer close failed (Windows error %lu)", GetLastError());
-            perf::timer_error(perf::TimerError::close, GetLastError());
+            const auto error = GetLastError();
+            LOGW("timing: thread wait timer close failed (Windows error %lu)", error);
+            perf::timer_error(perf::TimerError::close, error);
             perf::acquired(perf::Owner::retired_thread_timer);
         }
     }
