@@ -39,6 +39,7 @@
 #include "hle/hle.h"
 #include "jni/jni.h"
 #include "log.h"
+#include "host_diagnostics.h"
 #include "host_file.h"
 #include "memory.h"
 
@@ -439,6 +440,7 @@ int main(int argc, char** argv) {
         LOGE("SDL_Init: %s", SDL_GetError());
         return 1;
     }
+    host_diagnostics::startup();
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
@@ -475,6 +477,7 @@ int main(int argc, char** argv) {
     }
     SDL_GL_SetSwapInterval(settings::get_int("vsync", 1) ? 1 : 0);
     if (performance) perf::runtime_window(win);
+    host_diagnostics::display(win);
     hle::gles_init_host();
     // the game always sees a fixed "device screen"; the frontend scales it to the window
     hle::present_init(g_config.screen_w, g_config.screen_h, settings::get_int("msaa", 4));

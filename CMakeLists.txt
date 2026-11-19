@@ -58,6 +58,7 @@ add_executable(deadspace
     src/main.cpp
     src/performance_runtime.cpp
     src/log.cpp
+    src/host_diagnostics.cpp
     src/apk.cpp
     src/apk_cli.cpp
     src/sha256.cpp

@@ -10,6 +10,7 @@
 //   HUD buttons are StringIdEvents (type 1009) such as BTN_RIG.
 // Events are queued here and delivered from the player's own update (game thread).
 #include "input.h"
+#include "host_diagnostics.h"
 
 #include "devmode.h"
 #include "interact.h"
@@ -901,8 +902,11 @@ void sync_native_input_reset() {
 
 void set_gameplay_capture(bool want) {
     if (want == g_mouse_captured) return;
-    if (!g_test) SDL_SetRelativeMouseMode(want ? SDL_TRUE : SDL_FALSE);
-    LOGI("input: gameplay controls %s", want ? "active (mouse captured)" : "released");
+    if (!g_test) {
+        const int result = SDL_SetRelativeMouseMode(want ? SDL_TRUE : SDL_FALSE);
+        host_diagnostics::mouse_capture(want, result, result < 0 ? SDL_GetError() : nullptr);
+    }
+    LOGI("input: gameplay controls %s", want ? "active (mouse capture requested)" : "released");
     u32 player = g_player, hud = g_hud;
     if (player && hud)
         LOGI("input: native ownership route=%u passthrough=%u player-state=%u freeze=%08x epoch=%u",
