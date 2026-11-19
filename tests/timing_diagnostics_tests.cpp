@@ -77,12 +77,21 @@ int main() {
         require(during_live==during_created-during_closed && during_closed==created,"live threads retain their own reusable timers");
         require(metric("wait_timer_closed")==metric("wait_timer_created") && metric("wait_timer_live")==0,"concurrent thread exits close their own timers");
         for(int i=0;i<8;++i) {
-            std::promise<void> done;auto exited=done.get_future();
-            std::thread([done=std::move(done)]() mutable {
+            // MinGW at-thread-exit futures may become ready before emulated
+            // TLS destructors. Observe actual native termination instead.
+            std::atomic<HANDLE> exited{nullptr};
+            std::thread worker([&] {
+                HANDLE handle=nullptr;
+                if(!DuplicateHandle(GetCurrentProcess(),GetCurrentThread(),GetCurrentProcess(),&handle,SYNCHRONIZE,FALSE,0))
+                    handle=INVALID_HANDLE_VALUE;
+                exited=handle;
                 timing::sleep_ns(1000000);
-                done.set_value_at_thread_exit();  // ready only after TLS destructors
-            }).detach();
-            exited.wait();
+            });
+            HANDLE handle=nullptr;while(!(handle=exited.load()))std::this_thread::yield();
+            if(handle==INVALID_HANDLE_VALUE){worker.join();require(false,"duplicate detached thread query handle");}
+            worker.detach();
+            const auto waited=WaitForSingleObject(handle,INFINITE);const bool closed=CloseHandle(handle)!=0;
+            require(waited==WAIT_OBJECT_0 && closed,"detached native thread termination observed");
         }
         require(metric("wait_timer_closed")==metric("wait_timer_created") && metric("wait_timer_live")==0,"detached guest-style workers also close at thread exit");
         require(metric("exited_thread_timer_retained")==0 && metric("wait_timer_close_failures")==0 && metric("wait_timer_wait_failures")==0,"no failed closes or waits");
