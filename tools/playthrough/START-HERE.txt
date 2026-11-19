@@ -1,5 +1,12 @@
 WINDOWS LOW-END DIAGNOSTICS / FIXTURE AND GUEST-HLE ATTRIBUTION
 
+ALSO INCLUDED: full/uncollectable ammo no longer wins E over another reachable
+eligible object on the verified game core. Partially collectable ammo keeps its
+usual ranking; one activation per press. F9 logs E's choice; F10 shows it green.
+If only full ammo is present, its normal refusal feedback remains. Please test
+full ammo beside a terminal/bench/node slot and beside another pickup, then check
+partial-stack collection and collection after shooting/reloading/upgrading.
+
 NEW: Run-Playthrough.cmd enables bounded fixture detail and HLE sampling.
 Run-Attribution-Off.cmd keeps old diagnostics but disables the new detail layer.
 Run-Full-Attribution.cmd profiles HLE every frame (short repro; higher overhead).
