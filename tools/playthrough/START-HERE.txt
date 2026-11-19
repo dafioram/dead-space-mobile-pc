@@ -1,4 +1,10 @@
-WINDOWS LOW-END DIAGNOSTICS / FIXTURE AND GUEST-HLE ATTRIBUTION
+WINDOWS SHARED-GLES GEOMETRY CAPTURE / HIGH-END FOLLOW-UP
+
+For the reddish-line experiment run Capture-Geometry.cmd, keep Legacy initially,
+and press F3 while the line is visible. BOTH Legacy and Native are now covered.
+This launcher disables newer HLE/fixture detail but keeps basic diagnostics.
+Read docs/SHARED_GEOMETRY_CAPTURE.md. No screenshots/assets are dumped; no geometry
+is modified/hidden. Source profiles and previous kits are not copied or changed.
 
 ALSO INCLUDED: full/uncollectable ammo no longer wins E over another reachable
 eligible object on the verified game core. Partially collectable ammo keeps its
@@ -26,7 +32,7 @@ Read docs/LOW_END_ATTRIBUTION.md for bounds, timing meaning and overhead A/B ste
    Progress/settings in this kit persist across launches. There is NO --no-save.
    To continue the previous playthrough, COPY that kit's whole userdata here with
    the game closed. Keep both EXEs (deadspace.exe and handle-census.exe) together.
-4. Double-click Run-Playthrough.cmd. Leave its window open while playing.
+4. Double-click Capture-Geometry.cmd. Leave its window open while playing.
    Select your usual renderer and quality in Graphics; nothing selects Native
    or downgrades graphics automatically. Launch resolution is 1280x720, cap 60.
    MSAA/VSync/quality use your test profile settings. Native preparation stays
@@ -54,14 +60,13 @@ Read docs/LOW_END_ATTRIBUTION.md for bounds, timing meaning and overhead A/B ste
    A freeze stops in-game sampling, but the external CSV can continue.
 
 SUGGESTED SHORT TEST (you operate the game)
-Continue your copied profile with the same Native quality as the previous kit.
-Prefer a location where you noticed visual stutter: stand still for about 30s,
-then repeat a short walk/turn route. Press F3 promptly after a stutter and note
-whether you were standing, turning, walking or fighting. One ordinary level
-transition/reload is useful for timer lifetimes if convenient; do not force a
-crash, overwrite your original profile or repeat the whole campaign for this.
-A short Legacy comparison is optional; the fine Native stages do not cover its
-fixed-function rendering. Audio buffering has NOT changed in this build.
+Continue your copied profile with the SAME renderer as the reddish-line run
+(Legacy). Press F3 promptly when the line is visible; mark again from another
+view if useful. Note when it first appears, weapon/action, whether it persists,
+and whether it is fixed in the world or follows the camera/weapon. A Native
+comparison while the SAME line remains visible is optional, not required.
+No full campaign or crash reproduction is needed. Audio buffering, renderer
+quality, physics and saving have NOT changed in this build.
 
 WHAT IS NEW
 - Windows per-thread wait timers now close on normal thread exit, even without

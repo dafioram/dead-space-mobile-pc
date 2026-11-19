@@ -1,5 +1,6 @@
 #include "attribution.h"
 #include "performance.h"
+#include "geometry_source.h"
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
@@ -15,6 +16,15 @@ std::vector<std::string> logs;
 void require(bool okay,const char* why){if(!okay)throw std::runtime_error(why);}
 bool contains(const char* text){for(auto& line:logs)if(line.find(text)!=std::string::npos)return true;return false;}
 uint64_t compute(uint64_t x){for(unsigned j=0;j<64;++j)x=(x*1664525+1013904223)^(x>>13);return x;}
+void capture(const float* vertices,size_t n,const uint16_t* indices,size_t count,bool native=false) {
+    const geometry::Source v{reinterpret_cast<const unsigned char*>(vertices),n*3*sizeof(float)};
+    const geometry::Source ix{reinterpret_cast<const unsigned char*>(indices),count*sizeof(uint16_t)};
+    geometry::Submission input;input.indexed=true;input.native=native;input.count=uint32_t(count);
+    input.vertices={v.reader(),42,0,0x1406,3,0,true};input.indices=ix.reader();
+    input.state.projection[11]=-1;input.state.projection[15]=0;input.state.modelview[14]=-5;
+    input.state.color={1,0,0,1};
+    attribution::geometry_submit(input);
+}
 uint64_t workload(bool instrument,unsigned frames){
     uint64_t result=0;
     for(unsigned f=0;f<frames;++f){
@@ -28,8 +38,7 @@ uint64_t workload(bool instrument,unsigned frames){
         else result^=compute(f+17);
         if(instrument && attribution::geometry_enabled()) {
             const float vertices[]={0,0,0,1,0,0,0,1,0};const uint16_t indices[]={0,1,2};
-            attribution::Draw d;d.mode=4;d.count=3;d.transform={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
-            attribution::geometry_draw(d,vertices,3,3,indices,3);
+            capture(vertices,3,indices,3);
         }
         if(instrument)attribution::frame_end();
     }
@@ -39,7 +48,7 @@ uint64_t workload(bool instrument,unsigned frames){
 namespace logging {
 bool g_verbose=false;
 void write(char,const char* fmt,...){char b[4096];va_list ap;va_start(ap,fmt);std::vsnprintf(b,sizeof b,fmt,ap);va_end(ap);
-    require(logs.size()<2000 && std::strlen(b)<3000,"bounded output");logs.emplace_back(b);}
+    require(logs.size()<5000 && std::strlen(b)<3000,"bounded output");logs.emplace_back(b);}
 }
 int main(int argc,char** argv){try{
     attribution::Clock c;c.begin(100);
@@ -63,18 +72,18 @@ int main(int argc,char** argv){try{
     if(geometry){
         attribution::frame_begin();
         float vertices[]={0,0,0,100,0,0,0,1,0};uint16_t indices[]={0,1,2};
-        attribution::Draw d;d.mode=4;d.count=3;d.source=42;d.transform={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
-        for(int i=0;i<600;++i)attribution::geometry_draw(d,vertices,3,3,indices,3);
-        indices[2]=9;attribution::geometry_draw(d,vertices,3,3,indices,3);
+        for(int i=0;i<600;++i)capture(vertices,3,indices,3,i%2==0);
+        indices[2]=9;capture(vertices,3,indices,3);
         indices[2]=2;vertices[3]=std::numeric_limits<float>::infinity();
-        attribution::geometry_draw(d,vertices,3,3,indices,3);vertices[3]=100;
-        for(int i=0;i<2000;++i)attribution::geometry_draw(d,vertices,3,3,indices,3);
+        capture(vertices,3,indices,3);vertices[3]=100;
+        for(int i=0;i<2000;++i)capture(vertices,3,indices,3);
         attribution::frame_end();
         for(int i=0;i<10;++i)attribution::report(true);
         require(contains("flags=4") && contains("flags=2") && contains("geometry_end"),"long-edge/index suspects reported, not suppressed");
         require(contains("flags=1") && contains("vertices_checked=0"),"nonfinite evidence retained and exhausted scan budget explicit");
         unsigned dumps=0;for(auto& l:logs)if(l.find("geometry_begin")!=std::string::npos)++dumps;
         require(dumps==8,"geometry dump count bounded");
+        require(contains("renderer=legacy") && contains("renderer=native") && contains("location=shared-GLES-input"),"both renderer inputs retained and coverage explicit");
     }else attribution::report(false);
     require(contains("scope_errors=0") && contains("bookkeeping_observed_ns="),"self-cost and accounting validity exposed");
     if(mode=="off")require(contains("scope_pairs=0"),"detail off has no timed scopes");

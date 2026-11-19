@@ -56,20 +56,10 @@ matched comparison. No timing is subtracted to make results look faster.
 
 ## Optional geometry
 
-OFF by default. With Run-Geometry.cmd press F3 promptly after a streak and note
-the enemy/explosion/action and persistence. Native draws (including dynamic bodies)
-record guest source address, mode/count/index range, model-to-world transform,
-texture ID and per-run source identity (also for host-side VBO shadow copies),
-and sampled local/world bounds AFTER guest vertex generation. No pre-skinning
-skeleton is captured, so these cannot prove deformation is responsible.
-
-Limits: 64 positions/draw, 4096 positions/frame, up to 32 triangles/draw while budget
-remains; 256 recent records and 32 scene suspects; newest 32 plus up to 32 suspects
-per marker, eight geometry dumps/process. Later F3 still retains ordinary frame
-history. Scene changes clear draw history. Suspects may predate the recent ring.
-Only metadata is retained: no raw mesh/texture payload, screenshot or recording.
-
-Flags: 1 nonfinite sampled coordinate/result; 2 sampled index outside built range;
-4 world edge over 20m. Long edges can be legitimate. Zero flags do NOT certify
-unchecked geometry. Zero checked vertices means no valid sampled bounds. No draw
-is clamped, suppressed, repaired or hidden.
+The follow-up recorder now covers shared GLES input on BOTH renderers, including
+arrays/elements, strided numeric formats, matrices, primitive/blend/color metadata
+and sampled local/eye/NDC bounds. Capture-Geometry.cmd enables it with newer HLE/
+fixture detail OFF for a focused geometry test. Other launchers remain available.
+Read [SHARED_GEOMETRY_CAPTURE.md](SHARED_GEOMETRY_CAPTURE.md) for current limits,
+flag definitions, coverage counters and the distinction between input evidence
+and final rendered pixels. This replaces the earlier Native-only coverage.

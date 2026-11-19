@@ -50,6 +50,7 @@ Logging:
   --perf-detail MODE        off, sampled (default: HLE 1/16 frames), or full.
                               Fixture detail covers all frames; top HLE lists bounded.
   --perf-geometry           Optional bounded draw metadata/anomaly history on F3.
+                              Shared GLES arrays/elements, both Legacy and Native.
                               No images/assets dumped and no geometry suppressed.
                              F3 marks an issue and captures 180 recent frame records.
                              /perf mark LABEL annotates the private log. No dumps,

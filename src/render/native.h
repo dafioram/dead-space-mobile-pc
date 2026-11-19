@@ -9,6 +9,7 @@
 #pragma once
 #include "vertex_array.h"
 #include "performance.h"
+#include "geometry_capture.h"
 #include <string>
 #include <vector>
 #include <SDL_opengl.h>
@@ -24,6 +25,8 @@ bool init();
 bool available();
 void set_enabled(bool on);
 bool enabled();
+// Read-only copy of the GLES-fed mirror; no GL query, valid on both renderers.
+geometry::State geometry_state();
 void set_vertex_prep_optimized(bool on);  // startup A/B switch; Native CPU preparation only
 
 // ---- state mirror, fed by the GLES translation layer for every call it receives (always,

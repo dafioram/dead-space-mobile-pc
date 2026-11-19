@@ -65,7 +65,7 @@ try {
         handle_helper_sha256 = (Get-FileHash -LiteralPath $censusExe -Algorithm SHA256).Hash
     }
     $metadata | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $run 'session.json') -Encoding UTF8
-    Write-Host "LOW-END ATTRIBUTION DIAGNOSTICS: detail=$DetailMode geometry=$Geometry; persistent test profile."
+    Write-Host "ATTRIBUTION / SHARED-GLES GEOMETRY DIAGNOSTICS: detail=$DetailMode geometry=$Geometry; persistent test profile."
     Write-Host "Profile: $profile"
     Write-Host "Reports: $run"
     Write-Host 'Leave this window open. Choose graphics/renderer in-game. Quit normally yourself.'

@@ -2,6 +2,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include "geometry_capture.h"
 
 namespace attribution {
 constexpr uint32_t hle_base = 16, hle_capacity = 4096, bucket_count = hle_base + hle_capacity + 1;
@@ -43,14 +44,7 @@ private:
     uint64_t tag_=0;
 };
 // Metadata only: no source vertex/index/texture payload is retained or dumped.
-struct Draw {
-    uint64_t serial=0,scene=0,source_id=0;
-    uint32_t source=0,texture=0,mode=0,count=0,lo=0,hi=0,flags=0,vertices_checked=0,triangles_checked=0;
-    std::array<float,16> transform{};
-    std::array<float,3> local_lo{},local_hi{},world_lo{},world_hi{};
-    float max_edge=0;
-};
+using Draw = geometry::Record;
 bool geometry_enabled();
-void geometry_draw(Draw draw,const float* vertices,uint32_t vertex_count,unsigned stride,
-                   const uint16_t* indices,size_t count);
+void geometry_submit(const geometry::Submission& submission,uint64_t observation_start_ns=0);
 }  // namespace attribution

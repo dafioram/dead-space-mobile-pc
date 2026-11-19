@@ -16,6 +16,8 @@
 #include "texpack.h"
 #include "hle/hle.h"
 #include "render/native.h"
+#include "attribution.h"
+#include "geometry_source.h"
 
 namespace hle {
 
@@ -101,6 +103,9 @@ int g_client_unit = 0;
 int g_active_unit = 0;
 GLuint g_array_buffer = 0, g_element_buffer = 0;
 GLuint g_bound_tex[4] = {};
+// Observation only: track the requested GLES blend factors, including the
+// separate-alpha form not represented by the Native fixed-function mirror.
+GLuint g_capture_blend[4] = {GL_ONE,GL_ZERO,GL_ONE,GL_ZERO};
 
 struct TexInfo {
     bool replaced = false;  // its image comes from a texture pack (the game's own mip levels are not used)
@@ -253,6 +258,41 @@ void set_array(int k, GLint size, GLenum type, GLsizei stride, u32 ptr) {
     a.stride = stride;
     a.ptr = ptr;
     a.buffer = g_array_buffer;
+}
+
+bool capture_mapped(uint64_t address,size_t size) {
+    if(!address || address>=1ull<<32 || size>(1ull<<32)-address)return false;
+    for(uint64_t page=address&~uint64_t(mem::PAGE_SIZE-1);page<address+size;page+=mem::PAGE_SIZE)
+        if(!mem::is_mapped(u32(page)))return false;
+    return true;
+}
+geometry::Source capture_source(u32 pointer,GLuint buffer) {
+    if(buffer){
+        const auto it=g_buf_shadow.find(buffer);
+        if(it==g_buf_shadow.end() || pointer>=it->second.size())return {};
+        return {it->second.data()+pointer,it->second.size()-pointer,0,nullptr};
+    }
+    return pointer?geometry::Source{mem::host(pointer),(1ull<<32)-pointer,pointer,capture_mapped}:geometry::Source{};
+}
+void capture_draw(Ctx& c,bool indexed,GLenum mode,GLsizei count,GLenum index_type,u32 indices,u32 first) {
+    if(!attribution::geometry_enabled())return;
+    const auto observation_start=perf::now_ns();
+    // BEFORE choosing Native versus Legacy; reads original guest/client/VBO
+    // inputs with checked spans. No GL calls, state setters, or retained pointers.
+    const auto& vertex=g_arr[A_VERTEX];const auto& color=g_arr[A_COLOR];
+    const auto vertices=capture_source(vertex.ptr,vertex.buffer),colors=capture_source(color.ptr,color.buffer);
+    const auto elements=indexed?capture_source(indices,g_element_buffer):geometry::Source{};
+    geometry::Submission input;
+    input.vertices={vertices.reader(),vertex.ptr,vertex.buffer,vertex.type,vertex.size,vertex.stride,vertex.enabled};
+    input.colors={colors.reader(),color.ptr,color.buffer,color.type,color.size,color.stride,color.enabled};
+    input.indices=elements.reader();input.state=render::geometry_state();
+    input.state.blend_src=g_capture_blend[0];input.state.blend_dst=g_capture_blend[1];
+    input.state.blend_alpha_src=g_capture_blend[2];input.state.blend_alpha_dst=g_capture_blend[3];
+    if(g_arr[A_MATIDX].enabled || g_arr[A_WEIGHT].enabled)input.state.flags|=64;
+    input.native=render::enabled();input.indexed=indexed;input.mode=mode;input.count=uint32_t(count);input.first=first;
+    input.index_type=index_type;input.index_pointer=indices;input.element_buffer=indexed?g_element_buffer:0;
+    input.texture=g_bound_tex[0];input.return_address=c.lr();
+    attribution::geometry_submit(input,observation_start);
 }
 
 // ---------------------------------------------------------------- texture decoding
@@ -1058,8 +1098,14 @@ void register_gles() {
     reg("glStencilOp", [](Ctx& c) { glStencilOp(c.arg(0), c.arg(1), c.arg(2)); });
     reg("glAlphaFunc", [](Ctx& c) { render::alpha_func(c.arg(0), c.argf(1)); glAlphaFunc(c.arg(0), c.argf(1)); });
     reg("glAlphaFuncx", [](Ctx& c) { render::alpha_func(c.arg(0), fx(c.arg(1))); glAlphaFunc(c.arg(0), fx(c.arg(1))); });
-    reg("glBlendFunc", [](Ctx& c) { render::blend_func(c.arg(0), c.arg(1)); glBlendFunc(c.arg(0), c.arg(1)); });
-    reg("glBlendFuncSeparateOES", [](Ctx& c) { p_glBlendFuncSeparate(c.arg(0), c.arg(1), c.arg(2), c.arg(3)); });
+    reg("glBlendFunc", [](Ctx& c) {
+        g_capture_blend[0]=g_capture_blend[2]=c.arg(0);g_capture_blend[1]=g_capture_blend[3]=c.arg(1);
+        render::blend_func(c.arg(0), c.arg(1)); glBlendFunc(c.arg(0), c.arg(1));
+    });
+    reg("glBlendFuncSeparateOES", [](Ctx& c) {
+        for(unsigned i=0;i<4;++i)g_capture_blend[i]=c.arg(int(i));
+        p_glBlendFuncSeparate(c.arg(0), c.arg(1), c.arg(2), c.arg(3));
+    });
     reg("glBlendEquationOES", [](Ctx& c) { p_glBlendEquation(c.arg(0)); });
     reg("glBlendEquationSeparateOES", [](Ctx& c) { p_glBlendEquationSeparate(c.arg(0), c.arg(1)); });
     reg("glLogicOp", [](Ctx& c) { glLogicOp(c.arg(0)); });
@@ -1598,6 +1644,7 @@ void register_gles() {
         GLint first = GLint(c.arg(1));
         GLsizei count = GLsizei(c.arg(2));
         if (count <= 0) return;
+        capture_draw(c,false,c.arg(0),count,0,0,u32(first));
         if (render::enabled()) {
             sync_native_arrays();
             return render::draw_arrays(c.arg(0), first, count);
@@ -1610,6 +1657,7 @@ void register_gles() {
         GLsizei count = GLsizei(c.arg(1));
         u32 ind = c.arg(3);
         if (count <= 0) return;
+        capture_draw(c,true,mode,count,type,ind,0);
         const u8* idx = nullptr;
         if (g_element_buffer) {
             auto it = g_buf_shadow.find(g_element_buffer);

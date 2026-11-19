@@ -3316,6 +3316,18 @@ void set_enabled(bool on) {
     if (was != g_enabled) LOGI("renderer: %s", g_enabled ? "native" : "legacy");
 }
 bool enabled() { return g_enabled; }
+geometry::State geometry_state() {
+    geometry::State out;
+    std::copy_n(g_mv.top().m,16,out.modelview.begin());
+    std::copy_n(g_proj.top().m,16,out.projection.begin());
+    std::copy_n(g_st.color,4,out.color.begin());
+    std::copy_n(g_st.vp,4,out.viewport.begin());
+    out.flags=unsigned(g_st.blend) | (unsigned(g_st.depth_test)<<1) | (unsigned(g_st.depth_write)<<2) |
+        (unsigned(g_st.alpha_test)<<3) | (unsigned(g_st.cull)<<4) | (unsigned(g_st.lighting)<<5) |
+        (unsigned(g_st.unit[0].enabled)<<7) | (unsigned(g_st.fog)<<8);
+    out.blend_src=g_st.blend_src;out.blend_dst=g_st.blend_dst;
+    return out;
+}
 void set_vertex_prep_optimized(bool on) { g_vertex_prep_optimized = on; }
 
 // ---- matrices
@@ -3617,16 +3629,6 @@ void draw_elements(GLenum mode, int count, GLenum type, const void* indices) {
     if (hi - lo + 1 > 65535) return;  // (never seen; would need 32-bit indices)
     for (auto& i : g_idx) i = u16(i - lo);
     build_vertices(lo, hi - lo + 1);
-    if(attribution::geometry_enabled()) {
-        attribution::Draw d;
-        const auto source=reinterpret_cast<uintptr_t>(g_arr[A_VERTEX].data),base=reinterpret_cast<uintptr_t>(mem::g_base);
-        d.source=source>=base && source-base<=UINT32_MAX?u32(source-base):0;
-        d.source_id=(uint64_t(source)^(uint64_t(source)>>29))*0x9e3779b97f4a7c15ull;
-        d.texture=g_st.unit[0].tex;
-        d.mode=mode;d.count=unsigned(count);d.lo=lo;d.hi=hi;
-        const Mat4 transform=g_view_inv*g_mv.top();std::copy_n(transform.m,16,d.transform.begin());
-        attribution::geometry_draw(d,g_verts.data(),hi-lo+1,kStride,g_idx.data(),g_idx.size());
-    }
     // see-through meshes that are really solid objects (hanging cables) are drawn solid
     bool made_solid = false;
     if (g_shadow_debug && g_st.blend && hi - lo + 1 == 159) {
