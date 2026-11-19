@@ -24,6 +24,8 @@ uint64_t scope_pairs=0,bookkeeping_ns=0,geometry_ns=0,geometry_skipped=0,draw_se
 uint64_t interval_frames=0,interval_sampled=0,scene=0,geometry_dumps=0;
 uint64_t fixture_key=0,fixture_vertices=0,fixture_triangles=0,fixture_max_ns=0,worst_fixture_key=0;
 unsigned vertex_budget=0;
+unsigned scope_budget=0;
+uint64_t scope_budget_skips=0;
 std::mutex names_lock;
 std::array<std::array<char,72>,hle_capacity> names{};
 std::array<Draw,256> recent{};
@@ -77,6 +79,7 @@ void frame_begin() {
     if(hle_selected){++sampled;++interval_sampled;wall_start=perf::now_ns();cpu_start=thread_cpu();}
     if(collecting)clock.begin(perf::now_ns());
     vertex_budget=4096;
+    scope_budget=16384;
     const auto current=perf::scene_serial();
     if(current!=scene){recent_total=suspect_total=0;scene=current;}
 }
@@ -88,6 +91,8 @@ void frame_end() {
 }
 Scope::Scope(uint32_t bucket) : bucket_(std::min(bucket,bucket_count-1)) {
     if(!collecting || ((bucket==guest_run || bucket==jit_setup || bucket>=hle_base) && !hle_selected))return;
+    if(!scope_budget){++scope_budget_skips;return;}
+    --scope_budget;
     const auto start=perf::now_ns();previous_=clock.enter(bucket_,start);start_=start;live_=true;tag_=fixture_key;
     bookkeeping_ns+=perf::now_ns()-start;++scope_pairs;
 }
@@ -138,10 +143,10 @@ void geometry_draw(Draw d,const float* vertices,uint32_t vertex_count,unsigned s
 }
 void report(bool marker) {
     const char* labels[]={"unclassified","jit_run_exclusive","fixture_scan_other","texture_lookup","texture_readback","texture_mask","mesh_sampling","fixture_merge","jit_setup","glow_analysis","fan_analysis","beacon_analysis","light_setup","open_direction","texture_copy"};
-    LOGI("[detail] summary mode=%s sampled_frames=%llu interval_frames=%llu total_sampled=%llu scope_pairs=%llu bookkeeping_observed_ns=%llu sampled_main_wall_ns=%llu sampled_main_cpu_ns=%llu cpu_valid_frames=%llu scope_errors=%llu geometry=%d geometry_observed_ns=%llu geometry_partial_draws=%llu (bookkeeping is a lower-bound observation, NOT total overhead; CPU time is OS-resolution; JIT run includes compilation; no GPU timing)",
+    LOGI("[detail] summary mode=%s sampled_frames=%llu interval_frames=%llu total_sampled=%llu scope_pairs=%llu bookkeeping_observed_ns=%llu sampled_main_wall_ns=%llu sampled_main_cpu_ns=%llu cpu_valid_frames=%llu scope_errors=%llu geometry=%d geometry_observed_ns=%llu geometry_partial_draws=%llu scope_budget_skips=%llu max_scopes_per_frame=16384 (bookkeeping is a lower-bound observation, NOT total overhead; CPU time is OS-resolution; JIT run includes compilation; saturated scopes remain in parent bucket; no GPU timing)",
         detailed?(full?"full":"sampled-1-in-16"):"off",(unsigned long long)interval_sampled,(unsigned long long)interval_frames,(unsigned long long)sampled,
         (unsigned long long)scope_pairs,(unsigned long long)bookkeeping_ns,(unsigned long long)wall_ns,(unsigned long long)cpu_ns,(unsigned long long)cpu_valid,
-        (unsigned long long)clock.errors,geometry,(unsigned long long)geometry_ns,(unsigned long long)geometry_skipped);
+        (unsigned long long)clock.errors,geometry,(unsigned long long)geometry_ns,(unsigned long long)geometry_skipped,(unsigned long long)scope_budget_skips);
     for(uint32_t i=1;i<std::size(labels);++i){const auto& c=clock.counters[i];LOGI("[detail] bucket=%s ns=%llu calls=%llu max_inclusive_ns=%llu max_loop=%llu",labels[i],(unsigned long long)c.ns,(unsigned long long)c.calls,(unsigned long long)c.max_ns,(unsigned long long)c.max_frame);}
     LOGI("[detail] fixture_input vertices=%llu triangles=%llu worst_mesh_key=%llx worst_scan_inclusive_ns=%llu (input workload, not number of accepted lamps or sampled texels)",
         (unsigned long long)fixture_vertices,(unsigned long long)fixture_triangles,(unsigned long long)worst_fixture_key,(unsigned long long)fixture_max_ns);
@@ -173,5 +178,6 @@ void report(bool marker) {
         LOGI("[detail] geometry_end");}
     clock.counters={};clock.errors=0;interval_frames=interval_sampled=scope_pairs=bookkeeping_ns=wall_ns=cpu_ns=cpu_valid=geometry_ns=geometry_skipped=0;
     fixture_vertices=fixture_triangles=fixture_max_ns=worst_fixture_key=0;
+    scope_budget_skips=0;
 }
 }  // namespace attribution

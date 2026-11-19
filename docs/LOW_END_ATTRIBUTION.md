@@ -32,6 +32,9 @@ and JIT internals: NOT a guest instruction/function sampler. JIT instance setup 
 separate. HLE names are 71 sanitized characters; 4096 IDs plus overflow, top 12
 overall and top 8 non-GL per report. Name-based GL/JNI/sync/I/O groups are hints,
 not proof of blocking. Background threads are excluded from main-thread detail.
+At most 16384 detail scopes are timed per frame. scope_budget_skips exposes
+saturation; skipped work remains charged to its enclosing bucket, so saturated
+intervals are incomplete attribution rather than a clean fine-grained profile.
 Sampled main CPU versus wall uses OS clocks; Windows CPU resolution is coarse.
 Maxima carry max_loop (main-loop serial; ordinary hitch frame serial starts after
 the startup baseline, so it is normally one less). Fixture detail also separates

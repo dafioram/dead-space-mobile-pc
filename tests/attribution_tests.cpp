@@ -56,6 +56,9 @@ int main(int argc,char** argv){try{
     attribution::register_hle(attribution::hle_capacity+99,"overflow");
     std::thread background([]{attribution::Scope s(attribution::hle_base+1);require(!attribution::collecting,"background threads not counted as main");});background.join();
     workload(true,32);
+    attribution::frame_begin();
+    for(unsigned i=0;i<20000;++i){attribution::Scope bounded(attribution::fixture_scan);}
+    attribution::frame_end();
     require(!attribution::configure("off",false),"no unrequested runtime switches");
     if(geometry){
         attribution::frame_begin();
@@ -75,7 +78,10 @@ int main(int argc,char** argv){try{
     }else attribution::report(false);
     require(contains("scope_errors=0") && contains("bookkeeping_observed_ns="),"self-cost and accounting validity exposed");
     if(mode=="off")require(contains("scope_pairs=0"),"detail off has no timed scopes");
-    else require(contains("name=pthread_cond_wait?INJECTED") && contains("non_gl_hle_id="),"names sanitized, non-GL attribution retained");
+    else {
+        require(contains("name=pthread_cond_wait?INJECTED") && contains("non_gl_hle_id="),"names sanitized, non-GL attribution retained");
+        require(contains("scope_budget_skips=3616"),"clock work per frame capped without unbalanced scopes");
+    }
     // Synthetic A/B only: identical deterministic work, no assets/GL/guest/JIT.
     using clock=std::chrono::steady_clock;std::vector<double> off,on;uint64_t checksum=0;
     for(int trial=0;trial<7;++trial){auto a=clock::now();const auto x=workload(false,128);auto b=clock::now();const auto y=workload(true,128);auto end=clock::now();
