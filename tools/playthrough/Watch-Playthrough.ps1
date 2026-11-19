@@ -63,7 +63,7 @@ try {
         handle_helper_sha256 = (Get-FileHash -LiteralPath $censusExe -Algorithm SHA256).Hash
     }
     $metadata | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $run 'session.json') -Encoding UTF8
-    Write-Host 'DETAILED LOW-END PLAYTHROUGH: persistent test progress; observation only.'
+    Write-Host 'LOW-END FRAME-STAGE DIAGNOSTICS: persistent test progress; scoped thread-timer cleanup.'
     Write-Host "Profile: $profile"
     Write-Host "Reports: $run"
     Write-Host 'Leave this window open. Choose graphics/renderer in-game. Quit normally yourself.'

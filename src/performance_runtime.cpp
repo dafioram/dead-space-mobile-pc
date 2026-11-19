@@ -14,6 +14,7 @@
 #include <map>
 #include <sstream>
 #include <exception>
+#include <iomanip>
 
 namespace perf {
 namespace {
@@ -29,6 +30,28 @@ std::map<ThreadKey, uint64_t> previous_threads;
 uint32_t window_state = 0;
 int effective_cap = 0;
 bool fast_forward = false, turbo = false, failed = false;
+SDL_Window* window = nullptr;
+void presentation_context() {
+    if (!window) return;
+    SDL_version version{}; SDL_GetVersion(&version);
+    const char* driver = SDL_GetCurrentVideoDriver();
+    const int display = SDL_GetWindowDisplayIndex(window);
+    SDL_DisplayMode mode{};
+    const bool valid = display >= 0 && SDL_GetCurrentDisplayMode(display, &mode) == 0;
+    if (!valid) LOGW("[perf] display_mode_query_failed: %s", SDL_GetError());
+    int ww=0,wh=0,dw=0,dh=0;
+    SDL_GetWindowSize(window,&ww,&wh); SDL_GL_GetDrawableSize(window,&dw,&dh);
+    LOGI("[perf] presentation sdl=%u.%u.%u video_driver=%s display=%d display_mode_valid=%d refresh_hz=%d refresh_known=%d actual_swap_interval=%d window=%dx%d drawable=%dx%d (configuration and call cadence, not measured display/GPU presentation)",
+         unsigned(version.major),unsigned(version.minor),unsigned(version.patch),driver?driver:"unavailable",
+         display,valid,valid?mode.refresh_rate:0,valid && mode.refresh_rate>0,SDL_GL_GetSwapInterval(),ww,wh,dw,dh);
+}
+std::string stage_fields(const StageData& stages) {
+    std::ostringstream text; text << std::fixed << std::setprecision(3);
+    for (size_t i=0;i<stage_count;++i) text << ' ' << stage_name(i) << "_ms=" << double(stages.ns[i])/1e6
+        << ' ' << stage_name(i) << "_calls=" << stages.calls[i];
+    text << " stages_valid=" << stages.valid << " stage_errors=" << stages.errors;
+    return text.str();
+}
 void metrics_line(const char* group, const Metrics& metrics) {
     std::string line = std::string("[perf] ") + group;
     for (auto m : metrics) {
@@ -49,10 +72,27 @@ void report(uint64_t now, bool final) {
          g_config.screen_w, g_config.screen_h, hle::msaa_samples(), effective_cap,
          settings::get_int("vsync",1), bool(window_state&SDL_WINDOW_INPUT_FOCUS), bool(window_state&SDL_WINDOW_MINIMIZED),fast_forward,turbo);
     LOGI("[perf] quality ao=%d shadows=%d lights=%d light_shadows=%d bloom=%d anisotropy=%d",
-         render::ao(),render::shadows(),render::lights_level(),render::light_shadows(),render::bloom(),render::anisotropy());
+          render::ao(),render::shadows(),render::lights_level(),render::light_shadows(),render::bloom(),render::anisotropy());
+    presentation_context();
     LOGI("[perf] frame_loop_ms mean=%.3f p50=%.3f p95=%.3f p99=%.3f max_retained=%.3f work=%.3f game_render=%.3f swap=%.3f limiter_sleep=%.3f limiter_spin=%.3f retained=%llu overwritten=%llu",
          s.loop_mean_ms,s.p50_ms,s.p95_ms,s.p99_ms,s.max_ms,s.work_ms,s.game_render_ms,s.swap_ms,s.sleep_ms,s.spin_ms,
-         (unsigned long long)s.retained,(unsigned long long)s.overwritten);
+          (unsigned long long)s.retained,(unsigned long long)s.overwritten);
+    LOGI("[perf] frame_budget loop_gt25ms=%llu loop_gt33_333ms=%llu loop_ge50ms=%llu work_gt16_667ms=%llu work_gt25ms=%llu work_gt33_333ms=%llu start_intervals=%llu start_gt25ms=%llu start_gt33_333ms=%llu start_ge50ms=%llu (overlapping counts over all interval frames; cap/focus matter)",
+         (unsigned long long)s.loop_gt25,(unsigned long long)s.loop_gt33,(unsigned long long)s.loop_ge50,
+         (unsigned long long)s.work_gt16,(unsigned long long)s.work_gt25,(unsigned long long)s.work_gt33,
+         (unsigned long long)s.start_intervals,(unsigned long long)s.start_gt25,(unsigned long long)s.start_gt33,(unsigned long long)s.start_ge50);
+    LOGI("[perf] cadence_ms between_mean=%.3f between_max=%.3f start_interval_mean=%.3f start_interval_max=%.3f swap_call_interval_mean=%.3f swap_call_interval_max=%.3f (between includes preceding sampler/scheduling; swap-call intervals are NOT display intervals)",
+         s.between_mean_ms,s.between_max_ms,s.start_mean_ms,s.start_max_ms,s.swap_call_mean_ms,s.swap_call_max_ms);
+    std::ostringstream stage_mean,stage_max,stage_calls;
+    stage_mean << std::fixed << std::setprecision(3);stage_max << std::fixed << std::setprecision(3);
+    for (size_t i=0;i<stage_count;++i) {
+        stage_mean << ' ' << stage_name(i) << '=' << s.stage_mean_ms[i];
+        stage_max << ' ' << stage_name(i) << '=' << s.stage_max_ms[i];
+        stage_calls << ' ' << stage_name(i) << '=' << s.stage_calls[i];
+    }
+    LOGI("[perf] stages_mean_ms%s",stage_mean.str().c_str());
+    LOGI("[perf] stages_max_ms%s",stage_max.str().c_str());
+    LOGI("[perf] stage_calls%s valid_frames=%llu errors=%llu (exclusive wall buckets; guest_hle_other is not pure guest/update CPU; maxima need not share a frame)",stage_calls.str().c_str(),(unsigned long long)s.stage_frames,(unsigned long long)s.stage_errors);
     LOGI("[perf] process cpu_valid=%d cpu_one_core_pct=%.2f memory_valid=%d resident_bytes=%llu peak_resident_bytes=%llu private_kind=%s private_bytes=%llu",
          process.cpu_valid && previous.cpu_valid && elapsed,
          process.cpu_valid && previous.cpu_valid ? cpu_percent(previous.cpu_ns,process.cpu_ns,elapsed) : 0,
@@ -89,10 +129,11 @@ void report(uint64_t now, bool final) {
          registry.valid,(unsigned long long)registry.descriptors,(unsigned long long)registry.streams);
     auto frame_line=[&](const char* kind,const FrameRecord& record) {
         const auto& f=record.frame;
-        LOGI("[perf] %s frame=%llu scene=%llu age_ms=%.3f loop_ms=%.3f work_ms=%.3f game_render_ms=%.3f swap_ms=%.3f sleep_ms=%.3f spin_ms=%.3f",
+        LOGI("[perf] %s frame=%llu scene=%llu age_ms=%.3f loop_ms=%.3f work_ms=%.3f game_render_ms=%.3f swap_ms=%.3f sleep_ms=%.3f spin_ms=%.3f between_ms=%.3f start_interval_ms=%.3f swap_call_interval_ms=%.3f%s",
              kind,(unsigned long long)record.serial,(unsigned long long)record.scene,
              record.when_ns<=now?double(now-record.when_ns)/1e6:0,double(f.loop_ns)/1e6,
-             double(f.work_ns)/1e6,double(f.game_render_ns)/1e6,double(f.swap_ns)/1e6,double(f.sleep_ns)/1e6,double(f.spin_ns)/1e6);
+             double(f.work_ns)/1e6,double(f.game_render_ns)/1e6,double(f.swap_ns)/1e6,double(f.sleep_ns)/1e6,double(f.spin_ns)/1e6,
+             double(f.between_ns)/1e6,double(f.start_interval_ns)/1e6,double(f.swap_call_interval_ns)/1e6,stage_fields(f.stages).c_str());
     };
     for(size_t i=0;i<hitches.slow_count();++i)frame_line("hitch",hitches.slow(i));
     if(hitches.dropped())LOGI("[perf] hitch_omitted=%llu (worst 16 retained, threshold 50ms)",(unsigned long long)hitches.dropped());
@@ -110,6 +151,7 @@ void report(uint64_t now, bool final) {
     LOGI("[perf] sampler_elapsed_ms=%.3f (includes diagnostic logging; excluded from frame_loop timings)",double(now_ns()-start)/1e6);
 }
 }
+void runtime_window(SDL_Window* value) { window = value; }
 void safe_report(uint64_t now,bool final) {
     try { report(now,final); }
     catch(const std::exception& e) {
@@ -128,7 +170,7 @@ void runtime_frame(Frame f,uint32_t flags,int cap,bool ff,bool accelerated) {
     effective_cap=cap;fast_forward=ff;turbo=accelerated;
     auto now=now_ns();
     if(!last_time) {
-        LOGI("[perf] enabled version=3 interval_seconds=%u max_frames=4096 max_cache_scan=4096 max_threads=64 history_frames=180 hitch_threshold_ms=50 max_hitches=16 F3=manual-marker; CPU 100%%=one logical core; bytes are not MiB; no GPU timing/VRAM claim; --fps override see startup log", interval_seconds);
+        LOGI("[perf] enabled version=4 interval_seconds=%u max_frames=4096 max_cache_scan=4096 max_threads=64 history_frames=180 hitch_threshold_ms=50 max_hitches=16 F3=manual-marker; exclusive main-thread stages; exact still-scene counts; thread-exit timer close enabled even without --perf; CPU 100%%=one logical core; bytes are not MiB; no GPU timing/VRAM claim; --fps override see startup log", interval_seconds);
         safe_report(now,false);
         return;  // baseline excludes this first frame, which precedes the baseline sample
     }

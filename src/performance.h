@@ -27,13 +27,68 @@ struct AllocationGauge {
     void remove(uint64_t size);
 };
 
+// Exclusive main-thread wall-time attribution, not GPU time or a sampling
+// profiler. guest_hle_other includes uninstrumented guest/JIT, HLE and driver work.
+enum class Stage : size_t { host_other, guest_hle_other, native_other, vertices,
+    normals, scene_cache, fixtures, shadows, upload_draw, post, present, swap, limiter, count };
+constexpr size_t stage_count = size_t(Stage::count);
+const char* stage_name(size_t index);
+struct StageData {
+    std::array<uint64_t, stage_count> ns{}, calls{};
+    uint64_t errors = 0;
+    bool valid = false;
+};
+class StageClock {
+public:
+    void begin(uint64_t now);
+    Stage enter(Stage stage, uint64_t now);
+    void leave(Stage previous, uint64_t now);
+    StageData finish(uint64_t now);
+private:
+    void charge(uint64_t now);
+    StageData data_{};
+    Stage current_ = Stage::host_other;
+    uint64_t last_ = 0, depth_ = 0;
+};
+void stages_begin(uint64_t now);
+StageData stages_finish(uint64_t now);
+class StageScope {
+public:
+    explicit StageScope(Stage stage);
+    ~StageScope();
+    StageScope(const StageScope&) = delete;
+    StageScope& operator=(const StageScope&) = delete;
+private:
+    StageClock* clock_ = nullptr;
+    Stage previous_ = Stage::host_other;
+};
+
+// Updated at still-scene mutation sites, with no bounded scan or eviction.
+struct SceneCacheGauge {
+    uint64_t inserted = 0, live = 0, dead = 0, live_hits = 0, dead_hits = 0;
+    uint64_t invalidated = 0, refused = 0, resets = 0, cleared_live = 0, cleared_dead = 0, errors = 0;
+    void insert() { ++inserted; ++live; }
+    void hit(bool is_dead) { ++(is_dead ? dead_hits : live_hits); }
+    void retire();
+    void reset();
+};
+
 struct Frame {
     uint64_t loop_ns = 0, work_ns = 0, game_render_ns = 0, swap_ns = 0, sleep_ns = 0, spin_ns = 0;
+    StageData stages;
+    uint64_t between_ns = 0, start_interval_ns = 0, swap_call_interval_ns = 0;
 };
 struct FrameSummary {
     uint64_t frames = 0, retained = 0, overwritten = 0;
     double loop_mean_ms = 0, p50_ms = 0, p95_ms = 0, p99_ms = 0, max_ms = 0;
     double work_ms = 0, game_render_ms = 0, swap_ms = 0, sleep_ms = 0, spin_ms = 0;
+    std::array<double, stage_count> stage_mean_ms{}, stage_max_ms{};
+    std::array<uint64_t, stage_count> stage_calls{};
+    uint64_t stage_frames = 0, stage_errors = 0, loop_gt25 = 0, loop_gt33 = 0, loop_ge50 = 0;
+    uint64_t work_gt16 = 0, work_gt25 = 0, work_gt33 = 0;
+    uint64_t start_intervals = 0, start_gt25 = 0, start_gt33 = 0, start_ge50 = 0;
+    double between_mean_ms = 0, between_max_ms = 0, start_mean_ms = 0, start_max_ms = 0;
+    double swap_call_mean_ms = 0, swap_call_max_ms = 0;
 };
 class FrameWindow {
 public:
@@ -45,6 +100,10 @@ private:
     std::array<uint64_t, capacity> loops_{};
     uint64_t frames_ = 0;
     std::array<long double, 6> sums_{};
+    std::array<long double, stage_count> stage_sums_{};
+    FrameSummary detail_{};
+    long double between_sum_ = 0, start_sum_ = 0, swap_call_sum_ = 0;
+    uint64_t swap_call_intervals_ = 0;
 };
 double cpu_percent(uint64_t previous, uint64_t current, uint64_t elapsed_ns);
 
@@ -69,11 +128,14 @@ void audio_observe(uint64_t queued, uint64_t threshold, uint64_t underruns);
 Metrics audio_sample();
 
 // Fixed-size diagnostic ownership counters. These observe host objects, not
-// necessarily one kernel handle each. No cleanup policy is changed.
+// necessarily one kernel handle each. Windows timers now close on thread exit;
+// retired_thread_timer counts failed closes only, never a successful release.
 enum class Owner : size_t { wait_timer, retired_thread_timer, asset_file, mutex, condition,
     semaphore, java_object, local_ref, global_ref, thread_query, count };
 void acquired(Owner owner) noexcept;
 void released(Owner owner) noexcept;
+enum class TimerError : size_t { create, arm, wait, close, count };
+void timer_error(TimerError operation, uint32_t error) noexcept;
 Metrics owner_sample();
 struct OwnedResource {
     Owner owner;

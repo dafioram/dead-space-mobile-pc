@@ -4,8 +4,10 @@
 
 The extended diagnostic branch adds bounded audio cadence/backpressure histograms,
 pre/post-write PCM queue ranges with format-derived duration, instrumented ownership
-counters, and a process-local Windows handle-type helper. It does not change the
-audio queue limit, timers/cleanup, gameplay, renderer, cache policy or save rules.
+counters, and a process-local Windows handle-type helper. The frame-stage revision
+also fixes Windows per-thread timer ownership (normal thread exit closes its own
+timer). It does not change the audio queue limit, wait semantics, gameplay, graphics
+quality, cache policy or save rules. No Linux input workaround is included.
 `tools/playthrough/START-HERE.txt` describes the portable setup and measurements.
 
 With diagnostics enabled, F3 reserves a manual issue marker and dumps up to 180
@@ -27,18 +29,83 @@ helper's own handle table is queried only to verify those duplicates' type index
 
 Owner gauges count host wrapper objects/references, not necessarily one kernel
 handle each. JNI and I/O registry snapshots use try-lock and explicitly report
-unavailable/busy data. Timer observations do not close the existing raw per-thread
-timer: the purpose is to identify that retention without changing the experiment.
+unavailable/busy data. Windows timers now use a noncopyable thread-local owner. It
+preserves high-resolution creation flags, one-shot waits, scaling, rounding and
+Sleep fallback; only normal thread-exit ownership changes. No thread closes another
+thread's timer. `wait_timer_closed` counts successful closes, and
+`exited_thread_timer_retained` now counts failed closes only (a semantic change from
+the previous observer). Create/arm/wait/close failures and last Windows error codes
+are explicit. The existing wait-error return semantics are unchanged. The final
+report precedes shutdown and may include active threads' timers; process `_Exit`
+leaves their ultimate reclamation to Windows, as before.
 Queue times exclude hardware/backend latency. Histograms are fixed-size and log
 disjoint upper-bound ranges, not exact percentile samples. No PCM is collected.
 
 ## Original reporting and interpretation
 
+### Frame-stage revision (schema 4)
+
+`stages_mean_ms`, `stages_max_ms` and `stage_calls` report bounded, exclusive
+**main-thread wall** buckets. Each hitch and F3 history record carries the same
+frame's individual bucket values and scope counts:
+
+| Bucket | Scope |
+| --- | --- |
+| `guest_hle_other` | `NativeOnDrawFrame` remainder after instrumented Native children; includes uninstrumented guest/JIT, HLE, Legacy rendering and driver work, **not pure update/JIT CPU time** |
+| `native_other` | Native draw/index preparation and frame bookkeeping not assigned below |
+| `vertices`, `normals` | Existing CPU vertex preparation and normal generation |
+| `scene_cache` | Caster classification/hashing/transforms, still-scene insertion/invalidation and scene reset |
+| `fixtures` | Lamp scanning/facing, frame-light selection, beacon/glow/fan-floor work and retained lighting texture pixels |
+| `shadows` | Shadow-frame setup, atlas assignment/baking and moving-mesh shadow draws, excluding instrumented children |
+| `upload_draw` | Native GL state, vertex/index uploads and draw submission; excludes instrumented shadow children |
+| `post` | Native post-processing, including required resolves and initialization |
+| `present`, `swap`, `limiter` | Final present call, SDL swap call and existing frame limiter |
+| `host_other` | Remaining main-loop work, including input, overlays and uninstrumented guest callbacks outside `NativeOnDrawFrame` |
+
+Nested buckets subtract child time from their parents; their sum covers the
+measured loop. Valid-frame/error counters expose coverage or scope errors. Counts
+are scope entries, not GPU draw counts; one displayed frame may run multiple guest
+frames during cinematic skip/turbo. Means cover all interval frames. Per-bucket
+maxima need not occur in the same frame and must not be summed. A blocking driver
+call stays charged to its caller: these measurements do not separate running CPU,
+descheduling, driver waits or GPU execution. Fine Native stages do not profile the
+Legacy fixed-function path. There are no GPU queries, fences or added `glFinish`.
+
+Loop counts use `>25 ms`, `>33,333,333 ns` and `>=50 ms`; work counts use
+`>16,666,667 ns`, `>25 ms` and `>33,333,333 ns`. These overlapping counts cover
+**all** interval frames, not just the retained percentile ring. Work ends before
+swap and limiter. A 30 FPS cap naturally exceeds the 25 ms loop budget; focus,
+loading, fast-forward and quality must accompany any comparison.
+
+`between_ms` is the preceding loop-end to current loop-start gap, including the
+preceding sampler/logging and scheduling. `start_interval_ms` and
+`swap_call_interval_ms` are intervals between consecutive loop starts and swap
+**calls**, respectively, so they cross a frame boundary. They are not measured
+display presentation cadence. The original loop time still excludes the sampler.
+SDL version/video backend, current display mode/refresh (with validity), drawable
+size and SDL-reported swap interval are queried at reports, without changing them.
+The driver/compositor can still determine actual presentation behavior.
+
+Still-scene live/dead counts are updated at every existing insertion,
+invalidation and scene reset, including beyond the old 4,096-entry scan limit.
+Lifetime totals retain inserts, live/dead lookup hits, invalidations, insertion
+refusals, reset counts and cleared live/dead entries. `scene_accounting_valid`
+checks live+dead against actual container size. Upload totals are submitted bytes,
+not current VRAM allocation. Refusals include the existing capacity/index
+preconditions. Nothing is evicted or reclaimed by these counters; dead entries
+and vector capacity retain their existing lifetime policy.
+
+Clock reads and scope bookkeeping add per-draw overhead, not just report cost.
+F3 emits up to 180 longer lines and may itself cause a pause: the next frame's
+between-frame measurement exposes that gap. Use the same EXE without `--perf`
+for a diagnostic-overhead comparison; the timer fix remains active in both runs.
+
 Start with `--perf` to add bounded `[perf]` reports to the normal private game log.
 For a full playthrough, `--perf-interval 10` enables the same reporting every ten
 seconds (accepted intervals: 1, 5, 10, 30 or 60 seconds). Frame/event storage remains
 bounded. New native scratch and GLES conversion size/capacity counters distinguish
-retained buffers from contents; native scene dead-mesh scans are capped at 4,096.
+retained buffers from contents. Native still-scene live/dead accounting is now exact
+at insertion/invalidation/reset sites; texture payload scans remain capped at 4,096.
 
 `tools/playthrough/` supplies a user-run Windows kit launcher with its own persistent
 `userdata`, a fresh report directory per run and an external process-only memory
@@ -50,7 +117,7 @@ dump is attempted before normal crash logging/symbolization. This cannot guarant
 capture of hangs, forced termination, logger deadlocks in first-chance reporting,
 driver failures or severe exhaustion. No process is automatically stopped.
 
-Playthrough-kit synthetic validation on Windows: all 24 CTest suites passed,
+Earlier playthrough-kit synthetic validation on Windows: all 24 CTest suites passed,
 including real crash-reporter abort/exception dumps into Unicode report paths and
 the shipped watcher run against an asset-free fixture (5-second samples, quoted
 paths, persistent test progress, separate reports and nonzero child exit status).
@@ -58,7 +125,7 @@ All 19 asset-free Linux suites passed. These checks do not establish gameplay
 stability, real-world diagnostic overhead or leak/cache-eviction conclusions.
 
 Disabled by default; startup-only, before guest allocation/thread creation. This
-does not change frame caps, sleeps/spins, gameplay, native cleanup, cache eviction,
+does not change frame caps, sleeps/spins, gameplay, cache eviction,
 texture contents, graphics quality, saves or failure handling. Instrumentation
 has overhead; compare against the same EXE without `--perf`.
 
@@ -183,7 +250,7 @@ Independent snapshots are not one atomic cross-thread view of the entire engine.
 
 ## Scope and limits
 
-Sampling occurs once per second **on a completed main frame** and once before
+Sampling occurs at the chosen interval (one second by default) **on a completed main frame** and once before
 shutdown. No diagnostic thread is created and no cache is evicted. If the main
 thread blocks, reports can pause too; use an external sampling profiler to locate
 a stuck or CPU-heavy stack. Events are capped at 32 pending entries, with drops
@@ -194,7 +261,8 @@ native/game failures are neither caught nor suppressed by it.
 Counters for allocations/JIT/thread lifetime add small startup-opt-in bookkeeping
 costs. Disabled builds still contain lightweight gates; there is no runtime enable
 because earlier allocations would otherwise be missed. No optimization or leak
-fix is claimed. Follow-up CPU sampling can distinguish frame-spin, native host,
+fix beyond scoped Windows timer ownership is claimed. Follow-up CPU sampling can
+distinguish frame-spin, native host,
 guest/JIT and driver work; bounded logs alone cannot name a hot guest instruction.
 
 Synthetic tests exercise percentiles/overflow/reset, allocation/realloc/free and

@@ -441,6 +441,8 @@ struct SBox {
 std::vector<float> g_sverts;  // x, y, z
 std::vector<u32> g_sidx;
 std::vector<SMesh> g_smesh;
+perf::SceneCacheGauge g_scene_gauge;
+uint64_t g_scene_uploads = 0, g_scene_uploaded_vertices = 0, g_scene_uploaded_indices = 0;
 std::unordered_map<u64, size_t> g_skey;  // instance (vertex data + placement) -> g_smesh
 std::vector<SBox> g_schanges;            // where the still scene changed since the maps were last drawn
 bool g_supload = false, g_mesh_cached = false;
@@ -484,11 +486,13 @@ int type_size(GLenum t) {
 // sum, so seams do not show.
 std::vector<u32> g_weld_slot, g_weld_refs;  // rewritten every draw; indices or normal offsets for A/B mode
 void build_normals(const std::vector<u16>& idx, u32 n) {
+    perf::StageScope stage(perf::Stage::normals);
     if (g_vertex_prep_optimized) vertex_prep::normals_optimized(g_verts, idx, n, g_weld_slot, g_weld_refs);
     else vertex_prep::normals_reference(g_verts, idx, n, g_weld_slot, g_weld_refs);
 }
 
 void build_vertices(u32 lo, u32 n) {
+    perf::StageScope stage(perf::Stage::vertices);
     if (g_vertex_prep_optimized) vertex_prep::vertices_optimized(g_verts, lo, n, g_arr[A_VERTEX], g_arr[A_COLOR], g_arr[A_TEX0]);
     else vertex_prep::vertices_reference(g_verts, lo, n, g_arr[A_VERTEX], g_arr[A_COLOR], g_arr[A_TEX0]);
 }
@@ -521,6 +525,7 @@ void tint_vote(float weight) {
 }
 
 void apply_state() {
+    perf::StageScope stage(perf::Stage::upload_draw);
     // depth / blend / cull / scissor / masks: plain GL state, same enums as the game used
     auto en = [](GLenum cap, bool on) { on ? glEnable(cap) : glDisable(cap); };
     en(GL_DEPTH_TEST, g_st.depth_test);
@@ -640,6 +645,7 @@ void apply_state() {
 }
 
 void upload_and_draw(GLenum mode, const std::vector<u16>& idx) {
+    perf::StageScope stage(perf::Stage::upload_draw);
     p_glBindVertexArray(g_vao);
     p_glBindBuffer(GL_ARRAY_BUFFER, g_vbo);
     p_glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(g_verts.size() * sizeof(float)), g_verts.data(), GL_STREAM_DRAW);
@@ -1403,6 +1409,7 @@ void do_reload_shaders() {
 }
 
 void run_post() {
+    perf::StageScope stage(perf::Stage::post);
     if (!g_reload_path.empty()) do_reload_shaders();
     g_post_done = true;
     GLint fb = 0;
@@ -1629,10 +1636,12 @@ int g_cmp = 0, g_chg = 0;
 void lamps_drop(u64 base);
 // A mesh started to move: it leaves the still scene (its shadow is drawn every frame from now on).
 void static_kill(u64 base) {
+    perf::StageScope stage(perf::Stage::scene_cache);
     lamps_drop(base);
     for (SMesh& m : g_smesh)
         if (m.base == base && !m.dead) {
             m.dead = true;
+            if (perf::enabled()) g_scene_gauge.retire();
             SBox b;
             std::memcpy(b.lo, m.lo, 12);
             std::memcpy(b.hi, m.hi, 12);
@@ -1662,6 +1671,7 @@ void shadow_frame_end() {
 // Sets up this frame's light (once); false when there is no gameplay camera.
 bool shadow_frame() {
     if (g_shadow_frame != 0) return g_shadow_frame > 0;
+    perf::StageScope stage(perf::Stage::shadows);
     g_shadow_frame = -1;
     float v[16], t[3];
     if (!g_shadow_ok || g_post_state != 1 || !lights::camera_matrix(v, t)) return false;
@@ -1727,6 +1737,7 @@ bool shadow_frame() {
 
 // Is the mesh being drawn (vertex range lo..lo+n of the bound position array) something that moves?
 bool caster(u32 lo, u32 n) {
+    perf::StageScope stage(perf::Stage::scene_cache);
     const Array& a = g_arr[A_VERTEX];
     u64 key = (u64(reinterpret_cast<uintptr_t>(a.data)) * 0x9E3779B97F4A7C15ull) ^ (u64(lo) << 32) ^ n;
     Seen& s = g_seen[key];
@@ -1801,6 +1812,7 @@ bool caster(u32 lo, u32 n) {
         auto it = g_skey.find(ik);
         if (it != g_skey.end()) {
             g_mesh_cached = !g_smesh[it->second].dead;
+            if (perf::enabled()) g_scene_gauge.hit(!g_mesh_cached);
         } else if (g_sverts.size() < 9000000 && g_sidx.size() < 12000000 && g_idx.size() >= 3) {
             SMesh m{};
             m.first = u32(g_sidx.size());
@@ -1819,13 +1831,14 @@ bool caster(u32 lo, u32 n) {
             for (u16 ix : g_idx) g_sidx.push_back(basev + std::min(u32(ix), n - 1));
             g_skey[ik] = g_smesh.size();
             g_smesh.push_back(m);
+            if (perf::enabled()) g_scene_gauge.insert();
             SBox b;
             std::memcpy(b.lo, m.lo, 12);
             std::memcpy(b.hi, m.hi, 12);
             g_schanges.push_back(b);
             g_supload = true;
             // (this frame it is still drawn into the maps directly; from the next one it is in the kept depth)
-        }
+        } else if (perf::enabled()) ++g_scene_gauge.refused;
     }
     return s.dynamic;
 }
@@ -1969,6 +1982,7 @@ const GoboInfo& gobo_info(GLuint tex, float u0, float v0, float u1, float v1) {
 }
 
 void fan_floor(u32 n) {
+    perf::StageScope stage(perf::Stage::fixtures);
     if (n != 4 || !g_arr[A_TEX0].enabled || !g_st.unit[0].tex) return;
     Mat4 world = g_view_inv * g_mv.top();
     const float* tm = g_tex[0].top().m;
@@ -2033,6 +2047,7 @@ std::unordered_map<GLuint, std::array<u8, 256>> g_lamp_masks;  // per texture: w
 // The game's own upload of a texture (decoded RGBA): the small copy is taken here, so that nothing has to
 // be read back from the graphics card later (a read-back stalls the frame it happens in).
 void texture_pixels_impl(GLuint tex, const u8* rgba, int w, int h) {
+    perf::StageScope stage(perf::Stage::fixtures);
     if (!tex || w < 1 || h < 1 || w > 4096 || h > 4096) return;
     TexImage ti;
     const int sx = std::max(1, w / 256), sy = std::max(1, h / 256);
@@ -2078,6 +2093,7 @@ u32 g_pglow_ms = 0;
 
 #define GLOW_REJ(why) do { static int k_ = 0; if (g_shadow_debug && (k_++ % 300) < 2) LOGI("glow rejected (%s): %u verts tex %u col %.2f %.2f %.2f", why, n, g_st.unit[0].tex, g_st.color[0], g_st.color[1], g_st.color[2]); } while (0)
 void glow(u32 n) {
+    perf::StageScope stage(perf::Stage::fixtures);
     if (n < 4 || n > 240 || g_glows.size() >= 24 || g_idx.size() < 3) return;
     const float* m = g_mv.top().m;
     // eye-space centre and reach
@@ -2251,6 +2267,7 @@ void glow_frame_end() {
 }
 
 void beacon(u32 lo, u32 n) {
+    perf::StageScope stage(perf::Stage::fixtures);
     if (n < 12 || n > 600) return;
     Mat4 world = g_view_inv * g_mv.top();
     static std::vector<float> v;
@@ -2507,6 +2524,7 @@ void lamp_scan(u32 lo, u32 n) {
     // (a few milliseconds of this per frame at most: a mesh that has to wait is examined on a later frame,
     // when it is drawn again; entering a room would otherwise stall on all its meshes at once)
     if (g_ms_scan > 2.5) return;
+    perf::StageScope stage(perf::Stage::fixtures);
     StopWatch sw(g_ms_scan);
     g_lamp_done[key] = 1;
     const TexImage& ti = tex_image(g_st.unit[0].tex);
@@ -2693,6 +2711,7 @@ size_t g_solid_count() {
 // lights. The first kTiles of them get a shadow map (a tile of the atlas): every opaque mesh of the
 // scene is drawn into it as the game draws the frame, so walls, props and characters block the light.
 void setup_frame_lights() {
+    perf::StageScope stage(perf::Stage::fixtures);
     g_ntiles = 0;
     if (g_lights <= 0) return;
     beacon_lights();
@@ -2809,6 +2828,7 @@ bool box_in_reach(const float* lo, const float* hi, const float* p, float reach)
 // facing into the room, a strip at the foot of a wall facing up and into the room. False when the
 // surroundings are open (or unknown) all round.
 bool open_direction(const float* pos, float out[3]) {
+    perf::StageScope stage(perf::Stage::fixtures);
     StopWatch sw(g_ms_open);
     g_n_open++;
     const float kReach = 3.0f;
@@ -2858,6 +2878,7 @@ void draw_still_scene(const Tile& t) {
 }
 
 void assign_tiles() {
+    perf::StageScope stage(perf::Stage::shadows);
     const u32 now = SDL_GetTicks();
     auto dist = [](const float* a, const float* b) { return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2])); };
 
@@ -2983,6 +3004,12 @@ void assign_tiles() {
     glGetIntegerv(GL_ACTIVE_TEXTURE, &act);
     p_glBindVertexArray(g_svao);
     if (g_supload) {
+        perf::StageScope stage(perf::Stage::upload_draw);
+        if (perf::enabled()) {
+            ++g_scene_uploads;
+            g_scene_uploaded_vertices += g_sverts.size() * sizeof(float);
+            g_scene_uploaded_indices += g_sidx.size() * sizeof(u32);
+        }
         StopWatch sw(g_ms_upload);
         g_supload = false;
         p_glBindBuffer(GL_ARRAY_BUFFER, g_svbo);
@@ -3081,6 +3108,7 @@ void assign_tiles() {
 // only what moves, or what is not part of the kept still scene yet.
 void tile_pass(GLenum mode, GLsizei count) {
     if (!g_mesh_moves && g_mesh_cached) return;
+    perf::StageScope stage(perf::Stage::shadows);
     GLint fb = 0, vp[4];
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fb);
     glGetIntegerv(GL_VIEWPORT, vp);
@@ -3112,6 +3140,7 @@ void tile_pass(GLenum mode, GLsizei count) {
 
 // Second draw of the mesh that upload_and_draw has just drawn, into the shadow map.
 void shadow_pass(GLenum mode, GLsizei count) {
+    perf::StageScope stage(perf::Stage::shadows);
     GLint fb = 0, vp[4];
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fb);
     glGetIntegerv(GL_VIEWPORT, vp);
@@ -3388,12 +3417,6 @@ void texture_deleted(GLuint tex) {
 }
 void performance_snapshot(perf::Metrics& out) {
     uint64_t image_bytes = 0, image_capacity = 0;
-    size_t dead_meshes = 0, mesh_scanned = 0;
-    for (const auto& mesh : g_smesh) {
-        if (mesh_scanned == perf::cache_scan_limit) break;
-        ++mesh_scanned;
-        dead_meshes += mesh.dead;
-    }
     size_t scanned = 0;
     for (const auto& item : g_tex_images) {
         if (scanned == perf::cache_scan_limit) break;
@@ -3405,7 +3428,15 @@ void performance_snapshot(perf::Metrics& out) {
         {"image_scan_truncated", scanned < g_tex_images.size()}, {"lamp_masks", g_lamp_masks.size()},
         {"gobo_entries", g_gobo_info.size()}, {"samplers", g_samplers.size()},
         {"scene_meshes", g_smesh.size()}, {"scene_mesh_capacity_bytes", g_smesh.capacity()*sizeof(SMesh)},
-        {"scene_dead_meshes_scanned", dead_meshes}, {"scene_mesh_scan_truncated", mesh_scanned < g_smesh.size()},
+        {"scene_live_meshes", g_scene_gauge.live}, {"scene_dead_meshes", g_scene_gauge.dead},
+        {"scene_accounting_valid", perf::enabled() && !g_scene_gauge.errors && g_scene_gauge.live + g_scene_gauge.dead == g_smesh.size()},
+        {"scene_accounting_errors", g_scene_gauge.errors}, {"scene_inserted_total", g_scene_gauge.inserted},
+        {"scene_live_hits_total", g_scene_gauge.live_hits}, {"scene_dead_hits_total", g_scene_gauge.dead_hits},
+        {"scene_invalidated_total", g_scene_gauge.invalidated}, {"scene_refused_total", g_scene_gauge.refused},
+        {"scene_resets_total", g_scene_gauge.resets}, {"scene_cleared_live_total", g_scene_gauge.cleared_live},
+        {"scene_cleared_dead_total", g_scene_gauge.cleared_dead}, {"scene_uploads_total", g_scene_uploads},
+        {"scene_uploaded_vertex_bytes_total", g_scene_uploaded_vertices}, {"scene_uploaded_index_bytes_total", g_scene_uploaded_indices},
+        {"caster_entries", g_seen.size()},
         {"scene_keys", g_skey.size()}, {"scene_key_buckets", g_skey.bucket_count()},
         {"fixture_facings", g_facing.size()}, {"fixture_facing_buckets", g_facing.bucket_count()},
         {"vertex_prep_optimized", g_vertex_prep_optimized},
@@ -3498,6 +3529,8 @@ void set_lshade(float v) { g_lshade = std::clamp(v, 0.0f, 1.0f); }
 void set_fanshade(float v) { g_fanshade = std::clamp(v, 0.0f, 2.0f); }  // (2 = debug view)
 bool light_shadows() { return g_light_shadows; }
 void scene_changed() {
+    perf::StageScope stage(perf::Stage::scene_cache);
+    if (perf::enabled()) g_scene_gauge.reset();
     g_sverts.clear();
     g_sidx.clear();
     g_smesh.clear();
@@ -3552,6 +3585,7 @@ void set_array(int which, const Array& a) {
 
 // ---- drawing
 void draw_elements(GLenum mode, int count, GLenum type, const void* indices) {
+    perf::StageScope stage(perf::Stage::native_other);
     if (count <= 0 || !indices || !g_arr[A_VERTEX].enabled || !g_arr[A_VERTEX].data) return;
     post_before_draw();
     const u8* ip = static_cast<const u8*>(indices);
@@ -3689,6 +3723,7 @@ void draw_elements(GLenum mode, int count, GLenum type, const void* indices) {
 }
 
 void draw_arrays(GLenum mode, int first, int count) {
+    perf::StageScope stage(perf::Stage::native_other);
     if (count <= 0 || !g_arr[A_VERTEX].enabled || !g_arr[A_VERTEX].data) return;
     post_before_draw();
     g_gbuf_draw = g_shadow_draw = g_mesh_moves = false;
@@ -3702,6 +3737,7 @@ void draw_arrays(GLenum mode, int first, int count) {
 }
 
 void begin_frame() {
+    perf::StageScope stage(perf::Stage::native_other);
     g_trace_draws = g_trace_next;
     g_trace_next = false;
     g_seen_world = g_post_done = g_have_world_proj = g_normals_cleared = false;
@@ -3748,6 +3784,7 @@ void begin_frame() {
     g_caster_draws = 0;
 }
 void end_frame() {
+    perf::StageScope stage(perf::Stage::native_other);
     g_trace_draws = false;
     if (!g_enabled) return;
     if (g_seen_world && !g_post_done && post_wanted()) run_post();  // a frame without HUD draws

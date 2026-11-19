@@ -1,4 +1,5 @@
 #include "hle/timing.h"
+#include "hle/thread_timer.h"
 #include "performance.h"
 
 #include <mutex>
@@ -14,6 +15,38 @@
 namespace timing {
 
 namespace {
+#ifdef _WIN32
+struct WindowsTimer {
+    using Handle = HANDLE;
+    static Handle create() {
+        auto timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                           TIMER_ALL_ACCESS);
+        if (timer) perf::acquired(perf::Owner::wait_timer);
+        else perf::timer_error(perf::TimerError::create, GetLastError());
+        return timer;
+    }
+    static void close(Handle timer) {
+        if (CloseHandle(timer)) perf::released(perf::Owner::wait_timer);
+        else {
+            perf::timer_error(perf::TimerError::close, GetLastError());
+            perf::acquired(perf::Owner::retired_thread_timer);
+        }
+    }
+    static bool wait(Handle timer, int64_t ns) {
+        LARGE_INTEGER due;
+        due.QuadPart = -(ns / 100);  // relative, 100 ns units
+        if (due.QuadPart == 0) due.QuadPart = -1;
+        if (!SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
+            perf::timer_error(perf::TimerError::arm, GetLastError());
+            return false;
+        }
+        if (WaitForSingleObject(timer, INFINITE) == WAIT_FAILED)
+            perf::timer_error(perf::TimerError::wait, GetLastError());
+        // Keep the existing return/fallback semantics, including on wait failure.
+        return true;
+    }
+};
+#endif
 struct Base {
     int64_t real_ns;
     steady::time_point steady_at;
@@ -79,28 +112,10 @@ void sleep_ns(int64_t ns) {
         return;
     }
 #ifdef _WIN32
-    // high-resolution waitable timer (Windows 10 1803+), falling back to Sleep
-    thread_local HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
-                                                       TIMER_ALL_ACCESS);
-    // Observe the existing raw timer's lifetime, without adding a CloseHandle
-    // or otherwise changing the timer/cleanup policy being investigated.
-    struct TimerObservation {
-        bool counted;
-        explicit TimerObservation(HANDLE handle) : counted(handle && perf::enabled()) {
-            if(counted)perf::acquired(perf::Owner::wait_timer);
-        }
-        ~TimerObservation() { if(counted)perf::acquired(perf::Owner::retired_thread_timer); }
-    };
-    thread_local TimerObservation observation(timer);
-    if (timer) {
-        LARGE_INTEGER due;
-        due.QuadPart = -(ns / 100);  // relative, 100 ns units
-        if (due.QuadPart == 0) due.QuadPart = -1;
-        if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
-            WaitForSingleObject(timer, INFINITE);
-            return;
-        }
-    }
+    // Same high-resolution one-shot timer, reuse, rounding and Sleep fallback.
+    // Normal thread exit now releases this thread's handle; no cross-thread sweep.
+    thread_local detail::ThreadTimer<WindowsTimer> timer;
+    if (timer.wait(ns)) return;
     Sleep(DWORD((ns + 999999) / 1000000));
 #else
     timespec ts{time_t(ns / 1000000000), long(ns % 1000000000)};

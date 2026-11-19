@@ -1,4 +1,4 @@
-DETAILED LOW-END PC PLAYTHROUGH / HANDLES, AUDIO, HITCHES AND MEMORY
+WINDOWS LOW-END DIAGNOSTICS / FRAME STAGES, TIMER CLEANUP AND OWNERSHIP
 
 1. Extract the entire kit into a NEW writable folder on the low-end PC.
    Do not replace an installed EXE. Windows x86-64; no admin/Python needed.
@@ -17,7 +17,7 @@ DETAILED LOW-END PC PLAYTHROUGH / HANDLES, AUDIO, HITCHES AND MEMORY
    or downgrades graphics automatically. Launch resolution is 1280x720, cap 60.
    MSAA/VSync/quality use your test profile settings. Native preparation stays
    optimized; HLE dispatch and frame pacing use current main's implementations.
-5. Play normally. Press F3 just after noticing a stutter or delayed footstep.
+5. Play normally. Press F3 just after noticing visual stutter (or audio delay).
    It records a manual marker and up to 180 recent completed frames (about 3s
    at 60 FPS). It may cause a short diagnostic logging pause of its own.
    F3 is reserved for marking while this launcher's diagnostics are enabled.
@@ -40,20 +40,46 @@ DETAILED LOW-END PC PLAYTHROUGH / HANDLES, AUDIO, HITCHES AND MEMORY
    A freeze stops in-game sampling, but the external CSV can continue.
 
 SUGGESTED SHORT TEST (you operate the game)
-Continue into the mines with your usual Native settings. Stand still briefly,
-walk/jog on the hard rock surface, then stop and listen. Press F3 when lag or a
-hitch is noticeable, and write a short note of what you were doing. A normal
-level transition is useful if convenient; do not force a crash or repeat the
-whole campaign just for this test. A short Legacy comparison is optional.
+Continue your copied profile with the same Native quality as the previous kit.
+Prefer a location where you noticed visual stutter: stand still for about 30s,
+then repeat a short walk/turn route. Press F3 promptly after a stutter and note
+whether you were standing, turning, walking or fighting. One ordinary level
+transition/reload is useful for timer lifetimes if convenient; do not force a
+crash, overwrite your original profile or repeat the whole campaign for this.
+A short Legacy comparison is optional; the fine Native stages do not cover its
+fixed-function rendering. Audio buffering has NOT changed in this build.
 
 WHAT IS NEW
-- Each report retains up to 16 worst frames exceeding 50ms, including their own
+- Windows per-thread wait timers now close on normal thread exit, even without
+  --perf. Creation flags, precision, time scaling, reuse and Sleep fallback are
+  unchanged. No main-thread sweep closes a worker's timer while it is in use.
+  Active threads can legitimately retain timers in the last pre-shutdown report;
+  process _Exit lets Windows reclaim remaining handles. This is not a stutter fix.
+- Exclusive main-thread wall buckets separate guest/HLE remainder, Native draw
+  setup, vertex preparation, normals, caster/still-cache work, fixture work,
+  shadows, state/upload/draw calls, post-processing, present, swap and limiter.
+  Per-stage mean/max/call counts accompany each report; hitch/F3 records carry
+  their OWN stage values. Child stages are subtracted from parents. Driver waits
+  remain charged to whichever call blocks; guest_hle_other is not pure JIT/update
+  time. Maxima for different stages need not come from the same frame.
+- Frame budgets count loops over 25/33.333ms and at least 50ms, and pre-swap work
+  over 16.667/25/33.333ms. Counts overlap and include all interval frames; a 30 FPS
+  cap, loading, focus changes and limiter waits affect interpretation.
+- Start-to-start and swap-CALL intervals plus between-frame gaps reveal sampler/
+  scheduling pauses previously outside the loop measurement. These are NOT actual
+  display presentation intervals or GPU timings. Current SDL/backend/display
+  refresh and SDL-reported swap interval are logged without changing them.
+- Still-scene insertion, live/dead reuse, invalidation, refusals and reset/cleared
+  totals now use exact mutation counters, not the old partial 4,096-mesh scan.
+  Sizes/capacities and total still-scene upload bytes remain separate. Refusals
+  include existing insertion preconditions; dead entries are not reclaimed.
+- Each report retains up to 16 worst frames at least 50ms, including their own
   game/render, swap and limiter times. Omitted hitches are counted, not hidden.
 - Audio reports include requested/obtained device details, driver, pre/post-write
   queue ranges in bytes and microseconds, write gaps and backpressure wait buckets.
   Buckets are disjoint ranges (le2ms means above 1ms and at most 2ms, etc.).
   The first observed write gap is zero. No PCM or sound contents are recorded.
-- Owners include wait timers, timers surviving their creating thread's exit,
+- Owners include wait timers, failed thread-exit timer closes,
   diagnostic thread-query handles, JNI objects/references, asset files and guest
   mutex/condition/semaphore wrappers. Snapshots of JNI and I/O registries can be
   skipped if busy, and are explicitly marked; these do not pause waiting on locks.
@@ -66,8 +92,10 @@ WHAT IS NEW
   Only instrumented owners have exact create/release counts; an unattributed
   Event or Semaphore is not automatically a driver leak. Census snapshots are
   not complete create/close histories, and numeric handles can be reused.
-- The existing raw wait-timer cleanup policy is deliberately unchanged. A zero
-  wait_timer_closed counter is an observation, not a new cleanup mechanism.
+- wait_timer_closed counts successful closes; wait_timer_live is created minus
+  closed. exited_thread_timer_retained now means FAILED closes only, unlike the
+  previous observer build. Create/arm/wait/close failure counts and last Windows
+  error codes are explicit. No retry policy or wait-error return rule is changed.
 - Queue duration is only queued PCM, NOT event-to-speaker latency. It excludes
   unknown backend/hardware buffering and does not identify footstep triggers.
   Zero underruns do not prove low latency. Audio buffer limits are unchanged.
@@ -86,8 +114,9 @@ code memory, and texture estimates are not measured VRAM. Metrics overlap and
 do not cover every host/driver allocation. Growth over a fresh playthrough may
 be normal warm-up, not a leak. Repeated equivalent checkpoint/load cycles and
 stable idle periods are the useful follow-up if a particular owner keeps growing.
-The build observes: it does NOT trim working sets, flush caches, change save
-logic, recover backups, or claim a leak is fixed or a cache is safe to release.
+Apart from timer cleanup, the build observes: it does NOT trim working sets,
+flush caches, change save logic, recover backups, or claim other leaks are fixed
+or a cache is safe to release.
 Instrumentation has some overhead; it is not a benchmark against another EXE.
 
 The retained matching unstripped developer EXE is needed to symbolize dumps.

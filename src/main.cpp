@@ -474,6 +474,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     SDL_GL_SetSwapInterval(settings::get_int("vsync", 1) ? 1 : 0);
+    if (performance) perf::runtime_window(win);
     hle::gles_init_host();
     // the game always sees a fixed "device screen"; the frontend scales it to the window
     hle::present_init(g_config.screen_w, g_config.screen_h, settings::get_int("msaa", 4));
@@ -567,6 +568,7 @@ int main(int argc, char** argv) {
     };
     while (!g_quit) {
         const auto perf_start=perf::stamp();
+        perf::stages_begin(perf_start);
         uint64_t perf_sleep=0,perf_spin=0;
         SDL_GL_GetDrawableSize(win, &win_w, &win_h);
         run_script(frames + 1);
@@ -676,7 +678,10 @@ int main(int argc, char** argv) {
         }
         const auto perf_game_start=perf::stamp();
         render::begin_frame();
-        native(kRenderer, "NativeOnDrawFrame", "()V", renderer);
+        {
+            perf::StageScope stage(perf::Stage::guest_hle_other);
+            native(kRenderer, "NativeOnDrawFrame", "()V", renderer);
+        }
         render::end_frame();
         if (gl_trace_frame && frames + 1 == gl_trace_frame) cpu::set_gl_trace(false);
         // skipping a cinematic: run extra game frames per displayed frame, without vsync
@@ -686,7 +691,10 @@ int main(int argc, char** argv) {
             for (int i = 0; i < 7 && input::fast_forwarding(); i++) {
                 input::frame(win);
                 render::begin_frame();
-                native(kRenderer, "NativeOnDrawFrame", "()V", renderer);
+                {
+                    perf::StageScope stage(perf::Stage::guest_hle_other);
+                    native(kRenderer, "NativeOnDrawFrame", "()V", renderer);
+                }
                 render::end_frame();
             }
         } else if (ff_vsync_off) {
@@ -701,7 +709,10 @@ int main(int argc, char** argv) {
                 menu_nav::frame(true);  // (keeps its list of live buttons per game frame; draws nothing)
                 input::frame(win);
                 render::begin_frame();
-                native(kRenderer, "NativeOnDrawFrame", "()V", renderer);
+                {
+                    perf::StageScope stage(perf::Stage::guest_hle_other);
+                    native(kRenderer, "NativeOnDrawFrame", "()V", renderer);
+                }
                 render::end_frame();
             }
         } else if (turbo_vsync_off) {
@@ -756,15 +767,22 @@ int main(int argc, char** argv) {
                 save_screenshot(dir + "/frame_" + std::to_string(frames) + ".bmp", g_config.screen_w, g_config.screen_h);
             }
         patches::frame();
-        hle::present_end(win_w, win_h);
+        {
+            perf::StageScope stage(perf::Stage::present);
+            hle::present_end(win_w, win_h);
+        }
         const auto perf_swap_start=perf::stamp();
-        SDL_GL_SwapWindow(win);
+        {
+            perf::StageScope stage(perf::Stage::swap);
+            SDL_GL_SwapWindow(win);
+        }
         const auto perf_swap_end=perf::stamp();
         if (frames % 600 == 0) LOGI("frame %llu", (unsigned long long)frames);
         if (exit_frame && frames >= exit_frame) g_quit = true;
 
         const int fps_limit = fps_arg >= 0 ? fps_arg : settings::get_int("fps_limit", 60);  // 0 = unlimited
         if (fps_limit > 0 && !input::fast_forwarding() && !dev::turbo()) {  // the game was built for phone frame rates
+            perf::StageScope stage(perf::Stage::limiter);
             static u64 next_tick = SDL_GetPerformanceCounter();
             const u64 freq = SDL_GetPerformanceFrequency();
             next_tick += freq / u64(fps_limit);
@@ -785,9 +803,16 @@ int main(int argc, char** argv) {
         }
         if(performance) {
             const auto end=perf::stamp();
-            perf::runtime_frame({end-perf_start,perf_swap_start-perf_start,perf_game_end-perf_game_start,
-                                 perf_swap_end-perf_swap_start,perf_sleep,perf_spin},SDL_GetWindowFlags(win),
-                                 fps_limit,input::fast_forwarding(),dev::turbo()!=0);
+            static uint64_t previous_start=0,previous_end=0,previous_swap=0;
+            perf::Frame frame{end-perf_start,perf_swap_start-perf_start,perf_game_end-perf_game_start,
+                              perf_swap_end-perf_swap_start,perf_sleep,perf_spin};
+            frame.stages=perf::stages_finish(end);
+            frame.between_ns=previous_end ? perf_start-previous_end : 0;
+            frame.start_interval_ns=previous_start ? perf_start-previous_start : 0;
+            frame.swap_call_interval_ns=previous_swap ? perf_swap_start-previous_swap : 0;
+            previous_start=perf_start;previous_end=end;previous_swap=perf_swap_start;
+            perf::runtime_frame(frame,SDL_GetWindowFlags(win),
+                                  fps_limit,input::fast_forwarding(),dev::turbo()!=0);
         }
     }
 

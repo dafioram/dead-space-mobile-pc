@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <numeric>
 #include <stdexcept>
 #include <thread>
 
@@ -58,11 +59,73 @@ void allocator() {
     for(auto& t:workers)t.join();
     require(metric(memory(),"heap_live_blocks")==0 && metric(memory(),"heap_counter_errors")==0,"concurrent allocator counters balance");
 }
+void stages_and_budgets() {
+    perf::StageClock clock;
+    clock.begin(100);
+    auto host=clock.enter(perf::Stage::guest_hle_other,110);
+    auto guest=clock.enter(perf::Stage::vertices,130);
+    clock.leave(guest,160);
+    auto same=clock.enter(perf::Stage::guest_hle_other,170);
+    clock.leave(same,180);
+    clock.leave(host,190);
+    auto data=clock.finish(200);
+    require(data.valid && data.errors==0,"valid balanced stage frame");
+    require(data.ns[size_t(perf::Stage::host_other)]==20 && data.ns[size_t(perf::Stage::guest_hle_other)]==50 && data.ns[size_t(perf::Stage::vertices)]==30,"nested stages are exclusive, including same-stage recursion");
+    require(std::accumulate(data.ns.begin(),data.ns.end(),uint64_t(0))==100 && data.calls[size_t(perf::Stage::guest_hle_other)]==2,"stage coverage and scope counts");
+    clock.begin(100);clock.enter(perf::Stage::post,101);
+    require(clock.finish(102).errors==1,"unfinished scope is explicit");
+    clock.begin(100);clock.enter(perf::Stage::post,99);clock.leave(perf::Stage::host_other,101);
+    require(clock.finish(102).errors==1,"backwards clock is explicit");
+    perf::FrameWindow window;
+    const uint64_t loops[]={25000000,25000001,33333333,50000000};
+    const uint64_t work[]={16666667,16666668,25000000,33333334};
+    for(size_t i=0;i<4;++i) {
+        perf::Frame frame{loops[i],work[i]};
+        frame.stages.valid=true;frame.stages.ns[0]=frame.loop_ns;
+        frame.stages.calls[0]=1;frame.between_ns=5000000;
+        frame.start_interval_ns=loops[i];frame.swap_call_interval_ns=10000000;
+        window.add(frame);
+    }
+    auto summary=window.summary();
+    require(summary.loop_gt25==3 && summary.loop_gt33==1 && summary.loop_ge50==1,"exact inclusive/exclusive loop thresholds");
+    require(summary.work_gt16==3 && summary.work_gt25==1 && summary.work_gt33==1,"work thresholds exclude limiter and swap");
+    require(summary.start_intervals==4 && summary.start_gt25==3 && summary.start_gt33==1 && summary.start_ge50==1,"start-to-start budgets include between-frame gaps");
+    require(summary.between_mean_ms==5 && summary.start_max_ms==50 && summary.swap_call_mean_ms==10,"cadence aggregates");
+    require(summary.stage_frames==4 && summary.stage_errors==0 && summary.stage_calls[0]==4 && summary.stage_max_ms[0]==50 && summary.stage_mean_ms[0]==summary.loop_mean_ms,"exclusive stage aggregation");
+    perf::Frame broken{1};broken.stages.valid=true;window.add(broken);
+    require(window.summary().stage_errors==1,"stage coverage mismatch is not hidden");
+    window.reset();summary=window.summary();
+    require(summary.stage_frames==0 && summary.stage_calls[0]==0 && summary.start_intervals==0 && summary.loop_gt25==0,"all detail aggregates reset");
+    perf::stages_begin(perf::now_ns());
+    try {perf::StageScope scope(perf::Stage::normals);throw std::runtime_error("synthetic");}catch(const std::runtime_error&){}
+    auto scoped=perf::stages_finish(perf::now_ns());
+    require(scoped.valid && scoped.errors==0 && scoped.calls[size_t(perf::Stage::normals)]==1,"exception unwinding restores stage");
+    {perf::StageScope scope(perf::Stage::vertices);}
+    require(!perf::stages_finish(perf::now_ns()).valid,"outside-frame stages are ignored");
+    std::array<perf::StageData,2> threaded{};
+    std::vector<std::thread> workers;
+    for(size_t i=0;i<2;++i)workers.emplace_back([&,i] {
+        perf::stages_begin(perf::now_ns());
+        {perf::StageScope scope(i?perf::Stage::vertices:perf::Stage::post);}
+        threaded[i]=perf::stages_finish(perf::now_ns());
+    });
+    for(auto& worker:workers)worker.join();
+    require(threaded[0].calls[size_t(perf::Stage::vertices)]==0 && threaded[1].calls[size_t(perf::Stage::post)]==0,"stage clocks never mix thread data");
+    perf::SceneCacheGauge cache;
+    for(int i=0;i<6000;++i)cache.insert();
+    for(int i=0;i<1500;++i)cache.retire();
+    cache.hit(false);cache.hit(true);++cache.refused;
+    require(cache.live==4500 && cache.dead==1500 && cache.inserted==6000 && cache.live_hits==1 && cache.dead_hits==1,"cache counts exact beyond old scan limit");
+    cache.reset();require(cache.live==0 && cache.dead==0 && cache.cleared_live==4500 && cache.cleared_dead==1500 && cache.resets==1,"cache scene-reset accounting keeps lifetime totals");
+    cache.retire();require(cache.errors==1 && cache.dead==0,"cache underflow explicit");
+}
 void detailed_observers() {
     auto before=metric(perf::owner_sample(),"asset_file_live");
     { perf::OwnedResource file(perf::Owner::asset_file);
       require(metric(perf::owner_sample(),"asset_file_live")==before+1,"owned resource acquisition"); }
     require(metric(perf::owner_sample(),"asset_file_live")==before,"owned resource lifetime balanced");
+    perf::timer_error(perf::TimerError::close,6);
+    require(metric(perf::owner_sample(),"wait_timer_close_failures")==1 && metric(perf::owner_sample(),"wait_timer_close_last_error")==6,"timer failure operation and Windows error remain explicit");
     perf::AudioWindow audio;
     audio.add({22528,24576,2048,10000000,2000000});
     audio.add({20000,22048,2048,120000000,0});
@@ -75,9 +138,16 @@ void detailed_observers() {
     require(metric(sample,"queue_after_max_us")==150929 && metric(sample,"device_buffer_frames")==1024,"PCM queue duration is format-derived, not end-to-end latency");
     require(metric(perf::audio_sample(),"window_writes")==0,"interval audio histogram resets");
     perf::HitchWindow history;
-    for(uint64_t i=1;i<=200;++i)history.add({i,i*1000000,3,{i==190?100000000ull:i==200?200000000ull:16000000ull}});
+    for(uint64_t i=1;i<=200;++i) {
+        perf::Frame frame{i==190?100000000ull:i==200?200000000ull:16000000ull};
+        frame.stages.valid=true;frame.stages.ns[size_t(perf::Stage::normals)]=i;
+        frame.stages.calls[size_t(perf::Stage::normals)]=1;frame.between_ns=i*1000;
+        history.add({i,i*1000000,3,frame});
+    }
     require(history.recent_count()==180 && history.recent(0).serial==21 && history.recent(179).serial==200,"bounded ordered frame history");
     require(history.slow_count()==2,"hitch threshold");
+    require(history.recent(179).frame.stages.ns[size_t(perf::Stage::normals)]==200 && history.recent(179).frame.between_ns==200000,"history preserves same-frame stage/cadence records");
+    require(history.slow(0).frame.stages.ns[size_t(perf::Stage::normals)]==190,"hitch keeps original stage attribution, not a later frame");
     for(uint64_t i=0;i<40;++i)history.add({201+i,0,3,{50000000+i*1000000}});
     require(history.slow_count()==16 && history.dropped()==26,"bounded worst-hitch retention");
     uint64_t worst=0;
@@ -89,10 +159,13 @@ void detailed_observers() {
 int main() {
     try {
         require(!perf::enabled(),"disabled by default");
+        perf::stages_begin(100);{perf::StageScope scope(perf::Stage::post);}
+        require(!perf::stages_finish(200).valid,"disabled stage capture stays empty");
         perf::event("test","ignored");require(perf::take_events().entries.empty(),"disabled observer does not queue");
         require(perf::command("/perf").find("disabled")!=std::string::npos,"startup opt-in required");
         frames();
         perf::enable();
+        stages_and_budgets();
         detailed_observers();
         perf::AllocationGauge gauge;gauge.add(32);gauge.add(64);gauge.remove(32);
         require(gauge.bytes==64 && gauge.blocks==1 && gauge.peak_bytes==96,"allocation gauge");

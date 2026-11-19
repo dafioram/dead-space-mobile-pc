@@ -1,6 +1,8 @@
 #pragma once
 #include "performance.h"
+struct SDL_Window;
 namespace perf {
+void runtime_window(SDL_Window* window);  // borrowed on main thread, queried only while alive
 // Startup-only; longer intervals reduce diagnostic I/O during full playthroughs.
 bool runtime_interval(unsigned seconds);
 // Main/render thread only, at a completed frame. No GPU queries or guest calls.
