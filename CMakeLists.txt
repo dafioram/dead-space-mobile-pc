@@ -43,6 +43,7 @@ find_package(ZLIB REQUIRED)
 add_executable(deadspace
     src/main.cpp
     src/log.cpp
+    src/host_diagnostics.cpp
     src/apk.cpp
     src/apk_cli.cpp
     src/sha256.cpp
@@ -59,6 +60,7 @@ add_executable(deadspace
     src/devmode.cpp
     src/objects.cpp
     src/interact.cpp
+    src/ammo_pickup.cpp
     src/lights.cpp
     src/texpack.cpp
     src/debugview.cpp

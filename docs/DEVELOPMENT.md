@@ -98,6 +98,26 @@ This is a baseline regression suite, not a claim that the importer handles every
 malformed archive safely. CRC verification and comprehensive importer hardening
 remain separate work. Tests do not launch the JIT, render, or validate gameplay.
 
+## Ordinary host/input log context
+
+Normal startup logging (no extra diagnostic flag) records the SDL-selected video
+backend, compiled/runtime SDL versions and requested `SDL_VIDEODRIVER` override.
+Linux additionally records kernel release/architecture, bounded desktop/session
+environment hints and whether WSL environment markers are present. It does not
+dump the environment, hostname, WSL distro name or display socket paths.
+
+The selected SDL backend is the application's backend, not proof of the whole
+desktop setup: `x11` can be XWayland, `wayland` can be nested Weston, and session/
+WSL environment markers are hints only. Startup display/refresh, drawable size
+and swap interval are SDL-reported configuration, not measured display cadence.
+
+Mouse-mode transitions log the existing request's result/error and SDL-reported
+relative state. A successful request does not establish host pointer confinement.
+Logging does not change gameplay ownership, cursor policy, backend selection,
+capture retries, graphics or frame pacing; failed requests keep existing behavior.
+The asset-free `host_diagnostics` test compiles the production logger with
+declaration-only SDL adapters, not a graphical session or live input backend.
+
 ## Continuous integration
 
 `.github/workflows/build.yml` checks pushes and pull requests, and supports manual
