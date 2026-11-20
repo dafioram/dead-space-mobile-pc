@@ -67,29 +67,40 @@ manual recovery, and never blindly mix checkpoint/level files from different run
 To test persistence across launches, use a copied profile with `--data` **without**
 `--no-save`; that flag intentionally discards session progress on exit.
 
-## Keyboard shortcuts
+## Keyboard shortcuts and debug views
 
-| Key | Action |
-|---|---|
-| Backtick / tilde | Open or close the command console |
-| F5 | Cycle painted vertex lighting: normal / hidden / alone |
-| F6 | Toggle light-placement overlay |
-| F7 | Toggle hitbox overlay |
-| F8 | Switch Legacy / Native renderer |
-| F9 | Log an interaction report: what E would select |
-| F10 | Toggle interaction volumes: cyan reach, white usable, green selected |
-| F11 / Alt+Enter | Toggle fullscreen |
-| F12 | Save a screenshot in `shots` beside the executable |
-| Left Alt (hold) | Release gameplay mouse capture; use the native touch pointer |
+The debug keys (backtick, F5-F10, F12, Left Alt) are listed with the other bindings in
+[CONTROLS.md](CONTROLS.md). Each view below can also be toggled from the console; `/debug_off` turns
+all four off.
 
-Renderer effects/overlays can differ between Native and Legacy. F8 and graphics
-options may persist settings during a normal run; use `--no-save` for isolated
+### Debug views
+
+- **Vertex lighting** (F5, `/debug_vertexlight`, cycles normal / hidden / alone): *hidden* draws the
+  level's opaque, vertex-coloured meshes without their vertex colours (textures and added lights only);
+  *alone* draws them with the vertex colours but no texture. Meshes without vertex colours are
+  unaffected: where nothing changes, the lighting is painted into the textures.
+- **Lights** (F6, `/debug_lights`): a cross at every light the port adds, within 30 m, in the light's
+  colour, with its kind (strip light, alarm spot, RIG health, stasis module, visor, saw, nav line,
+  projectile, flash), radius, and shadow map number if it has one. Lit lights get a ring showing their
+  radius; alarm spotlights show their axis and cone edges. Dim crosses are strip lights that exist in
+  the level but are not lit right now (out of view).
+- **Hitboxes** (F7, `/debug_hitboxes`): the bounding box the game reports for each object within 18 m
+  (GameObject::getBounds): green player, red enemies, pink severed limbs, orange projectiles, yellow
+  everything else, named when close. These are whole-object boxes, not per-limb hit volumes.
+- **Interaction** (F10, `/debug_interact`): cyan = the area in front of the player that E checks,
+  white = usable objects' zones, orange = kinesis targets, green = what E would pick. F9 instead writes
+  an interaction report (what E would use and every usable object nearby) to `deadspace.log`.
+  See [How E picks](CONTROLS.md#how-e-picks).
+
+F8 switches between the Legacy and Native renderers. Renderer effects and overlays can differ between
+them. F8 and graphics options may persist settings during a normal run; use `--no-save` for isolated
 comparisons. A report or overlay is not a collision or gameplay fix.
 
 ## In-game console
 
 Open with backtick/tilde. Enter runs a command, Up/Down recalls history, Tab
-completes the first suggestion, and Escape closes it. Type `/help` for the list.
+completes the first suggestion, and Escape closes it. Typing `/` shows the matching commands above
+the input line, filtered as you type. Type `/help` for the list.
 Commands are case-insensitive; spaces are accepted in place of underscores.
 
 | Command | Effect / caution |
@@ -114,6 +125,9 @@ Commands are case-insensitive; spaces are accepted in place of underscores.
 | `/level` | List available playable map IDs from your assets |
 | `/level_MAP` | Developer level load, e.g. `/level_01_gov_02`; may affect progress |
 | `/spawn_NAME_COUNT` | Spawn 1–20 enemies, e.g. `/spawn_lurker_1`; may disturb scripts |
+
+`/level_MAP` uses the game's developer level select, which also moves the current save profile to that
+level; `/level` lists the maps.
 
 Enemy names: `slasher`, `lurker`, `brute`, `exploder`, `pregnant`, `swarm`, `boss`.
 Count defaults to 1. Spawn placement uses a simple ground-oriented arrangement;
@@ -234,6 +248,48 @@ uses fractions of the screen.
 | `light [R G B [RADIUS [MS [FWD UP SIDE]]]]` | Temporary test light near the player |
 | `tint RRGGBB [AMOUNT]`, `tint off`, `shownodes X Z [RADIUS]` | World tint / unhide level nodes |
 | `lighttrace 1|0`, `perf 1|0`, `gltrace 1|0`, `shaders [PATH]` | Trace lights/performance/GL or reload post shaders from source |
+
+### Developer workflow scripts
+
+These helpers live in `tools/` and are for people working from a source checkout. Like `dev.py`, they
+assume disposable profiles. `DS_DEV=name` in front of any dev script runs it as a separate instance (own
+command folder `name/`, own profile `name_data/`), so several levels can be examined at once. Do not put
+MSYS2 on the PATH before calling the scripts: MSYS2's bash started from Git Bash drops environment
+variables (the scripts call each other with `"$BASH"` for the same reason).
+
+- **Quick start**: `tools/devfresh.sh [--level MAP] [--at "X Y Z"] [--renderer native|legacy]` reaches
+  gameplay on a fresh profile in about 6-10 s. It runs the game unthrottled (`turbo 6`: six extra game
+  frames per displayed frame, no frame limit) and keeps pressing "continue" until the player has control,
+  then turns turbo off. Waits are by state, not by frame count (`waitfor`, `tapbtn`). It deletes its
+  data directory first; never point it at real userdata.
+- **Main menu**: `tools/tomenu.sh` starts a fresh profile and stops at the main menu (a fresh profile only
+  has one after a game exists: it starts one, skips the intro, pauses and quits to the menu; about 40 s).
+- **Lighting survey**: `tools/survey.sh LEVEL [COUNT]` stands in front of COUNT doors looking down the
+  corridor and prints, per stop, brightness / clipped / near-black share with the added lighting off and on
+  and the lights in use; shots go to `survey/`. `tools/surveysum.py FILES` averages per level.
+- **Shader hot-reload**: `shaders` recompiles the six post-processing shaders (bloom, AO, final lighting
+  pass) from the raw strings in `src/render/native.cpp` on disk, in under a second, with no rebuild or
+  restart. A shader that does not compile is reported with the driver's message and the old one stays.
+  The per-draw shader (`kVS` / `kFS`) still needs a rebuild.
+- **Text instead of pictures**: `report` prints the state (gameplay / menu, highlighted button, usable
+  buttons), what the last frame was drawn with (lights by kind, shadow tiles, fog draws, world tint,
+  lockdown) and the player's position; `stat [X0 Y0 X1 Y1]` gives mean colour, luma, saturation, clipped
+  and near-black share of a screen region (fractions of the screen).
+- **Bursts**: `burst NAME [N] [STEP] [DIV]` records N frames STEP frames apart into one filmstrip PNG
+  (four per row), for motion and flicker.
+- **Performance**: `perf 1` logs slow frames with where the renderer's own CPU time went (lamp search, lamp
+  facing, shadow-map drawing, still-scene upload). The lamp search is capped at about 2.5 ms per frame and
+  skips texture areas with nothing bright in them (a 16 x 16 mask per texture).
+- **Store and bench tests**: `rich [CREDITS] [NODES]` fills the wallet (default 9999999 credits, 99 power
+  nodes); level 01_gov_03 has both next to each other (`goto Store 0`, `goto Bench 0`, `press e`).
+- **Start and crash checks**: `tools/starttest.py N SECONDS [-- game args]` starts the dev build N times on
+  a throwaway profile and reports any start that exits by itself, with its exit code. Access violations
+  outside guest memory are logged at first chance (`access violation (first chance)` plus a host stack).
+  `tools/dev.py status` says whether the dev instance is running and, if it has exited, shows the crash
+  report from its log; `send` and `status` exit with code 3 as soon as the game is not running.
+- **Grabs**: `tools/grabtest.sh ENEMY DIST` runs a grab test (slasher, lurker, swarm).
+
+Commands are listed at the top of `src/devmode.cpp`.
 
 ## Privacy and interpretation
 

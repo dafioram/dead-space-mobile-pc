@@ -46,6 +46,39 @@ fixtures from the APK, even when testing a reported game-data bug. Gameplay
 checks requiring real assets or saves stay local and are reported separately
 from public, asset-free tests.
 
+## Building from source
+
+`external/dynarmic` is a clone of https://github.com/azahar-emu/dynarmic with its submodules
+`fmt mcl robin-map xbyak zycore zydis` checked out (both platforms).
+
+### Windows (MSYS2 MINGW64)
+
+```
+pacman -S mingw-w64-x86_64-{gcc,cmake,ninja,SDL2,boost,zlib}
+git submodule update --init --recursive
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+ninja -C build
+```
+
+The Windows build statically links SDL2 and the compiler runtimes, so those DLLs do not need to be
+shipped separately. Windows system libraries and a working OpenGL driver are still required.
+
+The installer (`installer/installer.cpp`, a small Win32 program with the checked `deadspace.exe` and
+notices embedded as resources, and `src/apk.cpp` for the import) is built manually from an exact tagged
+checkout; see [RELEASING.md](RELEASING.md).
+
+### Linux (x86-64)
+
+```
+sudo apt install build-essential cmake ninja-build libsdl2-dev libboost-dev zlib1g-dev libgl-dev
+git submodule update --init --recursive
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+ninja -C build
+```
+
+The application build above needs SDL2, OpenGL and Dynarmic. For a lightweight test-only build that
+needs none of them, see [Asset-free tests](#asset-free-tests).
+
 ## Asset-free tests
 
 The test-only build needs a C++20 compiler, CMake, Python 3.8+ and zlib development
@@ -132,7 +165,7 @@ from an explicit allowlist, includes dependency notices, generates build
 information and SHA-256 checksums, and checks the package before uploading.
 It never copies tests, saves, logs,
 game data or an entire build directory. Linux artifacts require the host
-libraries listed in the build instructions; they are not universal AppImages.
+libraries listed in the [Linux install notes](INSTALL.md#installing-linux); they are not universal AppImages.
 
 Actions are pinned to commit IDs, job tokens have read-only contents permission,
 checkout credentials are not persisted, and no `pull_request_target` workflow
@@ -141,8 +174,19 @@ builds no installer. A separate published-release/manual-backfill workflow build
 exact-tag portable assets, verifies them, and uploads them with a narrowly scoped
 write-permission job. The Windows installer stays manual; see [RELEASING.md](RELEASING.md).
 
-## Commit attribution
+## Source layout
 
-Commits made for this fork should name David as author with
-`5838258+dafioram@users.noreply.github.com`. AI-assisted commits may include a
-`Co-authored-by` trailer; do not replace the user's authorship.
+- `src/cpu.*`: dynarmic wrapper, guest threads, host<->guest calls (SVC stubs)
+- `src/memory.*`: 4 GiB guest address space, heap, mmap regions
+- `src/elf_loader.*`: loads/relocates the ARM shared library, symbolizes addresses
+- `src/hle/`: bionic libc, stdio, printf/scanf, pthreads, liblog, GLES 1.1 -> OpenGL, timing
+- `src/jni/`: JNIEnv/JavaVM tables and host versions of the Java classes the game calls
+- `src/apk.*`: APK (zip) import
+- `installer/`: the Windows installer / uninstaller
+- `src/render/native.*`, `src/lights.*`: the new renderer: lighting, shadow maps, post-processing
+- `src/texpack.*`: texture packs
+- `src/input.*`, `src/menu_nav.*`: keyboard, mouse and controller; menu navigation
+- `src/sbin.*`, `src/game_patches.*`: patches the game's menu data (SBIN databases): the extra Options
+  pages, keyboard / controller wording, the main menu's Quit button
+- `src/settings.*`: port settings (`userdata/port_settings.ini`)
+- `tools/`: dex disassembler, ARM disassembly helpers, texture/screenshot utilities

@@ -1,8 +1,32 @@
 # Rendering details
 
-For renderer selection and performance guidance, see the [README](../README.md#rendering).
-This guide describes the Native renderer's effects and implementation on current main.
-Native CPU vertex/normal preparation is covered separately in [Native preparation](NATIVE_PREPARATION.md).
+## Renderers and performance
+
+The game draws with OpenGL ES 1.1 (fixed function). Two paths are built in:
+
+- **Legacy**: each GL ES call is translated to desktop OpenGL's own fixed-function pipeline.
+- **Native**: the port mirrors the game's GL state, converts every draw's vertex data itself and draws
+  it through its own GLSL shaders (modern OpenGL), with optional lighting and post-processing.
+  Baseline comparisons use `tools/framediff.py`; these are not a guarantee of pixel-identical output
+  in every scene, and enabling enhancements intentionally changes the image.
+
+Switch with F8, the Options > Graphics row, or `renderer = native|legacy` in `port_settings.ini`.
+The Legacy path stays as the fallback.
+
+On a slower PC, try **Legacy** if Native cannot maintain your desired frame rate. Native's lighting
+and shadows add work; neither renderer has a universal performance guarantee. Keep the same
+resolution, frame cap and scene when comparing them. The default cap is 60 FPS; higher limits
+have not been comprehensively validated for gameplay and timing.
+
+Native offers anisotropic texture filtering, improved depth precision, ambient occlusion,
+bloom/sharpening, dynamic lights, shadows and specular highlights. Configure these in
+Options > Graphics (see [Controls and options](CONTROLS.md)); some depend on driver capabilities.
+Native CPU vertex/normal preparation is optimized by default; its reference mode and validation scope
+are documented in [Native preparation](NATIVE_PREPARATION.md).
+
+## Native renderer details
+
+The rest of this guide describes the Native renderer's effects and implementation on current main.
 
 World tints (the red alarm lighting, GameWorld::setTintOverride) reach the renderer as GL lighting
 with no lights: scene ambient x vertex colour. The native shader implements that ambient-only case.

@@ -61,3 +61,6 @@ creates shortcuts and asks the user for their APK (or preserves existing importe
 data when chosen). It also installs `THIRD_PARTY_NOTICES.txt` and `BUILD_INFO.txt`.
 Do not run installation/uninstallation tests against a real user installation.
 An installer build/resource check is not a claim of an end-to-end installation test.
+
+For automated tests only, `setup.exe /silent <folder> <apk>` installs without a window (exit code 0 on
+success); run it against a throwaway folder, never a real installation.

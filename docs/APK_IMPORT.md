@@ -34,6 +34,13 @@ core. No nested assets, HD textures or Android runtime are partially installed.
 Base-layout and optional HD support are separate future tasks; there is no dead HD
 toggle. No third-party custom HD implementation has been copied.
 
+## Texture format notes
+
+The "fan-fixed" APK re-encoded the textures as ETC2 while the game still labels them ATC, and keeps the
+original ARM library under `assets/guest_libs`; the port decodes its textures as ETC2. An unmodified APK
+(library under `lib/armeabi*`) has real ATC textures: the importer leaves a note (`gamedata/atc_textures`)
+and the game then uses the ATC decoder; `--atc-textures` forces it.
+
 ## Commands
 
 ```powershell
