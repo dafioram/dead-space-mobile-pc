@@ -1,6 +1,7 @@
 #include "interact.h"
 #include "ammo_pickup.h"
 #include "door_lock.h"
+#include "limb_use.h"
 #include "eligibility.h"
 #include "interaction_geometry.h"
 
@@ -146,14 +147,17 @@ Eligibility eligibility_of(const Cand& c, u32 player_object) {
     if (!c.usable || !c.overlap) return Eligibility::unknown;
     if (c.cls == "GameObjectPickup") return pickup::ammo_eligibility(c.obj, player_object);
     if (c.cls == "GameObjectDoor") return door::open_eligibility(c.obj);
+    if (c.cls == "GameObjectLimb") return limb::use_eligibility();
     return Eligibility::unknown;
 }
 
 const char* eligibility_text(const Cand& c) {
-    const bool is_door = c.cls == "GameObjectDoor";
+    const bool is_door = c.cls == "GameObjectDoor", is_limb = c.cls == "GameObjectLimb";
     switch (c.eligibility) {
-    case Eligibility::blocked: return is_door ? "door: E would be refused or ignored (locked, or not closed); other usable objects are preferred"
-                                           : "ammo pickup: the game would refuse it";
+    case Eligibility::blocked:
+        return is_door   ? "door: E would be refused or ignored (locked, or not closed); other usable objects are preferred"
+               : is_limb ? "limb: E has no effect on it; other usable objects are preferred"
+                         : "ammo pickup: the game would refuse it";
     case Eligibility::available: return is_door ? "door: closed and unlocked" : "ammo pickup: accepts at least part";
     default: return "";
     }
@@ -226,9 +230,10 @@ void report_all(const std::vector<Cand>& cands, const View& v) {
     for (auto& c : cands) {
         if (n++ >= 25) break;
         emit(true, fmt("  %08x %-26s usable=%d kinesis=%d in-hitbox=%d score=%.2f local x %.2f..%.2f y %.2f..%.2f z "
-                       "%.2f..%.2f",
+                       "%.2f..%.2f int=%d plus=%d use=%d",
                        c.obj, c.cls.c_str(), c.usable, c.kinesis, c.overlap, c.score, c.lz.lo.x, c.lz.hi.x, c.lz.lo.y,
-                        c.lz.hi.y, c.lz.lo.z, c.lz.hi.z));
+                        c.lz.hi.y, c.lz.lo.z, c.lz.hi.z, objs::interactive(c.obj), objs::interactive_plus(c.obj),
+                       objs::use_enabled(c.obj)));
         if (c.eligibility != Eligibility::unknown) emit(true, std::string("    ") + eligibility_text(c));
     }
 }

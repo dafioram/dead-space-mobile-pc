@@ -4,7 +4,8 @@ namespace interact {
 
 // What the game would do if E were pressed on a usable object in reach.
 //   available: it would act (or at least partly act)
-//   blocked:   it would only refuse (full ammo, locked door); the object still gives its refusal feedback
+//   blocked:   it would only refuse or ignore E (full ammo, locked door, a limb that has no use action); a
+//              refusing object still gives its feedback when it is the only thing in reach
 //   unknown:   not verified for this object/layout; original behaviour is kept
 enum class Eligibility { unknown, available, blocked };
 
