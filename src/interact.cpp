@@ -145,16 +145,16 @@ bool send_use(u32 obj) {
 Eligibility eligibility_of(const Cand& c, u32 player_object) {
     if (!c.usable || !c.overlap) return Eligibility::unknown;
     if (c.cls == "GameObjectPickup") return pickup::ammo_eligibility(c.obj, player_object);
-    if (c.cls == "GameObjectDoor") return door::lock_eligibility(c.obj);
+    if (c.cls == "GameObjectDoor") return door::open_eligibility(c.obj);
     return Eligibility::unknown;
 }
 
 const char* eligibility_text(const Cand& c) {
     const bool is_door = c.cls == "GameObjectDoor";
     switch (c.eligibility) {
-    case Eligibility::blocked: return is_door ? "door: locked (E only refuses; other usable objects are preferred)"
+    case Eligibility::blocked: return is_door ? "door: E would be refused or ignored (locked, or not closed); other usable objects are preferred"
                                            : "ammo pickup: the game would refuse it";
-    case Eligibility::available: return is_door ? "door: not locked" : "ammo pickup: accepts at least part";
+    case Eligibility::available: return is_door ? "door: closed and unlocked" : "ammo pickup: accepts at least part";
     default: return "";
     }
 }

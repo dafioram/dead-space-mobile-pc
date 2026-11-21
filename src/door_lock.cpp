@@ -4,33 +4,35 @@
 namespace door {
 namespace {
 struct Symbols {
-    u32 table, apply, unlock;
+    u32 table, on_open;
 };
 // Cached once every symbol was found (a lookup made before the guest library loaded is retried).
 const Symbols& symbols() {
     static Symbols s{};
-    if (!s.table || !s.apply || !s.unlock)
-        s = {elf::find("_ZTV14GameObjectDoor"), elf::find("_ZN14GameObjectDoor16applyLockedStateEv"),
-             elf::find("_ZN14GameObjectDoor8onUnlockERKN5eastl12basic_stringIwN2im20StringEASTLAllocatorEEE")};
+    if (!s.table || !s.on_open)
+        s = {elf::find("_ZTV14GameObjectDoor"), elf::find("_ZN14GameObjectDoor6onOpenEv")};
     return s;
 }
 
-constexpr u32 kLockFlag = 0x1ec;
+constexpr u32 kState = 0x1e4, kLockFlag = 0x1ec, kLockCount = 0x170, kHazardLock = 0x3c0;
 
-// Verify the baseline layout from the game's own code every call (never cached, so a different core is not
-// trusted): applyLockedState reads the byte at +0x1ec (ldrb r3, [r0, #0x1ec]) and onUnlock clears it
-// (strb r4, [r0, #0x1ec]).
+// The code is re-read on every call (never cached), so a different core is not trusted.
 bool supported(const Symbols& s) {
-    return s.table && s.apply == mem::ELF_BASE + 0x121900 && s.unlock == mem::ELF_BASE + 0x123ee8 &&
-           mem::range_mapped(s.apply + 4, 4) && mem::r32(s.apply + 4) == 0xe5d031ec &&
-           mem::range_mapped(s.unlock + 0x1c, 4) && mem::r32(s.unlock + 0x1c) == 0xe5c041ec;
+    if (!s.table || s.on_open != mem::ELF_BASE + 0x123c54) return false;
+    for (const Word& w : kOnOpenWords)
+        if (!mem::range_mapped(s.on_open + w.offset, 4) || mem::r32(s.on_open + w.offset) != w.word) return false;
+    return true;
 }
 }  // namespace
 
-interact::Eligibility lock_eligibility(u32 object) {
+interact::Eligibility open_eligibility(u32 object) {
     const Symbols& sym = symbols();
-    if (!supported(sym) || !mem::range_mapped(object, kLockFlag + 1) || mem::r32(object) != sym.table + 8)
+    if (!supported(sym) || !mem::range_mapped(object, kHazardLock + 1) || mem::r32(object) != sym.table + 8)
         return interact::Eligibility::unknown;
-    return mem::r8(object + kLockFlag) ? interact::Eligibility::blocked : interact::Eligibility::available;
+    // Mirrors GameObjectDoor::onOpen.
+    if (mem::r32(object + kState) - 1u > 1u) return interact::Eligibility::blocked;  // not closed: ignores E
+    const bool locked = mem::r8(object + kLockFlag) != 0 || int32_t(mem::r32(object + kLockCount)) > 0 ||
+                        mem::r8(object + kHazardLock) != 0;
+    return locked ? interact::Eligibility::blocked : interact::Eligibility::available;
 }
 }  // namespace door
