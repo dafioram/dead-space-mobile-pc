@@ -12,11 +12,29 @@ bool mapped(u32 address, u32 size) {
         if (!mem::is_mapped(u32(page))) return false;
     return true;
 }
-bool supported(u32 query, u32 table) {
-    const u32 open = elf::find("_ZN16GameObjectPickup6onOpenEv");
-    const u32 collect = elf::find("_ZN18GameObjectPlayable6pickupER4Itema");
+
+struct Symbols {
+    u32 query, table, open, collect;
+};
+// Looked up by name, so cached: this runs for every overlapping pickup whenever candidates are
+// gathered (including the per-frame F10 overlay). The cache is only kept once every symbol was
+// found, so a lookup made before the guest library was loaded is retried instead of remembered
+// as absent. Game thread only, like the query itself.
+const Symbols& symbols() {
+    static Symbols s{};
+    if (!s.query || !s.table || !s.open || !s.collect)
+        s = {elf::find("_ZNK9Inventory10canAddItemE4ItemPK18GameObjectPlayable"),
+             elf::find("_ZTV16GameObjectPickup"),
+             elf::find("_ZN16GameObjectPickup6onOpenEv"),
+             elf::find("_ZN18GameObjectPlayable6pickupER4Itema")};
+    return s;
+}
+
+bool supported(const Symbols& s) {
+    const u32 query = s.query, table = s.table, open = s.open, collect = s.collect;
     // Check the native caller's Item-at-0x1ec, inventory-at-0x530 and query ABI.
     // Generic imported cores must not inherit unverified object-layout assumptions.
+    // The words are read every call (not cached) so a changed core is never trusted.
     return query == mem::ELF_BASE + 0x9b160 && table &&
            open == mem::ELF_BASE + 0x13027c && collect == mem::ELF_BASE + 0x193524 &&
            mapped(open + 0x2c, 4) && mem::r32(open + 0x2c) == 0xe2841f7b &&
@@ -28,10 +46,9 @@ bool supported(u32 query, u32 table) {
 }  // namespace
 
 Eligibility ammo_eligibility(u32 object, u32 player) {
-    const u32 query = elf::find("_ZNK9Inventory10canAddItemE4ItemPK18GameObjectPlayable");
-    const u32 table = elf::find("_ZTV16GameObjectPickup");
-    if (!supported(query, table) || !mapped(object, 0x1fc) || !mapped(player, 0x534) ||
-        mem::r32(object) != table + 8 || mem::r32(object + 0x10) != mem::r32(player + 0x10))
+    const Symbols& sym = symbols();
+    if (!supported(sym) || !mapped(object, 0x1fc) || !mapped(player, 0x534) ||
+        mem::r32(object) != sym.table + 8 || mem::r32(object + 0x10) != mem::r32(player + 0x10))
         return Eligibility::unknown;
     const u32 item = object + 0x1ec, type = mem::r32(item + 4);
     // Matches native Item::isAmmo(): the four ordinary weapon-ammo types only.
@@ -45,6 +62,6 @@ Eligibility ammo_eligibility(u32 object, u32 player) {
     // game's caller using a reusable 16-byte copy, never the live pickup payload.
     static u32 copy = mem::data_alloc(16, 8);
     std::memcpy(mem::host(copy), mem::host(item), 16);
-    return (cpu::call(query, {inventory, copy, player}) & 0xff) ? Eligibility::available : Eligibility::blocked;
+    return (cpu::call(sym.query, {inventory, copy, player}) & 0xff) ? Eligibility::available : Eligibility::blocked;
 }
 }  // namespace pickup

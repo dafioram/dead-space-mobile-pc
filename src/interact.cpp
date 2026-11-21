@@ -172,7 +172,8 @@ std::vector<Cand> gather(const View& v, u32 world, u32 player_object, bool repor
             c.ammo = pickup::ammo_eligibility(o, player_object);
         out.push_back(c);
     }
-    std::sort(out.begin(), out.end(), [](const Cand& a, const Cand& b) { return a.score < b.score; });
+    // stable: equal scores keep world order, so the pick and the F10 overlay do not flicker between frames
+    std::stable_sort(out.begin(), out.end(), [](const Cand& a, const Cand& b) { return a.score < b.score; });
     return out;
 }
 
@@ -210,7 +211,7 @@ void report_all(const std::vector<Cand>& cands, const View& v) {
                        c.obj, c.cls.c_str(), c.usable, c.kinesis, c.overlap, c.score, c.lz.lo.x, c.lz.hi.x, c.lz.lo.y,
                         c.lz.hi.y, c.lz.lo.z, c.lz.hi.z));
         if (c.ammo != pickup::Eligibility::unknown)
-            emit(true, c.ammo == pickup::Eligibility::blocked ? "    ammo capacity: blocked" : "    ammo capacity: accepts at least part");
+            emit(true, c.ammo == pickup::Eligibility::blocked ? "    ammo pickup: the game would refuse it" : "    ammo pickup: accepts at least part");
     }
 }
 
