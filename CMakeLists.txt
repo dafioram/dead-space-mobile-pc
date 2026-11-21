@@ -64,6 +64,9 @@ add_executable(deadspace
     src/lights.cpp
     src/texpack.cpp
     src/debugview.cpp
+    src/door_lock.cpp
+    src/door_lock.h
+    src/eligibility.h
     src/console.cpp
     src/console_debug.cpp
     src/menu_nav.cpp

@@ -15,24 +15,24 @@ bool accepts = false;
 u32 expected_type = 7;  // item type the stubbed query must receive
 struct Candidate {
     bool usable, overlap;
-    pickup::Eligibility ammo;
+    interact::Eligibility eligibility;
 };
 void selection() {
-    using E = pickup::Eligibility;
+    using E = interact::Eligibility;
     std::vector<Candidate> c{{true,true,E::blocked},{true,true,E::unknown},{true,true,E::available}};
-    require(pickup::reachable(c) == &c[1], "full ammo must not block terminal in existing score order");
-    c[1].ammo = E::blocked;
-    require(pickup::reachable(c) == &c[2], "multiple full pickups must not block collectable ammo");
-    c[0].ammo = E::available;
-    require(pickup::reachable(c) == &c[0], "partial/upgraded capacity keeps original ranking");
-    c[0].ammo = E::unknown;
-    require(pickup::reachable(c) == &c[0], "unknown layout preserves existing behavior");
-    for (auto& item : c) item.ammo = E::blocked;
-    require(pickup::reachable(c) == &c[0], "all full preserves first refusal target, not distant kinesis");
+    require(interact::reachable(c) == &c[1], "full ammo must not block terminal in existing score order");
+    c[1].eligibility = E::blocked;
+    require(interact::reachable(c) == &c[2], "multiple full pickups must not block collectable ammo");
+    c[0].eligibility = E::available;
+    require(interact::reachable(c) == &c[0], "partial/upgraded capacity keeps original ranking");
+    c[0].eligibility = E::unknown;
+    require(interact::reachable(c) == &c[0], "unknown layout preserves existing behavior");
+    for (auto& item : c) item.eligibility = E::blocked;
+    require(interact::reachable(c) == &c[0], "all full preserves first refusal target, not distant kinesis");
     c[1].overlap = false; c[2].usable = false;
-    require(pickup::reachable(c) == &c[0], "do not select unreachable or disabled alternatives");
+    require(interact::reachable(c) == &c[0], "do not select unreachable or disabled alternatives");
     c[0].usable = false;
-    require(!pickup::reachable(c), "no eligible overlap leaves ordinary kinesis decision unchanged");
+    require(!interact::reachable(c), "no eligible overlap leaves ordinary kinesis decision unchanged");
 }
 void adapter() {
     require(mem::init(), "reserve synthetic memory; no guest/JIT execution");
@@ -56,24 +56,24 @@ void adapter() {
     mem::w32(inventory+4,0); mem::w32(inventory+8,0);  // empty vector; heap contents are not assumed zero
     mem::w32(object+0x1ec,mem::ELF_BASE+0x2008);
     mem::w32(object+0x1f0,7); mem::w32(object+0x1f4,20); mem::w32(object+0x1f8,25);
-    require(pickup::ammo_eligibility(object,player)==pickup::Eligibility::blocked && calls==1,"native refusal");
+    require(pickup::ammo_eligibility(object,player)==interact::Eligibility::blocked && calls==1,"native refusal");
     accepts = true;
-    require(pickup::ammo_eligibility(object,player)==pickup::Eligibility::available && calls==2,"partial capacity query result");
+    require(pickup::ammo_eligibility(object,player)==interact::Eligibility::available && calls==2,"partial capacity query result");
     // Re-query each selection: shooting/reloading/upgrades must not leave a cached refusal.
     accepts = false;
-    require(pickup::ammo_eligibility(object,player)==pickup::Eligibility::blocked && calls==3,"no stale eligibility cache");
+    require(pickup::ammo_eligibility(object,player)==interact::Eligibility::blocked && calls==3,"no stale eligibility cache");
     require(mem::r32(object+0x1f4)==20,"query scratch never aliases original pickup");
     mem::w32(object+0x1f0,14);
-    require(pickup::ammo_eligibility(object,player)==pickup::Eligibility::unknown && calls==3,"nodes/credits/weapons untouched");
+    require(pickup::ammo_eligibility(object,player)==interact::Eligibility::unknown && calls==3,"nodes/credits/weapons untouched");
     mem::w32(object+0x1f0,7); mem::w32(player+0x10,0xdef);
-    require(pickup::ammo_eligibility(object,player)==pickup::Eligibility::unknown,"wrong scene is not queried");
+    require(pickup::ammo_eligibility(object,player)==interact::Eligibility::unknown,"wrong scene is not queried");
     mem::w32(player+0x10,0xabc); mem::w32(mem::ELF_BASE+0x1302a8,0);
-    require(pickup::ammo_eligibility(object,player)==pickup::Eligibility::unknown && calls==3,"unverified layout is not queried");
-    require(pickup::ammo_eligibility(0xfffffff0,player)==pickup::Eligibility::unknown,"bad range safe");
+    require(pickup::ammo_eligibility(object,player)==interact::Eligibility::unknown && calls==3,"unverified layout is not queried");
+    require(pickup::ammo_eligibility(0xfffffff0,player)==interact::Eligibility::unknown,"bad range safe");
 
     // ---- boundaries and malformed inventory data (each case must be rejected without a query) ----
     mem::w32(mem::ELF_BASE+0x1302a8,0xe2841f7b);  // restore the verified layout
-    using E = pickup::Eligibility;
+    using E = interact::Eligibility;
     auto query = [&] { return pickup::ammo_eligibility(object, player); };
     auto set_vector = [&](u32 begin, u32 end) { mem::w32(inventory+4,begin); mem::w32(inventory+8,end); };
     const u32 vec = mem::ELF_BASE + 0x3000;  // committed scratch memory for a synthetic vector

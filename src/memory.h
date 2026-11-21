@@ -40,6 +40,14 @@ extern std::array<u8*, (1u << 20)>* g_page_table;
 bool init();
 void commit(u32 addr, u32 size);
 bool is_mapped(u32 addr);
+// True when every page of [address, address + size) is mapped. Rejects null/low addresses, an empty
+// range and a range that wraps past 4 GiB. Prefer this over local copies.
+inline bool range_mapped(u32 address, u32 size) {
+    if (address < 0x10000 || !size || uint64_t(address) + size > (1ull << 32)) return false;
+    for (uint64_t page = address & ~uint64_t(PAGE_SIZE - 1); page < uint64_t(address) + size; page += PAGE_SIZE)
+        if (!is_mapped(u32(page))) return false;
+    return true;
+}
 
 inline u8* host(u32 addr) { return g_base + addr; }
 template <class T> inline T* ptr(u32 addr) { return reinterpret_cast<T*>(g_base + addr); }

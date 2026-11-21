@@ -1,5 +1,7 @@
 #include "interact.h"
 #include "ammo_pickup.h"
+#include "door_lock.h"
+#include "eligibility.h"
 #include "interaction_geometry.h"
 
 #include <algorithm>
@@ -107,7 +109,7 @@ struct Cand {
     Box lz;
     bool usable, kinesis, overlap;
     float score;
-    pickup::Eligibility ammo = pickup::Eligibility::unknown;
+    Eligibility eligibility = Eligibility::unknown;  // would the game refuse E on it (full ammo, locked door)?
 };
 
 std::string fmt(const char* f, ...) {
@@ -139,6 +141,24 @@ bool send_use(u32 obj) {
     return cpu::call(mem::r32(mem::r32(obj) + 8), {obj, g_evbuf}) & 0xff;
 }
 
+// Would the game refuse E on this candidate? Only checked for candidates that can actually be selected.
+Eligibility eligibility_of(const Cand& c, u32 player_object) {
+    if (!c.usable || !c.overlap) return Eligibility::unknown;
+    if (c.cls == "GameObjectPickup") return pickup::ammo_eligibility(c.obj, player_object);
+    if (c.cls == "GameObjectDoor") return door::lock_eligibility(c.obj);
+    return Eligibility::unknown;
+}
+
+const char* eligibility_text(const Cand& c) {
+    const bool is_door = c.cls == "GameObjectDoor";
+    switch (c.eligibility) {
+    case Eligibility::blocked: return is_door ? "door: locked (E only refuses; other usable objects are preferred)"
+                                           : "ammo pickup: the game would refuse it";
+    case Eligibility::available: return is_door ? "door: not locked" : "ammo pickup: accepts at least part";
+    default: return "";
+    }
+}
+
 std::vector<Cand> gather(const View& v, u32 world, u32 player_object, bool report) {
     std::vector<Cand> out;
     Zone player{v, {{-kHalfWidth, kBottom, -kBack}, {kHalfWidth, kTop, kReach}}};
@@ -168,8 +188,7 @@ std::vector<Cand> gather(const View& v, u32 world, u32 player_object, bool repor
             found = true;
         }
         if (!found) continue;
-        if (c.usable && c.overlap && c.cls == "GameObjectPickup")
-            c.ammo = pickup::ammo_eligibility(o, player_object);
+        c.eligibility = eligibility_of(c, player_object);
         out.push_back(c);
     }
     // stable: equal scores keep world order, so the pick and the F10 overlay do not flicker between frames
@@ -179,7 +198,7 @@ std::vector<Cand> gather(const View& v, u32 world, u32 player_object, bool repor
 
 const Cand* pick(const std::vector<Cand>& cands, const View& v, bool& kinesis) {
     kinesis = false;
-    if (const auto* candidate = pickup::reachable(cands)) return candidate;
+    if (const auto* candidate = reachable(cands)) return candidate;
     // kinesis: zone centre inside the cone along the line of sight
     const Cand* best = nullptr;
     float best_cos = kKinesisCos;
@@ -210,8 +229,7 @@ void report_all(const std::vector<Cand>& cands, const View& v) {
                        "%.2f..%.2f",
                        c.obj, c.cls.c_str(), c.usable, c.kinesis, c.overlap, c.score, c.lz.lo.x, c.lz.hi.x, c.lz.lo.y,
                         c.lz.hi.y, c.lz.lo.z, c.lz.hi.z));
-        if (c.ammo != pickup::Eligibility::unknown)
-            emit(true, c.ammo == pickup::Eligibility::blocked ? "    ammo pickup: the game would refuse it" : "    ammo pickup: accepts at least part");
+        if (c.eligibility != Eligibility::unknown) emit(true, std::string("    ") + eligibility_text(c));
     }
 }
 
