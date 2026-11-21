@@ -190,3 +190,12 @@ write-permission job. The Windows installer stays manual; see [RELEASING.md](REL
   pages, keyboard / controller wording, the main menu's Quit button
 - `src/settings.*`: port settings (`userdata/port_settings.ini`)
 - `tools/`: dex disassembler, ARM disassembly helpers, texture/screenshot utilities
+  (`tools/disas.py [--lib LIB.so] [-s] SYMBOL` disassembles a function of the game library, `-s` names the
+  targets of its calls, and `--grep REGEX` lists symbols; use it to check object layouts before the port relies
+  on them. It needs `pip install capstone` and binutils' `readelf`/`c++filt`)
+
+## Commit attribution
+
+Commits made for this fork should name David as author with
+`5838258+dafioram@users.noreply.github.com`. AI-assisted commits may include a
+`Co-authored-by` trailer; do not replace the user's authorship.
