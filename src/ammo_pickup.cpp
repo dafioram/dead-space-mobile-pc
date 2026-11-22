@@ -38,23 +38,23 @@ bool supported(const Symbols& s) {
 }
 }  // namespace
 
-interact::Eligibility ammo_eligibility(u32 object, u32 player) {
+interact::Outcome ammo_outcome(u32 object, u32 player) {
     const Symbols& sym = symbols();
     if (!supported(sym) || !mem::range_mapped(object, 0x1fc) || !mem::range_mapped(player, 0x534) ||
         mem::r32(object) != sym.table + 8 || mem::r32(object + 0x10) != mem::r32(player + 0x10))
-        return interact::Eligibility::unknown;
+        return interact::Outcome::unverified;
     const u32 item = object + 0x1ec, type = mem::r32(item + 4);
     // Matches native Item::isAmmo(): the four ordinary weapon-ammo types only.
-    if (type < 7 || type > 10 || !mem::r32(item + 8)) return interact::Eligibility::unknown;
+    if (type < 7 || type > 10 || !mem::r32(item + 8)) return interact::Outcome::unverified;
     const u32 inventory = mem::r32(player + 0x530);
-    if (!mem::range_mapped(inventory, 0x1c)) return interact::Eligibility::unknown;
+    if (!mem::range_mapped(inventory, 0x1c)) return interact::Outcome::unverified;
     const u32 begin = mem::r32(inventory + 4), end = mem::r32(inventory + 8);
     if (end < begin || (end - begin) % 16 || end - begin > 100 * 16 ||
-        (end != begin && !mem::range_mapped(begin, end - begin))) return interact::Eligibility::unknown;
+        (end != begin && !mem::range_mapped(begin, end - begin))) return interact::Outcome::unverified;
     // Nontrivial by-value Item is passed indirectly in the guest ABI. Match the
     // game's caller using a reusable 16-byte copy, never the live pickup payload.
     static u32 copy = mem::data_alloc(16, 8);
     std::memcpy(mem::host(copy), mem::host(item), 16);
-    return (cpu::call(sym.query, {inventory, copy, player}) & 0xff) ? interact::Eligibility::available : interact::Eligibility::blocked;
+    return (cpu::call(sym.query, {inventory, copy, player}) & 0xff) ? interact::Outcome::acts : interact::Outcome::declines;
 }
 }  // namespace pickup

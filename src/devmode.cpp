@@ -52,6 +52,7 @@
 #include "interact.h"
 #include "log.h"
 #include "memory.h"
+#include "game_layout.h"
 #include "objects.h"
 
 namespace dev {
@@ -145,6 +146,15 @@ void face_point(u32 player, objs::Vec3 t) {
     objs::turn_by(player, delta);
 }
 
+// Names for the flag bits we know: GameObject::destroy sets 0x1, 0x8 is hidden / disabled, 0x10 is "in range".
+std::string flag_tags(u32 flags) {
+    std::string s;
+    if (flags & layout::game_object::kFlagDestroyed) s += " [destroyed]";
+    if (flags & layout::game_object::kFlagHidden) s += " [hidden]";
+    if (flags & layout::game_object::kFlagInRange) s += " [inRange]";
+    return s;
+}
+
 void dump(u32 player, float radius, bool all) {
     objs::Vec3 p = objs::pos(player);
     int n = 0;
@@ -155,9 +165,9 @@ void dump(u32 player, float radius, bool all) {
         float d = std::sqrt((q.x - p.x) * (q.x - p.x) + (q.y - p.y) * (q.y - p.y) + (q.z - p.z) * (q.z - p.z));
         if (radius > 0 && d > radius) continue;
         objs::Box b = objs::bounds(o);
-        std::string line = fmt("%08x %-28s d=%6.2f pos %.2f %.2f %.2f box %.2f %.2f %.2f .. %.2f %.2f %.2f flags=%x", o,
+        std::string line = fmt("%08x %-28s dist=%6.2fm pos %.2f %.2f %.2f box %.2f %.2f %.2f .. %.2f %.2f %.2f flags=%x%s", o,
                                objs::class_name(o).c_str(), d, q.x, q.y, q.z, b.lo.x, b.lo.y, b.lo.z, b.hi.x, b.hi.y,
-                               b.hi.z, objs::flags(o));
+                               b.hi.z, objs::flags(o), flag_tags(objs::flags(o)).c_str());
         if (ic)
             for (const auto& region : objs::regions(o)) {
                 auto q = region.p, r = region.right, u = region.up, f = region.forward;
@@ -165,9 +175,11 @@ void dump(u32 player, float radius, bool all) {
                             q.x, q.y, q.z, r.x, r.y, r.z, u.x, u.y, u.z, f.x, f.y, f.z);
             }
         if (ic)
-            line += fmt(" int=%d plus=%d tk=%d use=%d reach=%.2f chk=%d%d%d", objs::interactive(o), objs::interactive_plus(o),
-                        objs::telekinesisable(o), objs::use_enabled(o), objs::reach(o), mem::r8(o + 0x17c),
-                        mem::r8(o + 0x17d), mem::r8(o + 0x17e));
+            line += fmt(" game[isInteractive=%d isInteractivePlus=%d isTelekinesisable=%d useEnabled=%d useReach=%.2fm raw17c=%d,%d,%d]",
+                        objs::is_interactive(o), objs::is_interactive_plus(o), objs::is_telekinesisable(o),
+                        objs::use_enabled(o), objs::use_reach(o), mem::r8(o + layout::interactive::kUnknown17c),
+                        mem::r8(o + layout::interactive::kUnknown17c + 1),
+                        mem::r8(o + layout::interactive::kUnknown17c + 2));
         out(line);
         n++;
     }
@@ -447,7 +459,7 @@ void run(const std::string& line) {
                 if (!objs::is_interactive_class(o)) continue;
                 std::string cls = objs::class_name(o);
                 if (cls == "GameObjectShootSwitch") continue;
-                if (!objs::interactive(o) && !objs::interactive_plus(o)) continue;
+                if (!objs::is_interactive(o) && !objs::is_interactive_plus(o)) continue;
                 auto approach = interact::approach_point(o, dist);
                 objs::teleport(pl, approach.stand);
                 face_point(pl, approach.target);

@@ -8,6 +8,7 @@
 #include "cpu.h"
 #include "elf_loader.h"
 #include "guest_util.h"
+#include "game_layout.h"
 
 namespace objs {
 
@@ -50,23 +51,24 @@ static bool no_body(u32 obj, u32 slot, const char* base_sym) {
     static u32 base_pos = elf::find("_ZNK10GameObject6getPosEv"), base_bounds = elf::find("_ZNK10GameObject9getBoundsEv");
     u32 base = std::strcmp(base_sym, "pos") == 0 ? base_pos : base_bounds;
     if (mem::r32(mem::r32(obj) + slot) != base) return false;
-    u32 body = mem::r32(obj + 0x58);
+    u32 body = mem::r32(obj + layout::game_object::kBody);
     if (!body) return true;
     // getBounds also needs the body's collision shape (+0xc0), unless flag 0x100 skips it
-    return base == base_bounds && !(mem::r32(obj + 0x48) & 0x100) && !mem::r32(body + 0xc0);
+    return base == base_bounds && !(mem::r32(obj + layout::game_object::kFlags) & layout::game_object::kFlagSkipShape) &&
+           !mem::r32(body + layout::game_object::kBodyShape);
 }
 
 Vec3 pos(u32 obj) {
-    if (no_body(obj, 0xc4, "pos")) return {};
-    u32 p = guest::vcall(obj, 0xc4);
+    if (no_body(obj, layout::slot::kGetPos, "pos")) return {};
+    u32 p = guest::vcall(obj, layout::slot::kGetPos);
     return {rf(p), rf(p + 4), rf(p + 8)};
 }
 
 Box bounds(u32 obj) {
-    if (no_body(obj, 0xe8, "bounds")) return {};
+    if (no_body(obj, layout::slot::kGetBounds, "bounds")) return {};
     u32 b = scratch(0);
     std::memset(mem::host(b), 0, 96);
-    cpu::call(mem::r32(mem::r32(obj) + 0xe8), {b, obj});  // AABB getBounds() const (sret)
+    cpu::call(mem::r32(mem::r32(obj) + layout::slot::kGetBounds), {b, obj});  // AABB getBounds() const (sret)
     return {{rf(b + 0x10), rf(b + 0x14), rf(b + 0x18)}, {rf(b + 0x20), rf(b + 0x24), rf(b + 0x28)}};
 }
 
@@ -76,12 +78,12 @@ std::vector<Region> regions(u32 obj) {
     // Model::getNodeTransform(out btTransform, node, relative-to node): origin at +0x30
     static u32 fn = elf::find("_ZN5Model16getNodeTransformERKN3m3g4NodeES3_");
     std::vector<Region> v;
-    u32 b = mem::r32(obj + 0x190), e = mem::r32(obj + 0x194);
+    u32 b = mem::r32(obj + layout::interactive::kInputRegions), e = mem::r32(obj + layout::interactive::kInputRegions + 4);
     if (!fn || e < b || e - b > 64 * 4) return v;
     // Match GameObjectInteractive::onUpdatePostCamera: the marker relative to the
     // world's scene root is already in the space worldToScreenSpace consumes.
-    u32 world = mem::r32(obj + 0x10);
-    u32 root = world ? mem::r32(world + 8) : 0;
+    u32 world = mem::r32(obj + layout::game_object::kWorld);
+    u32 root = world ? mem::r32(world + layout::world::kSceneRoot) : 0;
     if (!root) return v;
     for (u32 p = b; p < e; p += 4) {
         u32 node = mem::r32(p);
@@ -115,34 +117,37 @@ bool is_interactive_class(u32 obj) {
     u32 vt = mem::r32(obj);
     auto it = cache.find(vt);
     if (it != cache.end()) return it->second;
-    // slot 0x170 is onInteract() in GameObjectInteractive and its subclasses
-    std::string n = cpu::symbolize(mem::r32(vt + 0x170));
+    // vtable slot kOnInteract is onInteract() in GameObjectInteractive and its subclasses
+    std::string n = cpu::symbolize(mem::r32(vt + layout::slot::kOnInteract));
     bool r = n.find("onInteract") != std::string::npos;
     cache[vt] = r;
     return r;
 }
-bool interactive(u32 obj) { return guest::vcall(obj, 0x48) & 0xff; }
-bool interactive_plus(u32 obj) { return guest::vcall(obj, 0x4c) & 0xff; }
-bool telekinesisable(u32 obj) { return guest::vcall(obj, 0x5c) & 0xff; }
-bool use_enabled(u32 obj) { return mem::r8(obj + 0x174) != 0; }
-float reach(u32 obj) { return rf(obj + 0x178); }
-u32 flags(u32 obj) { return mem::r32(obj + 0x48); }
-bool on_interact(u32 obj) { return guest::vcall(obj, 0x170) & 0xff; }
+bool is_interactive(u32 obj) { return guest::vcall(obj, layout::slot::kIsInteractive) & 0xff; }
+bool is_interactive_plus(u32 obj) { return guest::vcall(obj, layout::slot::kIsInteractivePlus) & 0xff; }
+bool is_telekinesisable(u32 obj) { return guest::vcall(obj, layout::slot::kIsTelekinesisable) & 0xff; }
+bool use_enabled(u32 obj) { return mem::r8(obj + layout::interactive::kUseEnabled) != 0; }
+float use_reach(u32 obj) { return rf(obj + layout::interactive::kUseReach); }
+u32 flags(u32 obj) { return mem::r32(obj + layout::game_object::kFlags); }
+bool is_destroyed(u32 obj) { return (flags(obj) & layout::game_object::kFlagDestroyed) != 0; }
+bool is_hidden(u32 obj) { return (flags(obj) & layout::game_object::kFlagHidden) != 0; }
+bool is_in_range(u32 obj) { return (flags(obj) & layout::game_object::kFlagInRange) != 0; }
+bool on_interact(u32 obj) { return guest::vcall(obj, layout::slot::kOnInteract) & 0xff; }
 
 std::vector<u32> world_objects(u32 world) {
     std::vector<u32> v;
     if (!world) return v;
     // vector<shared_ptr<GameObject>> of every object (GameWorld::getObjectIndex; 12-byte elements)
-    u32 b = mem::r32(world + 0x58), e = mem::r32(world + 0x5c);
+    u32 b = mem::r32(world + layout::world::kObjectsBegin), e = mem::r32(world + layout::world::kObjectsEnd);
     if (e < b || e - b > 1200000) return v;
-    for (u32 p = b; p < e; p += 12)
+    for (u32 p = b; p < e; p += layout::world::kObjectStride)
         if (u32 obj = mem::r32(p)) v.push_back(obj);
     return v;
 }
 
 bool to_screen(u32 world, Vec3 p, float& sx, float& sy) {
     static u32 fn = elf::find("_ZNK16CameraController18worldToScreenSpaceERK9btVector3");
-    u32 cam = world ? mem::r32(world + 0x28) : 0;
+    u32 cam = world ? mem::r32(world + layout::world::kCamera) : 0;
     if (!fn || !cam) return false;
     u32 in = scratch(2), out = scratch(1);
     wf(in, p.x);
@@ -176,7 +181,7 @@ u32 spawn(u32 world, int type, Vec3 feet, Vec3 face) {
     std::memset(mem::host(sp), 0, 16);
     cpu::call(fn, {sp, world, u32(type), xf});
     u32 obj = mem::r32(sp);
-    if (obj) guest::vcall(obj, 0x70, {0, 0});  // initPostSpawn(no spawn zone, plain spawn)
+    if (obj) guest::vcall(obj, layout::slot::kInitPostSpawn, {0, 0});  // initPostSpawn(no spawn zone, plain spawn)
     return obj;
 }
 

@@ -6,39 +6,39 @@
 #include <vector>
 
 namespace {
-using E = interact::Eligibility;
+using E = interact::Outcome;
 void require(bool okay, const char* why) { if (!okay) throw std::runtime_error(why); }
 std::unordered_map<std::string, u32> symbols;
 struct Candidate {
-    bool usable, overlap;
-    E eligibility;
+    bool selectable, in_hitbox;
+    E outcome;
 };
 
 // The reported case: ammo dropped on a corpse, with several limbs nearer the line of sight than the ammo.
 void selection() {
-    std::vector<Candidate> c{{true, true, E::blocked}, {true, true, E::blocked}, {true, true, E::blocked},
-                             {true, true, E::available}};
-    require(interact::reachable(c) == &c[3], "ammo is chosen over the limbs scoring ahead of it");
-    c[3].usable = false;
-    require(interact::reachable(c) == &c[0], "with only limbs in reach the first limb keeps E, as before");
-    c[3] = {true, true, E::unknown};
-    require(interact::reachable(c) == &c[3], "any other usable object outranks a limb");
-    c = {{true, true, E::blocked}, {true, true, E::blocked}};
-    require(interact::reachable(c) == &c[0], "limbs keep their own order among themselves");
-    c = {{true, true, E::blocked}, {true, false, E::available}};
-    require(interact::reachable(c) == &c[0], "an out-of-reach object is not chosen over a limb");
+    std::vector<Candidate> c{{true, true, E::declines}, {true, true, E::declines}, {true, true, E::declines},
+                             {true, true, E::acts}};
+    require(interact::best_selectable(c) == &c[3], "ammo is chosen over the limbs scoring ahead of it");
+    c[3].selectable = false;
+    require(interact::best_selectable(c) == &c[0], "with only limbs in reach the first limb keeps E, as before");
+    c[3] = {true, true, E::unverified};
+    require(interact::best_selectable(c) == &c[3], "any other usable object outranks a limb");
+    c = {{true, true, E::declines}, {true, true, E::declines}};
+    require(interact::best_selectable(c) == &c[0], "limbs keep their own order among themselves");
+    c = {{true, true, E::declines}, {true, false, E::acts}};
+    require(interact::best_selectable(c) == &c[0], "an out-of-reach object is not chosen over a limb");
 }
 
 void adapter() {
-    require(limb::use_eligibility() == E::unknown, "symbols not loaded yet: nothing is known");
+    require(limb::use_outcome() == E::unverified, "symbols not loaded yet: nothing is known");
     symbols = {{"_ZN14GameObjectLimb8onUpdateEi", 0x1000}};
-    require(limb::use_eligibility() == E::blocked, "limbs have no onOpen of their own: E has no effect");
+    require(limb::use_outcome() == E::declines, "limbs have no onOpen of their own: E has no effect");
     symbols["_ZN14GameObjectLimb6onOpenEv"] = 0x2000;
-    require(limb::use_eligibility() == E::unknown, "a limb with its own onOpen keeps the original behaviour");
+    require(limb::use_outcome() == E::unverified, "a limb with its own onOpen keeps the original behaviour");
     symbols.erase("_ZN14GameObjectLimb6onOpenEv");
-    require(limb::use_eligibility() == E::blocked, "nothing is cached: the answer follows the symbols");
+    require(limb::use_outcome() == E::declines, "nothing is cached: the answer follows the symbols");
     symbols.clear();
-    require(limb::use_eligibility() == E::unknown, "symbols gone again: unknown");
+    require(limb::use_outcome() == E::unverified, "symbols gone again: unverified");
 }
 }  // namespace
 namespace elf {

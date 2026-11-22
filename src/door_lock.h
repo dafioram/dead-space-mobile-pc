@@ -1,5 +1,5 @@
 #pragma once
-#include "eligibility.h"
+#include "outcome.h"
 #include "memory.h"
 
 namespace door {
@@ -11,7 +11,7 @@ namespace door {
 //              Script locks and power-node locks both set +0x1ec (GameObjectDoor::onLock / onUnlock).
 //   available: verified door that is closed and unlocked: onOpen would start opening it.
 //   unknown:   not exactly a GameObjectDoor, or the core's code is not the verified one.
-interact::Eligibility open_eligibility(u32 object);
+interact::Outcome open_outcome(u32 object);
 
 // Instruction words of onOpen (offset from the function start) that the layout assumptions rest on:
 // the state test, the three lock tests and the branches that act on them. All are checked on every query.

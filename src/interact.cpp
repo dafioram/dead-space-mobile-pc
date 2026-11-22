@@ -2,7 +2,8 @@
 #include "ammo_pickup.h"
 #include "door_lock.h"
 #include "limb_use.h"
-#include "eligibility.h"
+#include "game_layout.h"
+#include "outcome.h"
 #include "interaction_geometry.h"
 
 #include <algorithm>
@@ -107,10 +108,10 @@ struct Cand {
     u32 obj;
     std::string cls;
     std::vector<Zone> zones;
-    Box lz;
-    bool usable, kinesis, overlap;
-    float score;
-    Eligibility eligibility = Eligibility::unknown;  // would the game refuse E on it (full ammo, locked door)?
+    Box local_zone;
+    bool selectable, telekinesis_target, in_hitbox;
+    float aim_score;  // lower is preferred: distance from the line of sight
+    Outcome outcome = Outcome::unverified;  // what the game would do on E: act, or decline (full ammo, locked door, limb)
 };
 
 std::string fmt(const char* f, ...) {
@@ -139,26 +140,26 @@ bool send_use(u32 obj) {
     mem::w32(g_evbuf, g_vt_action);
     mem::w32(g_evbuf + 4, 1008);
     mem::w32(g_evbuf + 8, 16);
-    return cpu::call(mem::r32(mem::r32(obj) + 8), {obj, g_evbuf}) & 0xff;
+    return cpu::call(mem::r32(mem::r32(obj) + layout::slot::kOnEvent), {obj, g_evbuf}) & 0xff;
 }
 
-// Would the game refuse E on this candidate? Only checked for candidates that can actually be selected.
-Eligibility eligibility_of(const Cand& c, u32 player_object) {
-    if (!c.usable || !c.overlap) return Eligibility::unknown;
-    if (c.cls == "GameObjectPickup") return pickup::ammo_eligibility(c.obj, player_object);
-    if (c.cls == "GameObjectDoor") return door::open_eligibility(c.obj);
-    if (c.cls == "GameObjectLimb") return limb::use_eligibility();
-    return Eligibility::unknown;
+// What would the game do on E for this candidate? Only checked for candidates that can actually be selected.
+Outcome outcome_of(const Cand& c, u32 player_object) {
+    if (!c.selectable || !c.in_hitbox) return Outcome::unverified;
+    if (c.cls == "GameObjectPickup") return pickup::ammo_outcome(c.obj, player_object);
+    if (c.cls == "GameObjectDoor") return door::open_outcome(c.obj);
+    if (c.cls == "GameObjectLimb") return limb::use_outcome();
+    return Outcome::unverified;
 }
 
-const char* eligibility_text(const Cand& c) {
+const char* outcome_text(const Cand& c) {
     const bool is_door = c.cls == "GameObjectDoor", is_limb = c.cls == "GameObjectLimb";
-    switch (c.eligibility) {
-    case Eligibility::blocked:
+    switch (c.outcome) {
+    case Outcome::declines:
         return is_door   ? "door: E would be refused or ignored (locked, or not closed); other usable objects are preferred"
                : is_limb ? "limb: E has no effect on it; other usable objects are preferred"
                          : "ammo pickup: the game would refuse it";
-    case Eligibility::available: return is_door ? "door: closed and unlocked" : "ammo pickup: accepts at least part";
+    case Outcome::acts: return is_door ? "door: closed and unlocked" : "ammo pickup: accepts at least part";
     default: return "";
     }
 }
@@ -170,45 +171,44 @@ std::vector<Cand> gather(const View& v, u32 world, u32 player_object, bool repor
         if (!objs::is_interactive_class(o)) continue;
         Cand c{o, objs::class_name(o), {}, {}, false, false, false, 0};
         const ClassRule* rule = rule_for(c.cls);
-        u32 fl = objs::flags(o);
-        bool hidden = fl & 8;
-        c.usable = !hidden && !(rule && rule->skip) && (objs::interactive(o) || objs::interactive_plus(o));
-        c.kinesis = !hidden && objs::telekinesisable(o);
-        if (!c.usable && !c.kinesis && !report) continue;
+        bool hidden = objs::is_hidden(o);
+        c.selectable = !hidden && !(rule && rule->skip) && (objs::is_interactive(o) || objs::is_interactive_plus(o));
+        c.telekinesis_target = !hidden && objs::is_telekinesisable(o);
+        if (!c.selectable && !c.telekinesis_target && !report) continue;
         bool found = false;
         for (const auto& zone : zones_of(o, rule)) {
             if (!zone_within_radius(zone, v.p, kKinesisRange + 4)) continue;
-            Box lz = zone_bounds(zone, v);
-            bool overlap = zones_overlap(zone, player);
+            Box zone_box = zone_bounds(zone, v);
+            bool touches_hitbox = zones_overlap(zone, player);
             // Nearest the line of sight first, among overlapping markers if any.
-            float gap = lz.lo.x > 0 ? lz.lo.x : lz.hi.x < 0 ? -lz.hi.x : 0;
-            float score = gap * 2.0f + std::max(lz.lo.z, 0.0f) * 0.5f;
-            if (!found || (overlap && !c.overlap) || (overlap == c.overlap && score < c.score)) {
-                c.lz = lz;
-                c.score = score;
+            float gap = zone_box.lo.x > 0 ? zone_box.lo.x : zone_box.hi.x < 0 ? -zone_box.hi.x : 0;
+            float aim_score = gap * 2.0f + std::max(zone_box.lo.z, 0.0f) * 0.5f;
+            if (!found || (touches_hitbox && !c.in_hitbox) || (touches_hitbox == c.in_hitbox && aim_score < c.aim_score)) {
+                c.local_zone = zone_box;
+                c.aim_score = aim_score;
             }
-            c.overlap |= overlap;
+            c.in_hitbox |= touches_hitbox;
             c.zones.push_back(zone);
             found = true;
         }
         if (!found) continue;
-        c.eligibility = eligibility_of(c, player_object);
+        c.outcome = outcome_of(c, player_object);
         out.push_back(c);
     }
-    // stable: equal scores keep world order, so the pick and the F10 overlay do not flicker between frames
-    std::stable_sort(out.begin(), out.end(), [](const Cand& a, const Cand& b) { return a.score < b.score; });
+    // stable: equal aim scores keep world order, so the pick and the F10 overlay do not flicker between frames
+    std::stable_sort(out.begin(), out.end(), [](const Cand& a, const Cand& b) { return a.aim_score < b.aim_score; });
     return out;
 }
 
-const Cand* pick(const std::vector<Cand>& cands, const View& v, bool& kinesis) {
-    kinesis = false;
-    if (const auto* candidate = reachable(cands)) return candidate;
-    // kinesis: zone centre inside the cone along the line of sight
+const Cand* pick(const std::vector<Cand>& cands, const View& v, bool& telekinesis) {
+    telekinesis = false;
+    if (const auto* candidate = best_selectable(cands)) return candidate;
+    // telekinesis: zone centre inside the cone along the line of sight
     const Cand* best = nullptr;
     float best_cos = kKinesisCos;
     for (auto& c : cands) {
-        if (!c.kinesis) continue;
-        Vec3 m{(c.lz.lo.x + c.lz.hi.x) * 0.5f, (c.lz.lo.y + c.lz.hi.y) * 0.5f - 0.5f, (c.lz.lo.z + c.lz.hi.z) * 0.5f};
+        if (!c.telekinesis_target) continue;
+        Vec3 m{(c.local_zone.lo.x + c.local_zone.hi.x) * 0.5f, (c.local_zone.lo.y + c.local_zone.hi.y) * 0.5f - 0.5f, (c.local_zone.lo.z + c.local_zone.hi.z) * 0.5f};
         float len = std::sqrt(m.x * m.x + m.y * m.y + m.z * m.z);
         if (len < 0.1f || len > kKinesisRange || m.z <= 0) continue;
         // horizontal angle only (the camera pitch is not part of the view); vertical within 3 m
@@ -219,7 +219,7 @@ const Cand* pick(const std::vector<Cand>& cands, const View& v, bool& kinesis) {
         }
     }
     (void)v;
-    kinesis = best != nullptr;
+    telekinesis = best != nullptr;
     return best;
 }
 
@@ -229,12 +229,12 @@ void report_all(const std::vector<Cand>& cands, const View& v) {
     int n = 0;
     for (auto& c : cands) {
         if (n++ >= 25) break;
-        emit(true, fmt("  %08x %-26s usable=%d kinesis=%d in-hitbox=%d score=%.2f local x %.2f..%.2f y %.2f..%.2f z "
-                       "%.2f..%.2f int=%d plus=%d use=%d",
-                       c.obj, c.cls.c_str(), c.usable, c.kinesis, c.overlap, c.score, c.lz.lo.x, c.lz.hi.x, c.lz.lo.y,
-                        c.lz.hi.y, c.lz.lo.z, c.lz.hi.z, objs::interactive(c.obj), objs::interactive_plus(c.obj),
+        emit(true, fmt("  %08x %-26s selectable=%d telekinesisTarget=%d in-hitbox=%d aimScore=%.2f local x %.2f..%.2f y %.2f..%.2f z "
+                       "%.2f..%.2f isInteractive=%d isInteractivePlus=%d useEnabled=%d",
+                       c.obj, c.cls.c_str(), c.selectable, c.telekinesis_target, c.in_hitbox, c.aim_score, c.local_zone.lo.x, c.local_zone.hi.x, c.local_zone.lo.y,
+                        c.local_zone.hi.y, c.local_zone.lo.z, c.local_zone.hi.z, objs::is_interactive(c.obj), objs::is_interactive_plus(c.obj),
                        objs::use_enabled(c.obj)));
-        if (c.eligibility != Eligibility::unknown) emit(true, std::string("    ") + eligibility_text(c));
+        if (c.outcome != Outcome::unverified) emit(true, std::string("    ") + outcome_text(c));
     }
 }
 
@@ -245,14 +245,14 @@ bool use(u32 player, u32 world, float look_yaw, bool report) {
     View v = view_of(player, look_yaw);
     auto cands = gather(v, world, player, report);
     if (report) report_all(cands, v);
-    bool kin;
-    const Cand* c = pick(cands, v, kin);
+    bool telekinesis;
+    const Cand* c = pick(cands, v, telekinesis);
     if (!c) {
         emit(report, "E: nothing in front of the player");
         return false;
     }
     bool ok = send_use(c->obj);
-    emit(report, fmt("E: %s %s %08x -> %s", kin ? "kinesis" : "use", c->cls.c_str(), c->obj, ok ? "accepted" : "refused"));
+    emit(report, fmt("E: %s %s %08x -> %s", telekinesis ? "telekinesis" : "use", c->cls.c_str(), c->obj, ok ? "accepted" : "refused"));
     return ok;
 }
 
@@ -273,11 +273,11 @@ void draw_debug(u32 player, u32 world, float look_yaw) {
     if (!player || !world) return;
     View v = view_of(player, look_yaw);
     auto cands = gather(v, world, player, false);
-    bool kin;
-    const Cand* best = pick(cands, v, kin);
+    bool telekinesis;
+    const Cand* best = pick(cands, v, telekinesis);
     for (auto& c : cands) {
-        if (!c.usable && !c.kinesis) continue;
-        unsigned col = &c == best ? 0x30ff30ffu : c.usable ? 0xffffffb0u : 0xffc030b0u;
+        if (!c.selectable && !c.telekinesis_target) continue;
+        unsigned col = &c == best ? 0x30ff30ffu : c.selectable ? 0xffffffb0u : 0xffc030b0u;
         for (const auto& zone : c.zones) {
             if (!zone_within_radius(zone, v.p, 10)) continue;
             Vec3 corners[8];
@@ -298,8 +298,8 @@ std::string pick_name(u32 player, u32 world, float look_yaw) {
     if (!player || !world) return "";
     View v = view_of(player, look_yaw);
     auto cands = gather(v, world, player, false);
-    bool kin;
-    const Cand* c = pick(cands, v, kin);
+    bool telekinesis;
+    const Cand* c = pick(cands, v, telekinesis);
     return c ? fmt("%s %08x", c->cls.c_str(), c->obj) : "";
 }
 
@@ -325,9 +325,9 @@ void repair_objective_panel(u32 world) {
     static int count = 0;
     if (!world || !fn_target || !fn_state) return;
     u32 t = cpu::call(fn_target, {world});
-    // +0x174 = usable. A panel restored from a checkpoint as "switched" (initPostCheckpoint ->
+    // useEnabled (+0x174). A panel restored from a checkpoint as "switched" (initPostCheckpoint ->
     // setOnState) is unusable while its switch state +0x1e4 may still read 0.
-    bool used_panel = t && objs::class_name(t) == "GameObjectControlPanel" && mem::r8(t + 0x174) == 0;
+    bool used_panel = t && objs::class_name(t) == "GameObjectControlPanel" && !objs::use_enabled(t);
     if (!used_panel) {
         stuck = 0;
         count = 0;
@@ -388,9 +388,9 @@ std::string preview(u32 player, u32 world, float look_yaw) {
     View v = view_of(player, look_yaw);
     auto cands = gather(v, world, player, true);
     report_all(cands, v);
-    bool kin;
-    const Cand* c = pick(cands, v, kin);
-    return c ? fmt("E would %s %s %08x", kin ? "kinesis" : "use", c->cls.c_str(), c->obj) : "E would do nothing";
+    bool telekinesis;
+    const Cand* c = pick(cands, v, telekinesis);
+    return c ? fmt("E would %s %s %08x", telekinesis ? "telekinesis" : "use", c->cls.c_str(), c->obj) : "E would do nothing";
 }
 
 }  // namespace interact

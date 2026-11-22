@@ -132,17 +132,10 @@ u32 g_fade_tick = 0;
 unsigned g_rejected = 0, g_teardown_budget = 0, g_write_budget = 0, g_bad_header_budget = 0;
 u32 g_teardown_world = 0;
 
-bool mapped(u32 address, u32 size) {
-    if (!address || !size || uint64_t(address) + size > (uint64_t(1) << 32)) return false;
-    for (uint64_t a = address & ~uint64_t(mem::PAGE_SIZE - 1); a < uint64_t(address) + size; a += mem::PAGE_SIZE)
-        if (!mem::is_mapped(u32(a))) return false;
-    return true;
-}
-
 // All *_locked helpers require g_scene_mutex. Type/layout/mapping checks supplement
 // native lifetime tokens; none of them can establish a lifetime on their own.
 int node_kind_locked(NodeRef ref) {
-    if (!g_lifetime_ready || ref.world != g_scene_world || !g_lifetimes.contains(ref) || !mapped(ref.node.address, 0x13c)) return -1;
+    if (!g_lifetime_ready || ref.world != g_scene_world || !g_lifetimes.contains(ref) || !mem::range_mapped(ref.node.address, 0x13c)) return -1;
     u32 vt = mem::r32(ref.node.address);
     for (size_t i = 0; i < g_node_vtables.size(); i++)
         if (vt == g_node_vtables[i]) return int(i);
@@ -161,11 +154,11 @@ bool mesh_kind(int kind) { return kind == 4 || kind == 5; }
 
 std::vector<NodeRef> children_locked(NodeRef parent, u32 limit) {
     std::vector<NodeRef> children;
-    if (!group_kind(node_kind_locked(parent)) || !mapped(parent.node.address, 0x148)) return children;
+    if (!group_kind(node_kind_locked(parent)) || !mem::range_mapped(parent.node.address, 0x148)) return children;
     u32 b = mem::r32(parent.node.address + 0x13c), e = mem::r32(parent.node.address + 0x140);
     if (!scene_cache::vector_layout(b, e, e, 4)) { rejected_locked(parent); return children; }
     u32 count = std::min((e - b) / 4, limit);
-    if (count && !mapped(b, count * 4)) { rejected_locked(parent); return children; }
+    if (count && !mem::range_mapped(b, count * 4)) { rejected_locked(parent); return children; }
     for (u32 i = 0; i < count; i++) {
         NodeRef child = reference_locked(mem::r32(b + i * 4));
         if (node_kind_locked(child) >= 0 && mem::r32(child.node.address + 0x128) == parent.node.address)
@@ -237,10 +230,10 @@ constexpr float kFadeSeconds = 1.4f;  // from fully shown to gone, or back
 struct FogData { NodeRef ref; u32 data; };
 std::vector<FogData> g_fog_data;
 void note_fog_mesh(u32 node) {
-    if (!mesh_kind(node_kind_locked(reference_locked(node))) || !mapped(node, 0x164)) return;
+    if (!mesh_kind(node_kind_locked(reference_locked(node))) || !mem::range_mapped(node, 0x164)) return;
     u32 vb = mem::r32(node + 0x160);
-    u32 va = mapped(vb, 0x48) ? mem::r32(vb + 0x44) : 0;
-    u32 data = mapped(va, 0x4c) ? mem::r32(va + 0x48) : 0;
+    u32 va = mem::range_mapped(vb, 0x48) ? mem::r32(vb + 0x44) : 0;
+    u32 data = mem::range_mapped(va, 0x4c) ? mem::r32(va + 0x48) : 0;
     if (data > 0x10000 && std::none_of(g_fog_data.begin(), g_fog_data.end(), [&](const FogData& f) { return f.data == data; }))
         g_fog_data.push_back({reference_locked(node), data});
 }
@@ -347,13 +340,13 @@ void probe_tree(NodeRef ref, int depth) {
         LOGI("[lights] %*s%08x %s at %.2f %.2f %.2f shown %d", depth * 2, "", ref.node.address,
              cpu::symbolize(mem::r32(ref.node.address)).c_str(), m[12], m[13], m[14], mem::r8(ref.node.address + 0x12c));
         children = children_locked(ref, 40);
-        if (mesh_kind(node_kind_locked(ref)) && mapped(ref.node.address, 0x164)) {
+        if (mesh_kind(node_kind_locked(ref)) && mem::range_mapped(ref.node.address, 0x164)) {
             u32 vb = mem::r32(ref.node.address + 0x160);
-            u32 va = mapped(vb, 0x58) ? mem::r32(vb + 0x44) : 0;
-            if (mapped(vb, 0x58))
+            u32 va = mem::range_mapped(vb, 0x58) ? mem::r32(vb + 0x44) : 0;
+            if (mem::range_mapped(vb, 0x58))
                 LOGI("[lights] %*s  vb %08x scale %.6f bias %.3f %.3f %.3f va %08x", depth * 2, "", vb,
                      f32(vb + 0x48), f32(vb + 0x4c), f32(vb + 0x50), f32(vb + 0x54), va);
-            if (mapped(va, 0x60))
+            if (mem::range_mapped(va, 0x60))
                 LOGI("[lights] %*s  va: %08x %08x %08x %08x %08x %08x %08x %08x %08x", depth * 2, "",
                      mem::r32(va + 0x3c), mem::r32(va + 0x40), mem::r32(va + 0x44), mem::r32(va + 0x48),
                      mem::r32(va + 0x4c), mem::r32(va + 0x50), mem::r32(va + 0x54), mem::r32(va + 0x58), mem::r32(va + 0x5c));
@@ -365,9 +358,9 @@ void probe_tree(NodeRef ref, int depth) {
 std::vector<NodeRef> quarantine_nodes() {
     std::lock_guard lock(g_scene_mutex);
     std::vector<NodeRef> nodes;
-    if (!g_lifetimes.worlds.contains(g_scene_world) || !mapped(g_scene_world.address, 0x230)) return nodes;
+    if (!g_lifetimes.worlds.contains(g_scene_world) || !mem::range_mapped(g_scene_world.address, 0x230)) return nodes;
     u32 qb = mem::r32(g_scene_world.address + 0x228), qe = mem::r32(g_scene_world.address + 0x22c);
-    if (!scene_cache::vector_layout(qb, qe, qe, 4) || qe - qb > 4 * 2000 || (qe != qb && !mapped(qb, qe - qb))) return nodes;
+    if (!scene_cache::vector_layout(qb, qe, qe, 4) || qe - qb > 4 * 2000 || (qe != qb && !mem::range_mapped(qb, qe - qb))) return nodes;
     for (u32 q = qb; q < qe; q += 4) {
         NodeRef ref = reference_locked(mem::r32(q));
         if (node_kind_locked(ref) >= 0) nodes.push_back(ref);
@@ -442,14 +435,14 @@ void collect_fixtures(NodeRef ref, int depth, std::vector<Fixture>& fixtures, st
         sources.push_back(ref);
         if (group_kind(kind)) children = children_locked(ref, 64);
         else {
-            if (!mesh_kind(kind) || !mapped(ref.node.address, 0x164)) return;
+            if (!mesh_kind(kind) || !mem::range_mapped(ref.node.address, 0x164)) return;
             // Copy positions before the native call; retain no raw buffer/data pointer.
             u32 vb = mem::r32(ref.node.address + 0x160);
-            u32 va = mapped(vb, 0x58) ? mem::r32(vb + 0x44) : 0;
-            if (!mapped(va, 0x58)) return;
+            u32 va = mem::range_mapped(vb, 0x58) ? mem::r32(vb + 0x44) : 0;
+            if (!mem::range_mapped(va, 0x58)) return;
             u32 count = mem::r32(va + 0x3c), comps = mem::r32(va + 0x40), type = mem::r32(va + 0x44);
             u32 data = mem::r32(va + 0x48), stride = mem::r32(va + 0x54);
-            if (!count || count > 20000 || comps != 3 || type != 2 || stride < 6 || stride > 64 || !mapped(data, count * stride)) return;
+            if (!count || count > 20000 || comps != 3 || type != 2 || stride < 6 || stride > 64 || !mem::range_mapped(data, count * stride)) return;
             float scale = f32(vb + 0x48), bias[3] = {f32(vb + 0x4c), f32(vb + 0x50), f32(vb + 0x54)};
             vertices.resize(count);
             for (u32 i = 0; i < count; i++)
@@ -726,7 +719,7 @@ void on_object_destroyed(cpu::Ctx& c) {
     std::lock_guard lock(g_scene_mutex);
     u32 object = c.reg(0);
     if (g_lifetimes.nodes.current(object)) retire_node_locked(object);
-    if (!mapped(object, 0x3c)) return;
+    if (!mem::range_mapped(object, 0x3c)) return;
     u32 tracks = mem::r32(object + 8), tracks_end = mem::r32(object + 0xc), tracks_cap = mem::r32(object + 0x10);
     u32 data = mem::r32(object + 0x24), end = mem::r32(object + 0x28), cap = mem::r32(object + 0x2c);
     // The string storage uses two-byte elements (including the shared empty
@@ -925,7 +918,7 @@ int debug_show_nodes(float x, float z, float radius) {
 float lockdown_level() {
     std::lock_guard lock(g_scene_mutex);
     u32 world = input::world();
-    if (!world || g_lifetimes.worlds.current(world) != g_scene_world || !g_scene_world || !mapped(world, 0x290)) return 0;
+    if (!world || g_lifetimes.worlds.current(world) != g_scene_world || !g_scene_world || !mem::range_mapped(world, 0x290)) return 0;
     float level = f32(world + 0x28c);
     return std::isfinite(level) ? std::clamp(level, 0.0f, 1.0f) : 0.0f;
 }
@@ -984,7 +977,7 @@ void debug_list(std::vector<DebugLight>& out) {
     // every other strip light fixture of the level (not lit: too far from the camera, or over the limit)
     std::lock_guard lock(g_scene_mutex);
     u32 world = input::world();
-    if (world && g_scene_world && g_fixtures_ready && g_lifetimes.worlds.current(world) == g_scene_world && mapped(world, 0x290)) {
+    if (world && g_scene_world && g_fixtures_ready && g_lifetimes.worlds.current(world) == g_scene_world && mem::range_mapped(world, 0x290)) {
         float level = std::clamp(f32(world + 0x28c), 0.0f, 1.0f);
         for (const Fixture& f : g_fixtures) {
             bool is_lit = false;

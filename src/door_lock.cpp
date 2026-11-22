@@ -25,14 +25,14 @@ bool supported(const Symbols& s) {
 }
 }  // namespace
 
-interact::Eligibility open_eligibility(u32 object) {
+interact::Outcome open_outcome(u32 object) {
     const Symbols& sym = symbols();
     if (!supported(sym) || !mem::range_mapped(object, kHazardLock + 1) || mem::r32(object) != sym.table + 8)
-        return interact::Eligibility::unknown;
+        return interact::Outcome::unverified;
     // Mirrors GameObjectDoor::onOpen.
-    if (mem::r32(object + kState) - 1u > 1u) return interact::Eligibility::blocked;  // not closed: ignores E
+    if (mem::r32(object + kState) - 1u > 1u) return interact::Outcome::declines;  // not closed: ignores E
     const bool locked = mem::r8(object + kLockFlag) != 0 || int32_t(mem::r32(object + kLockCount)) > 0 ||
                         mem::r8(object + kHazardLock) != 0;
-    return locked ? interact::Eligibility::blocked : interact::Eligibility::available;
+    return locked ? interact::Outcome::declines : interact::Outcome::acts;
 }
 }  // namespace door

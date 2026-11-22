@@ -21,17 +21,10 @@ u32 fn_in_rig = 0, fn_set_text = 0, fn_assign = 0;
 u32 g_name = 0, g_text = 0, g_string = 0;
 std::atomic<bool> g_layout_added{false};
 
-bool mapped(u32 address, u32 size) {
-    if (!address || !size || address > std::numeric_limits<u32>::max() - (size - 1)) return false;
-    for (u32 i = 0; i < size; ++i)
-        if (!mem::is_mapped(address + i)) return false;
-    return true;
-}
-
 bool word(u32 object, u32 offset, u32& value) {
     if (!object || object > std::numeric_limits<u32>::max() - offset) return false;
     const u32 address = object + offset;
-    if (!mapped(address, 4)) return false;
+    if (!mem::range_mapped(address, 4)) return false;
     value = mem::r32(address);
     return true;
 }
@@ -41,7 +34,7 @@ void on_hud_update(cpu::Ctx& c) {
     u32 layout, world, player, inventory, credits;
     // Layout is a non-polymorphic native object (0x2c bytes). Obtain it anew
     // from this live Hud; never retain a layout/entity pointer across visits.
-    if (!word(c.reg(0), kHudRigLayout, layout) || !mapped(layout, 0x2c) ||
+    if (!word(c.reg(0), kHudRigLayout, layout) || !mem::range_mapped(layout, 0x2c) ||
         !word(c.reg(0), kHudWorld, world) || !word(world, kWorldPlayer, player) ||
         !word(player, kPlayerInventory, inventory) || !word(inventory, kInventoryCredits, credits)) return;
     if (!g_string) {

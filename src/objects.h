@@ -36,12 +36,15 @@ bool empty(const Box& b);
 
 // GameObjectInteractive state (only valid for interactive classes)
 bool is_interactive_class(u32 obj);  // derives from GameObjectInteractive
-bool interactive(u32 obj);           // isInteractive()
-bool interactive_plus(u32 obj);      // isInteractivePlus() (doors, lockers, panels...)
-bool telekinesisable(u32 obj);
-bool use_enabled(u32 obj);           // +0x174: the object takes "use" (onOpen) at all
-float reach(u32 obj);                // +0x178: the game's own interaction radius
-u32 flags(u32 obj);                  // GameObject +0x48 (0x10 = game says in range, 0x8 = hidden/disabled)
+bool is_interactive(u32 obj);        // GameObject::isInteractive(): usable right now (observed: range and state included)
+bool is_interactive_plus(u32 obj);   // GameObject::isInteractivePlus(): pickups always, doors when near; meaning not fully known
+bool is_telekinesisable(u32 obj);    // GameObject::isTelekinesisable()
+bool use_enabled(u32 obj);           // GameObjectInteractive +0x174: the object takes "use" (onOpen) at all
+float use_reach(u32 obj);             // GameObjectInteractive +0x178: the game's own interaction radius, metres from the origin
+u32 flags(u32 obj);                  // GameObject +0x48 flag word
+bool is_destroyed(u32 obj);          // flag 0x1, set by GameObject::destroy()
+bool is_hidden(u32 obj);             // flag 0x8: hidden / disabled
+bool is_in_range(u32 obj);           // flag 0x10: "the game says in range" (not a plain distance test)
 bool on_interact(u32 obj);           // GameObjectInteractive::onInteract (what a tap / E does)
 
 // Every object in the world (GameWorld's object vector)

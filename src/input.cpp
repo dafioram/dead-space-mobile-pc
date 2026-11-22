@@ -63,6 +63,9 @@ std::atomic<u32> g_input_epoch{0};
 // game objects (written on the game thread)
 std::atomic<u32> g_player{0}, g_hud{0}, g_world{0};
 std::atomic<u32> g_player_tick{0};
+// A limb with an absurd (not just NaN) position draws as a streak across the screen until it is destroyed, so look
+// for them often: 6 ticks is about 0.1 s. The phase keeps the sweep off the ticks used by repair_objective_panel (% 30 == 0).
+constexpr int kLimbSweepEveryTicks = 6, kLimbSweepPhase = 3;
 std::atomic<bool> g_aiming{false}, g_paused{true};
 std::atomic<int> g_state{0};
 
@@ -747,7 +750,7 @@ void on_player_update(cpu::Ctx& c) {
     if (g_interact_debug && !g_paused) interact::draw_debug(player, g_world, g_free_yaw);
     if (!g_paused) debugview::draw(player, g_world);
     if (g_player_tick % 30 == 0) interact::repair_objective_panel(g_world);
-    if (g_player_tick % 30 == 15) limb_cleanup::sweep(g_world, player);  // limbs with a NaN/absurd position never expire
+    if (g_player_tick % kLimbSweepEveryTicks == kLimbSweepPhase) limb_cleanup::sweep(g_world, player);
     if (g_state != 0 && g_free_yaw != 0) {
         turn_free_look(player, g_free_yaw);
         g_free_turning = false;

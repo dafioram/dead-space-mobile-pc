@@ -21,12 +21,6 @@ struct Frame {
 thread_local std::vector<Frame> frames;
 u32 return_stub = 0;
 u32 file_input_vtable = 0;
-bool mapped(u32 address, u32 size) {
-    if (!address || uint64_t(address) + size > (uint64_t(1) << 32)) return false;
-    for (uint64_t p = address & ~uint64_t(mem::PAGE_SIZE - 1); p < uint64_t(address) + size; p += mem::PAGE_SIZE)
-        if (!mem::is_mapped(u32(p))) return false;
-    return true;
-}
 void enter(cpu::Ctx& c, Operation operation, const std::string& path = {}, bool failed = false) {
     frames.push_back({operation, c.lr(), save_io::failure_epoch(), failed, path});
     c.set_reg(14, return_stub);
@@ -38,9 +32,9 @@ void on_save(cpu::Ctx& c) {
 }
 void on_load(cpu::Ctx& c) {
     u32 stream = c.reg(1);
-    if (!mapped(stream, 8) || mem::r32(stream) != file_input_vtable) return;
+    if (!mem::range_mapped(stream, 8) || mem::r32(stream) != file_input_vtable) return;
     u32 file = mem::r32(stream + 4);
-    if (!mapped(file, 0x14)) return;
+    if (!mem::range_mapped(file, 0x14)) return;
     auto info = save_io::load_info(int(mem::r32(file + 0x10)));
     if (info.path.empty()) return;  // correlate to this stream's fd, not a recent unrelated open
     if (info.structurally_invalid) {
@@ -52,12 +46,12 @@ void on_load(cpu::Ctx& c) {
     LOGI("[save-load] native serialization parse BEGIN path=%s", info.path.c_str());
 }
 void on_close(cpu::Ctx& c) {
-    if (!mapped(c.reg(0), 0x14)) return;
+    if (!mem::range_mapped(c.reg(0), 0x14)) return;
     int fd = int(mem::r32(c.reg(0) + 0x10));
     if (save_io::tracked_profile_fd(fd)) enter(c, Operation::close, {}, save_io::failed_fd(fd));
 }
 void on_flush(cpu::Ctx& c) {
-    if (!mapped(c.reg(0), 0x14)) return;
+    if (!mem::range_mapped(c.reg(0), 0x14)) return;
     int fd = int(mem::r32(c.reg(0) + 0x10));
     if (save_io::tracked_profile_fd(fd)) enter(c, Operation::flush, {}, save_io::failed_fd(fd));
 }

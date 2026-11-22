@@ -1,5 +1,5 @@
 #pragma once
-#include "eligibility.h"
+#include "outcome.h"
 
 namespace limb {
 // Severed limbs count as "usable" (the game's touch UI can tap them), but this core's GameObjectLimb has no
@@ -9,5 +9,5 @@ namespace limb {
 //   unknown: the core's symbols are not loaded yet, or its GameObjectLimb does have its own onOpen;
 //            original behaviour is kept.
 // A limb is still selected when nothing else usable is in reach (see interact::reachable).
-interact::Eligibility use_eligibility();
+interact::Outcome use_outcome();
 }  // namespace limb

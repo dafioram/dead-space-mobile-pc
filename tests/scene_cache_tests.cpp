@@ -274,7 +274,8 @@ void layout_and_mapping() {
     pages[root_node / mem::PAGE_SIZE] = false;
     render();
     require(mem::r32(root_node + 0x130) == 4321, "unmapped node was written");
-    require(!lights::mapped(0xfffffff0,0x40), "wrapping span accepted");
+    require(!mem::range_mapped(root_node, 4), "unmapped range accepted");
+    require(!mem::range_mapped(0xfffffff0, 0x40), "wrapping span accepted");
 }
 void read_only_teardown_diagnostics() {
     reset();

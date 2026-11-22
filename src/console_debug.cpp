@@ -12,14 +12,6 @@
 namespace console_debug {
 namespace {
 
-bool mapped(u32 address, size_t size) {
-    if (address < 0x10000 || !size || size - 1 > std::numeric_limits<u32>::max() - address) return false;
-    u64 end = u64(address) + size;
-    for (u64 page = address & ~(mem::PAGE_SIZE - 1); page < end; page += mem::PAGE_SIZE)
-        if (!mem::is_mapped(u32(page))) return false;
-    return true;
-}
-
 bool wallet_layout_supported() {
     // The same wallet fields used by the existing developer rich command.
     // Check the native player->inventory read and both native wallet accesses.
@@ -33,9 +25,9 @@ bool wallet_layout_supported() {
 
 void set_wallet(const Request& request, u32 player, Output output) {
     if (!wallet_layout_supported()) return output("cannot set resources: unsupported native wallet layout");
-    if (!mapped(player, 0x534)) return output("cannot set resources: player inventory reference unavailable");
+    if (!mem::range_mapped(player, 0x534)) return output("cannot set resources: player inventory reference unavailable");
     u32 inventory = mem::r32(player + 0x530);
-    if (!mapped(inventory, 0x1c)) return output("cannot set resources: no current inventory");
+    if (!mem::range_mapped(inventory, 0x1c)) return output("cannot set resources: no current inventory");
     Wallet before{mem::r32(inventory + 0x18), mem::r32(inventory + 0x14)};
     Wallet after = set_resources(request, before);
     if (request.kind == Kind::credits || request.kind == Kind::rich) mem::w32(inventory + 0x18, after.credits);
@@ -72,7 +64,7 @@ bool enemy_layout_supported() {
     u32 base = elf::find("_ZTV10GameObject");
     u32 is_enemy = elf::find("_ZNK10GameObject12isNecromorphEv");
     u32 alive = elf::find("_ZNK10GameObject7isAliveEv");
-    return base && is_enemy && alive && mapped(base, 8 + 0x114) &&
+    return base && is_enemy && alive && mem::range_mapped(base, 8 + 0x114) &&
            mem::r32(base + 8 + 0x2c) == is_enemy && mem::r32(base + 8 + 0x110) == alive;
 }
 
@@ -92,11 +84,11 @@ void enemies(u32 player, u32 world, float radius, Output output) {
     size_t unavailable = 0, living = 0;
     // Obtain fresh references on the game thread; never cache objects across commands.
     for (u32 object : objs::world_objects(world)) {
-        if (object == player || !mapped(object, 0x5c)) continue;
+        if (object == player || !mem::range_mapped(object, 0x5c)) continue;
         u32 vtable = mem::r32(object);
-        if (!mapped(vtable, 0x114)) continue;
+        if (!mem::range_mapped(vtable, 0x114)) continue;
         u32 is_enemy = mem::r32(vtable + 0x2c), alive = mem::r32(vtable + 0x110);
-        if (!mapped(is_enemy, 4) || !mapped(alive, 4) || !(cpu::call(is_enemy, {object}) & 0xff)) continue;
+        if (!mem::range_mapped(is_enemy, 4) || !mem::range_mapped(alive, 4) || !(cpu::call(is_enemy, {object}) & 0xff)) continue;
         // Do not misreport a bodyless base getPos fallback as world origin.
         if (!mem::r32(object + 0x58) && mem::r32(vtable + 0xc4) == base_pos) {
             unavailable++;
@@ -111,7 +103,7 @@ void enemies(u32 player, u32 world, float radius, Output output) {
         if (!enemy_distance(origin.x, origin.y, origin.z, position.x, position.y, position.z, radius, distance)) continue;
         bool live = (cpu::call(alive, {object}) & 0xff) != 0;
         living += live;
-        found.push_back({object, objs::class_name(object), distance, live, (objs::flags(object) & 8) != 0});
+        found.push_back({object, objs::class_name(object), distance, live, objs::is_hidden(object)});
     }
     std::sort(found.begin(), found.end(), [](const Enemy& a, const Enemy& b) {
         return a.distance != b.distance ? a.distance < b.distance : a.object < b.object;
