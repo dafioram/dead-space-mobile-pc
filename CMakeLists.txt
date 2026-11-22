@@ -63,6 +63,10 @@ add_executable(deadspace
     src/ammo_pickup.cpp
     src/limb_use.h
     src/limb_use.cpp
+    src/limb_cleanup.h
+    src/limb_cleanup.cpp
+    src/limb_cleanup_rules.h
+    src/limb_cleanup_rules.cpp
     src/lights.cpp
     src/texpack.cpp
     src/debugview.cpp

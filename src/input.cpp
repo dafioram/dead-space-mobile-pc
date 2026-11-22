@@ -14,6 +14,7 @@
 
 #include "devmode.h"
 #include "interact.h"
+#include "limb_cleanup.h"
 #include "debugview.h"
 #include "render/native.h"
 
@@ -746,6 +747,7 @@ void on_player_update(cpu::Ctx& c) {
     if (g_interact_debug && !g_paused) interact::draw_debug(player, g_world, g_free_yaw);
     if (!g_paused) debugview::draw(player, g_world);
     if (g_player_tick % 30 == 0) interact::repair_objective_panel(g_world);
+    if (g_player_tick % 30 == 15) limb_cleanup::sweep(g_world, player);  // limbs with a NaN/absurd position never expire
     if (g_state != 0 && g_free_yaw != 0) {
         turn_free_look(player, g_free_yaw);
         g_free_turning = false;
