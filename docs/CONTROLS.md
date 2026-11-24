@@ -2,6 +2,10 @@
 
 Full keyboard, mouse and controller reference. Settings are saved in `userdata/port_settings.ini`.
 
+The existing controls below are the **current implementation**. The
+[planned modern layout](#planned-modern-layout-not-implemented) records the agreed
+rework separately; it is **documentation only**, not available in the game yet.
+
 ## Playing
 
 In gameplay the mouse is captured; in menus it works as a touch pointer (moving it hides the keyboard
@@ -155,6 +159,165 @@ The nearby-object search measures distance to the interaction zone, not the obje
 Controls on large objects (such as a gondola) can therefore be used at the object's edge even when
 its origin is far away. The F10 interaction overlay uses the same zone-based distance check
 (see [Debug views](debug_menu.md#debug-views)).
+
+## Planned modern layout (not implemented)
+
+This section is the design target for an optional **Modern / Remake-style**
+preset, not a description of shipped bindings. Keep **Classic Port** and existing
+saved/custom bindings intact; adopting the new preset must be explicit, not a
+silent reset of `userdata/port_settings.ini`. No gameplay code, default settings,
+binding migration, menu entries or controller detection have been changed for
+this proposal.
+
+### Mouse and keyboard
+
+These are ordinary gameplay actions; held-object priority is defined below.
+
+| Input | Planned action |
+|---|---|
+| W A S D | Move |
+| Mouse movement | Look / aim; retain existing sensitivity, smoothing and free-look options |
+| RMB (hold) | Raise weapon / aim; release to lower |
+| LMB | Fire while aiming; melee when not aiming; throw takes priority while holding a kinesis object |
+| Space | Stomp only with weapon lowered; **does nothing while aiming**, not alternate fire |
+| V or Mouse 4 | Dedicated melee, including while aiming; throw instead while holding a kinesis object |
+| X or middle mouse | Switch the weapon's native firing mode only when raised with RMB; no action with weapon lowered or while carrying a kinesis object |
+| E | Nearby interaction only: doors, pickups, lockers, terminals, benches, stores, etc.; **no kinesis fallback** |
+| F | Kinesis grab / release, with or without aiming |
+| C | Stasis, with or without aiming |
+| R | Reload |
+| Q | Quick turn (180 degrees) |
+| Left Ctrl | Zero-G jump, with or without aiming; not RMB + Ctrl |
+| Left Shift (hold) | Run, subject to normal movement/state restrictions |
+| Optional keyboard run-toggle binding | Controller-style run toggle; Caps Lock was suggested, but its default is not finalized |
+| Mouse wheel up / down | Previous / next owned gun |
+| 1-4 | Direct gun selection, alongside cycling |
+| B | Locator without opening the RIG |
+| Tab | Open / close RIG |
+| Esc | Pause / back |
+
+LMB deliberately retains un-aimed melee rather than copying the controller
+trigger's un-aimed stomp. Space provides the separate keyboard stomp binding.
+Mode switching uses the existing per-weapon action, not a new universal mode or
+an added automatic shot.
+
+### Xbox and PlayStation
+
+| Action | Xbox | PlayStation |
+|---|---|---|
+| Move / look | Left stick / right stick | Left stick / right stick |
+| Aim (hold) | LT | L2 |
+| Fire while aiming / stomp with weapon lowered | RT | R2 |
+| Melee with weapon lowered / switch firing mode while aiming | RB | R1 |
+| Nearby interaction only; break free in a struggle | A | Cross |
+| Reload | X | Square |
+| Stasis, aiming or not | Y | Triangle |
+| Kinesis grab / release, aiming or not | B | Circle |
+| Run (hold) | LB | L1 |
+| Run toggle | Left-stick click | L3 |
+| Zero-G jump, aiming or not | Right-stick click | R3 |
+| Locator | D-pad Up | D-pad Up |
+| Quick turn (180 degrees) | D-pad Down | D-pad Down |
+| Previous / next owned gun | D-pad Left / Right | D-pad Left / Right |
+| RIG | View / Back | Touchpad click on PS4/PS5 when exposed; Select on PS3 |
+| Pause / back | Menu / Start | Options / Start |
+
+Touchpad means its **physical click**, not touch, swipe or finger movement.
+Choose defaults using both controller family and exposed button capabilities.
+If Steam Input/an adapter presents a PlayStation controller as Xbox or hides its
+touchpad, use an available Back/Share/Create equivalent or user-rebound control;
+never leave RIG inaccessible. Preserve explicit custom bindings rather than
+overwriting them on connection. Labels/prompts must reflect the actual controller
+family and effective mapping, rather than the current Xbox-only names.
+
+Controller stomp still requires lowering the weapon: RT/R2 fires while aiming.
+Space while aiming is a no-op, so it does not bypass that restriction on keyboard.
+
+### Shared action semantics and priority
+
+- **Kinesis toggle:** a fresh F / B / Circle press grabs an eligible target when
+  not carrying one. A fresh second press releases the current hold without an
+  added launch impulse. Release must not immediately grab another target. It is
+  a release, not teleporting the object, freezing it or forcing its velocity to
+  zero. Existing gravity, collisions and game restrictions remain authoritative.
+- **Throw before fire/melee:** while carrying an object, LMB and the dedicated
+  melee inputs V/Mouse 4 throw it instead of firing or swinging. On controller,
+  RT/R2 and RB/R1 throw while carrying, regardless of the aim modifier; the
+  held-object action takes priority over their normal fire/stomp/melee/mode split.
+  One press must not both throw and then shoot, stomp or swing. X/middle mouse
+  remain mode-switch-only inputs and do nothing while carrying an object.
+- **No repeat toggling:** key repeat or a held button must not repeatedly
+  grab/release, change mode, quick-turn or cycle weapons. A new physical press
+  is required for the next discrete action. Holding a fire input retains the
+  weapon's normal firing behavior; stale pending fire must not cause a second
+  action after a throw or release.
+- **State checks:** stasis, kinesis and zero-G jump do not require the aim
+  modifier, but are not forced through invalid native states. Zero-G jump still
+  requires zero gravity, an eligible state and a valid destination. No ordinary
+  jump, free-flight, manual-heal mechanic or physics-policy change is introduced.
+  Other combinations, including stomp while carrying, remain subject to native
+  eligibility and need explicit regression checks, not an invented throw binding.
+- **Running:** hold-run OR run-toggle requests running. Releasing LB/L1/Shift
+  does not change the toggle; toggling off while hold-run is down does not stop
+  the hold request. Centering/stopping movement or aiming clears the toggle.
+  Running still requires forward movement and an eligible state. Existing menu,
+  focus, scripted-input and device-disconnect resets must not leave it latched.
+- **Cycling:** read the game's current gun and owned gun slots; skip unowned
+  entries and wrap in the existing slot order. With only one owned gun, do
+  nothing instead of reselecting it. Never select the stasis-module slot. Respect
+  the game's weapon-change checks. No duplicate inventory-tracking array is needed.
+- **Context ownership:** these mappings apply to gameplay only. Menus keep
+  D-pad/stick navigation, A/Cross confirmation and B/Circle back. Space/Enter
+  remain menu confirmation/cinematic skip, not stomp there. RIG toggle/close,
+  pause, console, struggles/swarms, death screens and scripted sequences retain
+  their established ownership and must not leak a gameplay action. Utility/debug
+  shortcuts are unchanged by this proposal.
+
+### Implementation work still required (not started)
+
+This is more than editing default key/button values:
+
+1. **Separate interaction from kinesis.** `interact::use()` currently combines
+   nearby-use selection and a distant kinesis fallback, and both activate an
+   object with the same use event. Give the modern preset distinct interaction
+   and kinesis routes: E/A/Cross must not grab, and F/B/Circle must not operate
+   a nearby door/terminal instead. Reuse the existing target eligibility,
+   range/cone and nearby-use ranking where appropriate; splitting selection
+   alone may not be enough if the chosen object's use handler initiates kinesis.
+   Preserve Classic Port's combined route and existing ammo/door/limb interaction
+   priority. Update F9/F10 descriptions/previews to match the selected action.
+2. **Expose and validate non-throw release.** The port has no dedicated release
+   binding, but the guest does have `GameObjectPlayable::abortTelekinesis()` and
+   a separate beam-abort path, distinct from `fireTelekinesis()`. Therefore a new
+   release physics system should not be assumed necessary. Verify those paths
+   actually detach supported targets without a launch impulse and restore beam,
+   player and object state correctly. Read live player/target/transition state on
+   the game thread; do not treat a stale host flag or an acquisition transition
+   as proof of a safely releasable held object.
+3. **Centralize contextual dispatch.** Add the grab/release action, controller
+   melee and weapon-cycle actions as needed; apply held-object priority before
+   aiming-dependent routing. Enforce Space's aimed no-op and X/middle mouse's
+   raised-weapon-only behavior. Remove the controller's current aim requirement
+   for zero-G jump and quick-turn filtering where it conflicts with the new
+   dedicated mapping. Retain game-side eligibility checks and one-press rules.
+4. **Share existing mechanisms, not duplicate state.** Factor the mouse-wheel
+   owned-gun traversal for controller cycling and add the single-gun no-op.
+   Keep the existing LB/L1 + L3 run behavior; a keyboard run toggle, if chosen,
+   needs its own exposed binding and correct keyboard stop/aim/reset handling.
+5. **Bindings, persistence, capabilities and prompts.** Add an explicit preset
+   choice/new actions without resetting saved/custom controls. Existing one-key
+   rebinding and fixed mouse extras need to represent the intended alternatives
+   and contextual sharing safely. Add touchpad-click naming/binding and capability
+   fallback, controller-family labels, hotplug behavior, menu rows and accurate
+   tutorial/struggle prompts. The current controller prompt code treats melee as
+   the fire button, which will no longer be generally correct.
+6. **Regression tests and user-operated acceptance.** Cover raised/lowered weapon,
+   acquiring/holding/throwing/releasing, rapid presses/held inputs, no target and
+   target removal; nearby usable objects versus kinesis targets; one/multiple
+   guns; native refused actions; saved bindings/preset switching; PS3/PS4/PS5 and
+   Xbox-style/masked devices; menu/RIG/console/focus/hotplug transitions and
+   struggles. Verify release physics and no duplicate attack on a gameplay test.
+   These tests, implementation and builds have not been started on this branch.
 
 ## See also
 
