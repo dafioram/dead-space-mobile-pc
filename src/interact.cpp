@@ -2,6 +2,7 @@
 #include "ammo_pickup.h"
 #include "door_lock.h"
 #include "limb_use.h"
+#include "telekinesis_release.h"
 #include "game_layout.h"
 #include "outcome.h"
 #include "interaction_geometry.h"
@@ -242,6 +243,16 @@ void report_all(const std::vector<Cand>& cands, const View& v) {
 
 bool use(u32 player, u32 world, float look_yaw, bool report) {
     if (!player || !world) return false;
+    if (const auto tk = telekinesis::query_release(player); tk.action != telekinesis::ReleaseAction::none) {
+        if (tk.action == telekinesis::ReleaseAction::release) {
+            const std::string target_cls = objs::class_name(tk.target);
+            cpu::call(tk.abort_fn, {player});
+            emit(report, fmt("E: release telekinesis %s %08x (beam=%u)", target_cls.c_str(), tk.target, tk.beam_state));
+            return true;
+        }
+        emit(report, fmt("E: telekinesis busy (state=%u beam=%u target=%08x); ignoring", tk.tk_state, tk.beam_state, tk.target));
+        return false;
+    }
     View v = view_of(player, look_yaw);
     auto cands = gather(v, world, player, report);
     if (report) report_all(cands, v);
@@ -296,6 +307,7 @@ void draw_debug(u32 player, u32 world, float look_yaw) {
 
 std::string pick_name(u32 player, u32 world, float look_yaw) {
     if (!player || !world) return "";
+    if (telekinesis::query_release(player).action != telekinesis::ReleaseAction::none) return "";
     View v = view_of(player, look_yaw);
     auto cands = gather(v, world, player, false);
     bool telekinesis;
@@ -384,6 +396,11 @@ void report_encounters(u32 player, u32 world) {
 
 std::string preview(u32 player, u32 world, float look_yaw) {
     if (!player || !world) return "no player";
+    if (const auto tk = telekinesis::query_release(player); tk.action != telekinesis::ReleaseAction::none) {
+        if (tk.action == telekinesis::ReleaseAction::release)
+            return fmt("E would release telekinesis %s %08x", objs::class_name(tk.target).c_str(), tk.target);
+        return fmt("E would do nothing (telekinesis busy: state=%u beam=%u)", tk.tk_state, tk.beam_state);
+    }
     report_encounters(player, world);
     View v = view_of(player, look_yaw);
     auto cands = gather(v, world, player, true);
