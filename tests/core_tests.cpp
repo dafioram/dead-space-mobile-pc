@@ -64,10 +64,17 @@ void test_asset_files(const fs::path& root) {
 }
 
 void test_settings(const fs::path& root) {
+    auto missing_path = root / "absent.ini";
+    settings::load(missing_path.string());
+    require(!settings::loaded_from_file(), "loading a nonexistent settings file reports loaded_from_file() == false");
+    require(!fs::exists(missing_path), "loading a nonexistent settings file must not eagerly create it");
+
     auto path = root / "settings.ini";
     std::ofstream(path) << "# comment\n; comment\ninvalid line\n width = 1280 \n"
-                          "width = 1920\n bad_integer = invalid\n title = A=B \n\t tabs\t=\tvalue\t\n";
+                          "width = 1920\n bad_integer = invalid\n title = A=B \n\t tabs\t=\tvalue\t\n"
+                          "bind_fire = Mouse Left\nbind_interact = E\npadbind_rig = Touchpad\n";
     settings::load(path.string());
+    require(settings::loaded_from_file(), "loading an existing settings file reports loaded_from_file() == true");
     require(settings::get_int("width", 0) == 1920, "last duplicate setting wins");
     require(settings::get_int("missing", 42) == 42, "missing integer uses default");
     require(settings::get_int("bad_integer", 42) == 42, "malformed integer uses default");
@@ -76,10 +83,20 @@ void test_settings(const fs::path& root) {
     require(settings::get_string("missing", "fallback") == "fallback", "missing string uses default");
     settings::set_int("width", 800);
     settings::set_string("title", "persisted");
+    settings::erase_prefix("bind_");
+    require(settings::get_string("bind_fire", "none") == "none" &&
+                settings::get_string("bind_interact", "none") == "none",
+            "erase_prefix removes matching keys from memory");
+    require(settings::get_string("padbind_rig", "") == "Touchpad",
+            "erase_prefix leaves non-matching keys untouched");
     std::ifstream saved(path);
     std::string contents((std::istreambuf_iterator<char>(saved)), std::istreambuf_iterator<char>());
     require(contents.find("width = 800") != std::string::npos, "integer write persists immediately");
     require(contents.find("title = persisted") != std::string::npos, "string write persists immediately");
+    require(contents.find("bind_fire") == std::string::npos && contents.find("bind_interact") == std::string::npos,
+            "erase_prefix removes matching keys from disk");
+    require(contents.find("padbind_rig = Touchpad") != std::string::npos,
+            "erase_prefix preserves unrelated keys on disk");
 }
 
 void test_interaction_geometry() {

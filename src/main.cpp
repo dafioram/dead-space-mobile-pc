@@ -665,7 +665,9 @@ int main(int argc, char** argv) {
         }
         if (int grab = input::grab()) {
             // grabbed: the button prompt, in place of the game's swipe / tap instructions
-            std::string key = input::action_label("melee", input::using_pad());
+            const bool pad = input::using_pad();
+            const char* action = (pad && input::preset() == input::ControlPreset::modern) ? "interact" : "melee";
+            std::string key = input::action_label(action, pad);
             for (char& ch : key) ch = char(std::toupper(static_cast<unsigned char>(ch)));
             bool mash = grab == 5 || grab == 100;
             bool waiting = grab == 1 || grab == 5 || grab == 7 || grab == 100;

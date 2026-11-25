@@ -29,6 +29,7 @@
 
 #include "config.h"
 #include "camera_geometry.h"
+#include "control_dispatch.h"
 #include "cpu.h"
 #include "elf_loader.h"
 #include "floor_snap_policy.h"
@@ -46,7 +47,9 @@ namespace input {
 
 namespace {
 
-enum EventKind { EV_MOVE, EV_LOOK, EV_ACTION, EV_INTERACT, EV_HUD, EV_WEAPON, EV_LOCATOR };
+enum EventKind {
+    EV_MOVE, EV_LOOK, EV_ACTION, EV_RAISE_AIM, EV_THROW_KINESIS, EV_INTERACT, EV_KINESIS, EV_HUD, EV_WEAPON, EV_WEAPON_CYCLE, EV_LOCATOR
+};
 struct Event {
     EventKind kind;
     int a = 0;            // action id / weapon index
@@ -135,7 +138,7 @@ bool g_mouse_btn[8] = {};
 
 // Rebindable actions, in menu order
 enum Bind {
-    B_FORWARD, B_BACK, B_LEFT, B_RIGHT, B_RUN, B_AIM, B_FIRE, B_INTERACT, B_RELOAD, B_STASIS,
+    B_FORWARD, B_BACK, B_LEFT, B_RIGHT, B_RUN, B_RUN_TOGGLE, B_AIM, B_FIRE, B_INTERACT, B_KINESIS, B_RELOAD, B_STASIS,
     B_QUICK_TURN, B_MELEE, B_STOMP, B_ALT_FIRE, B_JUMP, B_RIG, B_LOCATOR, B_COUNT
 };
 const Binding kBindings[B_COUNT] = {
@@ -144,21 +147,39 @@ const Binding kBindings[B_COUNT] = {
     {"move_left", "Move Left", SDL_SCANCODE_A},
     {"move_right", "Move Right", SDL_SCANCODE_D},
     {"run", "Run", SDL_SCANCODE_LSHIFT},
+    {"run_toggle", "Run (toggle)", SDL_SCANCODE_CAPSLOCK},
     {"aim", "Aim", kMouseCode + SDL_BUTTON_RIGHT},
     {"fire", "Fire / Melee", kMouseCode + SDL_BUTTON_LEFT},
-    {"interact", "Interact / Kinesis", SDL_SCANCODE_E},
+    {"interact", "Interact", SDL_SCANCODE_E},
+    {"kinesis", "Kinesis", SDL_SCANCODE_F},
     {"reload", "Reload", SDL_SCANCODE_R},
-    {"stasis", "Stasis", SDL_SCANCODE_F},
+    {"stasis", "Stasis", SDL_SCANCODE_C},
     {"quick_turn", "Quick Turn", SDL_SCANCODE_Q},
     {"melee", "Melee", SDL_SCANCODE_V},
-    {"stomp", "Stomp", SDL_SCANCODE_C},
+    {"stomp", "Stomp", SDL_SCANCODE_SPACE},
     {"alt_fire", "Alt Fire", SDL_SCANCODE_X},
-    {"jump", "Zero-G Jump", SDL_SCANCODE_SPACE},
+    {"jump", "Zero-G Jump", SDL_SCANCODE_LCTRL},
     {"rig", "RIG / Weapons", SDL_SCANCODE_TAB},
     {"locator", "Navigation Line", SDL_SCANCODE_B},
 };
 int g_bind[B_COUNT];
+bool g_bind_custom[B_COUNT] = {};
+std::atomic<ControlPreset> g_preset{ControlPreset::modern};
 std::atomic<int> g_capture{-1};  // action waiting for a key, or -1
+
+int kb_default_code(ControlPreset p, int b) {
+    if (p == ControlPreset::classic) {
+        switch (b) {
+        case B_RUN_TOGGLE: return 0;
+        case B_KINESIS: return 0;
+        case B_STASIS: return SDL_SCANCODE_F;
+        case B_STOMP: return SDL_SCANCODE_C;
+        case B_JUMP: return SDL_SCANCODE_SPACE;
+        default: break;
+        }
+    }
+    return kBindings[b].def;
+}
 
 const char* mouse_name(int button) {
     switch (button) {
@@ -176,36 +197,51 @@ int code_from_name(const std::string& n) {
     SDL_Scancode sc = SDL_GetScancodeFromName(n.c_str());
     return sc == SDL_SCANCODE_UNKNOWN ? 0 : int(sc);
 }
-// ---- controller bindings (defaults follow the Dead Space remake's layout)
-enum PadBind { P_RUN, P_RUN_TOGGLE, P_AIM, P_FIRE, P_INTERACT, P_RELOAD, P_STASIS, P_QUICK_TURN, P_STOMP, P_ALT_FIRE, P_JUMP, P_RIG, P_LOCATOR, P_COUNT };
+// ---- controller bindings (defaults follow the planned modern layout)
+enum PadBind {
+    P_RUN, P_RUN_TOGGLE, P_AIM, P_FIRE, P_STOMP, P_MELEE, P_ALT_FIRE,
+    P_INTERACT, P_KINESIS, P_RELOAD, P_STASIS, P_QUICK_TURN, P_JUMP,
+    P_WEAPON_PREV, P_WEAPON_NEXT, P_RIG, P_LOCATOR, P_COUNT
+};
 constexpr int kLT = kPadCode + 100, kRT = kPadCode + 101;
 struct PadDef {
     Binding b;
-    Bind act;
+    Bind act;  // B_COUNT for controller-only actions (weapon cycling)
 };
 const PadDef kPad[P_COUNT] = {
     {{"run", "Run (hold)", kPadCode + SDL_CONTROLLER_BUTTON_LEFTSHOULDER}, B_RUN},
     {{"run_toggle", "Run (click)", kPadCode + SDL_CONTROLLER_BUTTON_LEFTSTICK}, B_RUN},
     {{"aim", "Aim", kLT}, B_AIM},
-    {{"fire", "Fire / Melee", kRT}, B_FIRE},
-    {{"interact", "Interact / Kinesis", kPadCode + SDL_CONTROLLER_BUTTON_A}, B_INTERACT},
+    {{"fire", "Fire (aiming)", kRT}, B_FIRE},
+    {{"stomp", "Stomp (not aiming)", kRT}, B_STOMP},
+    {{"melee", "Melee (not aiming)", kPadCode + SDL_CONTROLLER_BUTTON_RIGHTSHOULDER}, B_MELEE},
+    {{"alt_fire", "Alt Fire (aiming)", kPadCode + SDL_CONTROLLER_BUTTON_RIGHTSHOULDER}, B_ALT_FIRE},
+    {{"interact", "Interact", kPadCode + SDL_CONTROLLER_BUTTON_A}, B_INTERACT},
+    {{"kinesis", "Kinesis", kPadCode + SDL_CONTROLLER_BUTTON_B}, B_KINESIS},
     {{"reload", "Reload", kPadCode + SDL_CONTROLLER_BUTTON_X}, B_RELOAD},
     {{"stasis", "Stasis", kPadCode + SDL_CONTROLLER_BUTTON_Y}, B_STASIS},
-    {{"quick_turn", "Quick Turn", kPadCode + SDL_CONTROLLER_BUTTON_B}, B_QUICK_TURN},
-    {{"stomp", "Stomp (not aiming)", kPadCode + SDL_CONTROLLER_BUTTON_RIGHTSHOULDER}, B_STOMP},
-    {{"alt_fire", "Alt Fire (aiming)", kPadCode + SDL_CONTROLLER_BUTTON_RIGHTSHOULDER}, B_ALT_FIRE},
-    {{"jump", "Zero-G Jump (aiming)", kPadCode + SDL_CONTROLLER_BUTTON_B}, B_JUMP},
+    {{"quick_turn", "Quick Turn", kPadCode + SDL_CONTROLLER_BUTTON_DPAD_DOWN}, B_QUICK_TURN},
+    {{"jump", "Zero-G Jump", kPadCode + SDL_CONTROLLER_BUTTON_RIGHTSTICK}, B_JUMP},
+    {{"weapon_prev", "Previous Weapon", kPadCode + SDL_CONTROLLER_BUTTON_DPAD_LEFT}, B_COUNT},
+    {{"weapon_next", "Next Weapon", kPadCode + SDL_CONTROLLER_BUTTON_DPAD_RIGHT}, B_COUNT},
     {{"rig", "RIG / Weapons", kPadCode + SDL_CONTROLLER_BUTTON_BACK}, B_RIG},
-    {{"locator", "Navigation Line", kPadCode + SDL_CONTROLLER_BUTTON_RIGHTSTICK}, B_LOCATOR},
+    {{"locator", "Navigation Line", kPadCode + SDL_CONTROLLER_BUTTON_DPAD_UP}, B_LOCATOR},
 };
 int g_padbind[P_COUNT];
+bool g_padbind_custom[P_COUNT] = {};
 std::atomic<float> g_health_frac{1.0f};  // player health / maximum
-bool g_run_toggle = false;      // sprint switched on with the click button, until the stick is let go
+bool g_run_toggle = false;      // sprint switched on with Caps Lock / L3, until movement stops or aiming starts
 bool g_pad_down[128] = {};      // by code - kPadCode
 float g_axis[8] = {};           // SDL_GameControllerAxis, -1..1
 std::atomic<bool> g_pad_active{false};
+std::atomic<PadFamily> g_pad_family{PadFamily::xbox};
+std::atomic<bool> g_pad_has_touchpad{false};
 SDL_GameController* g_pad = nullptr;
 
+constexpr int kPadBack = kPadCode + SDL_CONTROLLER_BUTTON_BACK;
+constexpr int kPadTouchpad = kPadCode + SDL_CONTROLLER_BUTTON_TOUCHPAD;
+
+// Canonical INI names for controller bindings (stable across controller families).
 const char* pad_name(int code) {
     switch (code - kPadCode) {
     case SDL_CONTROLLER_BUTTON_A: return "A";
@@ -222,6 +258,7 @@ const char* pad_name(int code) {
     case SDL_CONTROLLER_BUTTON_DPAD_DOWN: return "D-pad Down";
     case SDL_CONTROLLER_BUTTON_DPAD_LEFT: return "D-pad Left";
     case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: return "D-pad Right";
+    case SDL_CONTROLLER_BUTTON_TOUCHPAD: return "Touchpad";
     case 100: return "LT";
     case 101: return "RT";
     }
@@ -229,24 +266,88 @@ const char* pad_name(int code) {
 }
 bool pad_code_down(int code) { return code >= kPadCode && code < kPadCode + 128 && g_pad_down[code - kPadCode]; }
 
-void load_bindings() {
-    for (int i = 0; i < B_COUNT; i++) {
-        int c = code_from_name(settings::get_string(std::string("bind_") + kBindings[i].key, ""));
-        g_bind[i] = c ? c : kBindings[i].def;
+int pad_default_code(ControlPreset p, int i, PadFamily family, bool has_touchpad) {
+    if (i == P_RIG) return default_rig_pad_code(p, family, has_touchpad, kPadBack, kPadTouchpad);
+    if (p == ControlPreset::classic) {
+        switch (i) {
+        case P_STOMP: return kPadCode + SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
+        case P_MELEE: return 0;
+        case P_KINESIS: return 0;
+        case P_QUICK_TURN: return kPadCode + SDL_CONTROLLER_BUTTON_B;
+        case P_JUMP: return kPadCode + SDL_CONTROLLER_BUTTON_B;
+        case P_WEAPON_PREV: return 0;
+        case P_WEAPON_NEXT: return 0;
+        case P_LOCATOR: return kPadCode + SDL_CONTROLLER_BUTTON_RIGHTSTICK;
+        default: break;
+        }
     }
+    return kPad[i].b.def;
+}
+
+int pad_code_from_name(const std::string& n) {
+    if (n.empty()) return 0;
+    for (int c = kPadCode; c < kPadCode + 128; c++)
+        if (const char* pn = pad_name(c); pn && n == pn) return c;
+    return 0;
+}
+
+int active_pad_code(int p) {
+    if (p < 0 || p >= P_COUNT) return 0;
+    int c = g_padbind[p];
+    if (p == P_RIG) c = effective_pad_code(c, kPadBack, kPadTouchpad, g_pad_has_touchpad.load());
+    return c;
+}
+
+void refresh_pad_defaults() {
+    const ControlPreset p = g_preset.load();
+    const PadFamily fam = g_pad_family.load();
+    const bool tp = g_pad_has_touchpad.load();
+    for (int i = 0; i < P_COUNT; i++)
+        if (!g_padbind_custom[i]) g_padbind[i] = pad_default_code(p, i, fam, tp);
+}
+
+void refresh_pad_capabilities() {
+    if (!g_pad) {
+        g_pad_has_touchpad = false;
+        refresh_pad_defaults();
+        return;
+    }
+    const PadFamily fam = classify_pad_family(int(SDL_GameControllerGetType(g_pad)));
+    const bool has_tp = SDL_GameControllerHasButton(g_pad, SDL_CONTROLLER_BUTTON_TOUCHPAD) != SDL_FALSE;
+    g_pad_family = fam;
+    g_pad_has_touchpad = has_tp;
+    refresh_pad_defaults();
+    LOGI("input: controller family=%s touchpad=%s rig=%s",
+         fam == PadFamily::playstation ? "PlayStation" : fam == PadFamily::ps3 ? "PS3" : "Xbox",
+         has_tp ? "yes" : "no", display_code_name(active_pad_code(P_RIG), fam).c_str());
+}
+
+void load_bindings() {
+    const ControlPreset p = resolve_initial_preset(settings::loaded_from_file(), settings::get_string("control_preset", ""));
+    g_preset = p;
+    LOGI("input: control preset=%s (settings_file=%d)", preset_setting_name(p), settings::loaded_from_file() ? 1 : 0);
+    for (int i = 0; i < B_COUNT; i++) {
+        const std::string saved = settings::get_string(std::string("bind_") + kBindings[i].key, "");
+        const auto resolved = resolve_loaded_binding(saved, code_from_name(saved), kb_default_code(p, i));
+        g_bind_custom[i] = resolved.custom;
+        g_bind[i] = resolved.code;
+    }
+    const PadFamily fam = g_pad_family.load();
+    const bool tp = g_pad_has_touchpad.load();
     for (int i = 0; i < P_COUNT; i++) {
-        std::string n = settings::get_string(std::string("padbind_") + kPad[i].b.key, "");
-        g_padbind[i] = kPad[i].b.def;
-        for (int c = kPadCode; c < kPadCode + 128; c++)
-            if (const char* pn = pad_name(c); pn && n == pn) g_padbind[i] = c;
+        const std::string saved = settings::get_string(std::string("padbind_") + kPad[i].b.key, "");
+        const auto resolved = resolve_loaded_binding(saved, pad_code_from_name(saved), pad_default_code(p, i, fam, tp));
+        g_padbind_custom[i] = resolved.custom;
+        g_padbind[i] = resolved.code;
     }
 }
 bool code_down(int code) {
+    if (code <= 0) return false;
     if (code >= kMouseCode) return code - kMouseCode < 8 && g_mouse_btn[code - kMouseCode];
-    return code > 0 && code < SDL_NUM_SCANCODES && g_keys[code];
+    return code < SDL_NUM_SCANCODES && g_keys[code];
 }
 bool bind_down(Bind b) { return code_down(g_bind[b]); }
-bool code_bound(int code) { return std::find(std::begin(g_bind), std::end(g_bind), code) != std::end(g_bind); }
+bool code_bound(int code) { return code > 0 && std::find(std::begin(g_bind), std::end(g_bind), code) != std::end(g_bind); }
 
 // main-thread input state
 bool g_mouse_captured = false;
@@ -711,20 +812,44 @@ void on_player_update(cpu::Ctx& c) {
         }
         case EV_ACTION:
             if ((e.a == 6 || e.a == 14) && struggle(player)) break;  // fire / melee during a grab: break free
+            if (e.a == 7 && mem::r32(player + 0x210) == 0x12) break;  // never switch fire mode while carrying
             snap_free_look(player);
             send_action(fn_player_event, player, e.a);
             break;
+        case EV_RAISE_AIM:
+            // Raise weapon only if still lowered in normal locomotion (state 0); never fire a shot
+            // or throw a held kinesis object if state changed while queued.
+            if (mem::r32(player + 0x210) == 0 && mem::r8(player + 0x1ed) == 0) {
+                snap_free_look(player);
+                send_action(fn_player_event, player, 6);
+            }
+            break;
+        case EV_THROW_KINESIS:
+            // Only throw if still in telekinesis state on the game thread so a race after release/throw
+            // can never accidentally raise the weapon or fire a shot.
+            if (mem::r32(player + 0x210) != 0x12) break;
+            snap_free_look(player);
+            send_action(fn_player_event, player, 6);
+            break;
         case EV_INTERACT: {
+            const bool combined = g_preset.load() == ControlPreset::classic;
             float look = g_free_yaw;  // where the camera looks, before the player turns to it
             if (e.a == 1) {           // F9: report only
-                std::string r = interact::preview(player, g_world, look);
+                std::string r = interact::preview(player, g_world, look, combined);
                 LOGI("[interact] %s", r.c_str());
                 if (dev::active()) dev::out(r);
                 break;
             }
             if (struggle(player)) break;  // during a grab the key breaks free
             snap_free_look(player);
-            interact::use(player, g_world, look, g_trace || dev::active());
+            interact::use(player, g_world, look, g_trace || dev::active(), combined);
+            break;
+        }
+        case EV_KINESIS: {
+            float look = g_free_yaw;
+            if (grab_state(player) != 0) break;  // struggle/swarm owns input
+            snap_free_look(player);
+            interact::kinesis(player, g_world, look, g_trace || dev::active());
             break;
         }
         case EV_HUD:
@@ -739,6 +864,15 @@ void on_player_update(cpu::Ctx& c) {
                 cpu::call(fn_change_weapon, {player, u32(e.a)});
             break;
         }
+        case EV_WEAPON_CYCLE: {
+            const int cur = int(mem::r32(player + 0x2e8));
+            std::array<bool, 4> owned{};
+            for (u32 w = 0; w < 4; ++w) owned[w] = mem::r32(player + 0x2d4 + 4 * w) != 0;
+            const int next = cycle_owned_weapon(cur, owned, e.a);
+            if (next >= 0 && (cpu::call(fn_can_change_weapon, {player}) & 0xff))
+                cpu::call(fn_change_weapon, {player, u32(next)});
+            break;
+        }
         }
     }
     if (!player_owns_input(player)) {
@@ -747,7 +881,8 @@ void on_player_update(cpu::Ctx& c) {
         g_floor_snap_recovery.reset();
         return;
     }
-    if (g_interact_debug && !g_paused) interact::draw_debug(player, g_world, g_free_yaw);
+    if (g_interact_debug && !g_paused)
+        interact::draw_debug(player, g_world, g_free_yaw, g_preset.load() == ControlPreset::classic);
     if (!g_paused) debugview::draw(player, g_world);
     if (g_player_tick % 30 == 0) interact::repair_objective_panel(g_world);
     if (g_player_tick % kLimbSweepEveryTicks == kLimbSweepPhase) limb_cleanup::sweep(g_world, player);
@@ -938,52 +1073,101 @@ bool mouse_smoothing() { return settings::get_int("mouse_smoothing", 0) != 0; }
 
 void set_trace(bool on) { g_trace = on; }
 
+ControlPreset preset() { return g_preset.load(); }
+void set_preset(ControlPreset p) {
+    g_preset = p;
+    g_run_toggle = false;
+    g_pending_fire = 0;
+    g_rmb = false;
+    g_lmb = false;
+    settings::erase_prefix("bind_");
+    settings::erase_prefix("padbind_");
+    settings::set_string("control_preset", preset_setting_name(p));
+    for (int i = 0; i < B_COUNT; i++) {
+        g_bind_custom[i] = false;
+        g_bind[i] = kb_default_code(p, i);
+    }
+    const PadFamily fam = g_pad_family.load();
+    const bool tp = g_pad_has_touchpad.load();
+    for (int i = 0; i < P_COUNT; i++) {
+        g_padbind_custom[i] = false;
+        g_padbind[i] = pad_default_code(p, i, fam, tp);
+    }
+    LOGI("input: switched control preset to %s", preset_setting_name(p));
+}
+
 int binding_count() { return B_COUNT; }
 int pad_binding_count() { return P_COUNT; }
 bool using_pad() { return g_pad_active; }
+PadFamily pad_family() { return g_pad_family; }
 const Binding& binding(int i) { return i >= kPadBindBase ? kPad[i - kPadBindBase].b : kBindings[i]; }
-int binding_code(int i) { return i >= kPadBindBase ? g_padbind[i - kPadBindBase] : g_bind[i]; }
+int binding_code(int i) { return i >= kPadBindBase ? active_pad_code(i - kPadBindBase) : g_bind[i]; }
 void reset_pad_bindings() {
+    settings::erase_prefix("padbind_");
+    const ControlPreset p = g_preset.load();
+    const PadFamily fam = g_pad_family.load();
+    const bool tp = g_pad_has_touchpad.load();
     for (int i = 0; i < P_COUNT; i++) {
-        g_padbind[i] = kPad[i].b.def;
-        settings::set_string(std::string("padbind_") + kPad[i].b.key, code_name(g_padbind[i]));
+        g_padbind_custom[i] = false;
+        g_padbind[i] = pad_default_code(p, i, fam, tp);
     }
 }
-std::string action_label(const std::string& key, bool pad) {
+std::string action_label_for(const std::string& key, bool pad, PadFamily family, ControlPreset p) {
     if (pad) {
         if (key.rfind("move_", 0) == 0) return "Left Stick";
-        const std::string k = key == "melee" ? "fire" : key;  // melee is the fire button while not aiming
-        for (int i = 0; i < P_COUNT; i++)
-            if (k == kPad[i].b.key) return code_name(g_padbind[i]);
+        const std::string lookup = (p == ControlPreset::classic && key == "melee") ? "fire" : key;
+        const bool has_tp = (family == PadFamily::playstation) &&
+                            ((g_pad && g_pad_family.load() == PadFamily::playstation) ? g_pad_has_touchpad.load() : true);
+        for (int i = 0; i < P_COUNT; i++) {
+            if (lookup != kPad[i].b.key) continue;
+            int code = (p == g_preset.load() && g_padbind_custom[i])
+                           ? g_padbind[i]
+                           : pad_default_code(p, i, family, has_tp);
+            if (i == P_RIG) code = effective_pad_code(code, kPadBack, kPadTouchpad, has_tp);
+            return display_code_name(code, family);
+        }
         return "?";
     }
-    for (int i = 0; i < B_COUNT; i++)
-        if (key == kBindings[i].key) return code_name(g_bind[i]);
+    for (int i = 0; i < B_COUNT; i++) {
+        if (key != kBindings[i].key) continue;
+        int code = (p == g_preset.load() && g_bind_custom[i]) ? g_bind[i] : kb_default_code(p, i);
+        return display_code_name(code, family);
+    }
     return "?";
+}
+std::string action_label(const std::string& key, bool pad) {
+    return action_label_for(key, pad, g_pad_family.load(), g_preset.load());
 }
 void set_binding(int i, int code) {
     if (i >= kPadBindBase) {  // controller: buttons may be shared (the action taken depends on aiming)
-        if (i - kPadBindBase >= P_COUNT) return;
-        g_padbind[i - kPadBindBase] = code;
-        settings::set_string(std::string("padbind_") + kPad[i - kPadBindBase].b.key, code_name(code));
+        const int idx = i - kPadBindBase;
+        if (idx >= P_COUNT) return;
+        g_padbind[idx] = code;
+        g_padbind_custom[idx] = true;
+        settings::set_string(std::string("padbind_") + kPad[idx].b.key, code_name(code));
         return;
     }
     if (i < 0 || i >= B_COUNT) return;
     for (int k = 0; k < B_COUNT; k++)
-        if (k != i && g_bind[k] == code) {
+        if (k != i && code > 0 && g_bind[k] == code) {
             g_bind[k] = g_bind[i];
+            g_bind_custom[k] = true;
             settings::set_string(std::string("bind_") + kBindings[k].key, code_name(g_bind[k]));
         }
     g_bind[i] = code;
+    g_bind_custom[i] = true;
     settings::set_string(std::string("bind_") + kBindings[i].key, code_name(code));
 }
 void reset_bindings() {
+    settings::erase_prefix("bind_");
+    const ControlPreset p = g_preset.load();
     for (int i = 0; i < B_COUNT; i++) {
-        g_bind[i] = kBindings[i].def;
-        settings::set_string(std::string("bind_") + kBindings[i].key, code_name(g_bind[i]));
+        g_bind_custom[i] = false;
+        g_bind[i] = kb_default_code(p, i);
     }
 }
 std::string code_name(int code) {
+    if (code <= 0) return "-";
     if (code >= kPadCode) {
         const char* p = pad_name(code);
         return p ? p : "Button ?";
@@ -994,6 +1178,14 @@ std::string code_name(int code) {
     }
     const char* n = SDL_GetScancodeName(SDL_Scancode(code));
     return n && *n ? n : "?";
+}
+std::string display_code_name(int code, PadFamily family) {
+    if (code <= 0) return "-";
+    if (code >= kPadCode) {
+        const char* p = pad_display_name(code - kPadCode, family);
+        return p ? p : code_name(code);
+    }
+    return code_name(code);
 }
 const std::vector<int>& bindable_codes() {
     static std::vector<int> v = [] {
@@ -1108,9 +1300,33 @@ void install() {
     }
 }
 
+ActionState current_action_state() {
+    return {g_aiming.load(), g_rmb, g_state.load() == 0x12};
+}
+
+void emit_dispatch(DispatchResult r) {
+    switch (r) {
+    case DispatchResult::none: break;
+    case DispatchResult::fire: action(6); break;
+    case DispatchResult::throw_kinesis:
+        g_pending_fire = 0;
+        push({EV_THROW_KINESIS});
+        break;
+    case DispatchResult::pending_fire: g_pending_fire = 30; break;
+    case DispatchResult::melee: action(14); break;
+    case DispatchResult::stomp: action(13); break;
+    case DispatchResult::alt_fire: action(7); break;
+    }
+}
+
 // Press / release of a bound input during gameplay.
 void press_action(int b) {
+    const ActionState st = current_action_state();
+    const ControlPreset p = g_preset.load();
     switch (b) {
+    case B_RUN_TOGGLE:
+        g_run_toggle = !g_run_toggle;
+        break;
     case B_AIM:
         g_rmb = true;
         // drop to walking first: GameObjectPlayable::setRunning ignores changes while aiming
@@ -1120,25 +1336,26 @@ void press_action(int b) {
             float len = std::sqrt(mx * mx + my * my);
             if (len > 0) push({EV_MOVE, 0, mx / len, my / len, 0});
         }
-        if (!g_aiming) action(6);  // raise weapon
+        if (!st.weapon_raised && !st.holding_kinesis) push({EV_RAISE_AIM});  // raise weapon (never fires/throws)
         break;
     case B_FIRE:
         g_lmb = true;
-        if (g_aiming || g_state == 0x12) {
-            action(6);  // fire / launch kinesis object
-        } else if (g_rmb) {
-            g_pending_fire = 30;  // weapon still coming up: fire as soon as it is
-        } else {
-            action(14);  // not aiming: melee
-        }
+        emit_dispatch(resolve_keyboard_fire(st));
         break;
     case B_INTERACT: push({EV_INTERACT}); break;
+    case B_KINESIS:
+        g_pending_fire = 0;
+        push({EV_KINESIS});
+        break;
     case B_RELOAD: action(10); break;
     case B_STASIS: action(11); break;
-    case B_QUICK_TURN: action(8); break;
-    case B_MELEE: action(14); break;
-    case B_STOMP: action(13); break;
-    case B_ALT_FIRE: action(7); break;  // switch fire mode
+    case B_QUICK_TURN:
+        g_pending_fire = 0;
+        action(8);
+        break;
+    case B_MELEE: emit_dispatch(resolve_keyboard_melee(st, p)); break;
+    case B_STOMP: emit_dispatch(resolve_keyboard_stomp(st, p)); break;
+    case B_ALT_FIRE: emit_dispatch(resolve_mode_switch(st, p)); break;  // switch fire mode (raised only in Modern)
     case B_JUMP: action(12); break;     // zero-G jump
     case B_RIG: push({EV_HUD, 0, 0, 0, 0, "BTN_RIG"}); break;
     case B_LOCATOR: push({EV_LOCATOR}); break;
@@ -1210,6 +1427,10 @@ void release_code(int code) {
 void release_all() {
     for (int i = 0; i < B_COUNT; i++)
         if (code_down(g_bind[i])) release_action(i);
+    if (g_rmb) release_action(B_AIM);
+    if (g_lmb) release_action(B_FIRE);
+    g_run_toggle = false;
+    g_pending_fire = 0;
     std::memset(g_keys, 0, sizeof g_keys);
     std::memset(g_mouse_btn, 0, sizeof g_mouse_btn);
 }
@@ -1235,7 +1456,14 @@ void pad_button(int code, bool down) {
     const int b = code - kPadCode;
     if (!g_mouse_captured) {
         // menus, cinematics, loading screens: the D-pad moves the highlight, A confirms, B / Start go back
-        if (!down) return;
+        if (!down) {
+            if (code == active_pad_code(P_AIM) && g_rmb) {
+                g_rmb = false;
+                g_pending_fire = 0;
+            }
+            if (code == active_pad_code(P_FIRE)) g_lmb = false;
+            return;
+        }
         bool in_rig = g_hud && fn_in_rig && (cpu::call(fn_in_rig, {g_hud}) & 0xff);
         switch (b) {
         case SDL_CONTROLLER_BUTTON_DPAD_UP: synth_key(SDL_SCANCODE_UP, SDLK_UP); break;
@@ -1249,8 +1477,8 @@ void pad_button(int code, bool down) {
             else back_key();
             break;
         default:
-            if (in_rig && code == g_padbind[P_RIG]) hud_button(g_hud, "BTN_RIG");
-            else if (code == g_padbind[P_LOCATOR]) activate_locator(true);
+            if (in_rig && code == active_pad_code(P_RIG)) hud_button(g_hud, "BTN_RIG");
+            else if (code == active_pad_code(P_LOCATOR)) activate_locator(true);
             break;
         }
         return;
@@ -1259,26 +1487,71 @@ void pad_button(int code, bool down) {
         if (down) back_key();  // pause
         return;
     }
-    const bool aiming = g_aiming || g_rmb;
+    const ActionState st = current_action_state();
+    const ControlPreset preset_now = g_preset.load();
+    PadCombatFlags combat{};
     bool bound = false;
     for (int p = 0; p < P_COUNT; p++) {
-        if (g_padbind[p] != code) continue;
+        if (active_pad_code(p) != code) continue;
         bound = true;
         const Bind act = kPad[p].act;
         if (!down) {
             if (act == B_AIM || act == B_FIRE) release_action(act);
             continue;
         }
-        // one button can carry two actions: which one depends on whether the weapon is up
-        if (p == P_RUN_TOGGLE) g_run_toggle = !g_run_toggle;
-        if (act == B_RUN || ((act == B_ALT_FIRE || act == B_JUMP) && !aiming) || ((act == B_STOMP || act == B_QUICK_TURN) && aiming)) continue;
+        if (p == P_RUN_TOGGLE) {
+            g_run_toggle = !g_run_toggle;
+            continue;
+        }
+        if (p == P_WEAPON_PREV) {
+            push({EV_WEAPON_CYCLE, -1});
+            continue;
+        }
+        if (p == P_WEAPON_NEXT) {
+            push({EV_WEAPON_CYCLE, 1});
+            continue;
+        }
+        if (act == B_RUN) continue;
+        if (act == B_QUICK_TURN && !pad_quick_turn_allowed(st.aiming(), preset_now)) continue;
+        if (act == B_JUMP && !pad_jump_allowed(st.aiming(), preset_now)) continue;
+        if (act == B_FIRE) {
+            g_lmb = true;
+            combat.fire = true;
+            continue;
+        }
+        if (act == B_STOMP) {
+            combat.stomp = true;
+            continue;
+        }
+        if (act == B_MELEE) {
+            combat.melee = true;
+            continue;
+        }
+        if (act == B_ALT_FIRE) {
+            combat.alt_fire = true;
+            continue;
+        }
         press_action(act);
     }
-    if (bound || !down) return;
-    // D-pad: the four weapons (unless bound to something)
-    int w = b == SDL_CONTROLLER_BUTTON_DPAD_UP ? 0 : b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT ? 1 : b == SDL_CONTROLLER_BUTTON_DPAD_DOWN ? 2
-            : b == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? 3 : -1;
+    if (down) emit_dispatch(resolve_pad_combat(combat, st, preset_now, g_grab_state != 0));
+    if (bound || !down || preset_now != ControlPreset::classic) return;
+    // Classic Port D-pad fallback: the four weapons when D-pad is unbound
+    int w = b == SDL_CONTROLLER_BUTTON_DPAD_UP ? 0 : b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT ? 1
+            : b == SDL_CONTROLLER_BUTTON_DPAD_DOWN ? 2 : b == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? 3 : -1;
     if (w >= 0) push({EV_WEAPON, w});
+}
+
+void open_fallback_controller(SDL_JoystickID exclude_id) {
+    const int n = SDL_NumJoysticks();
+    for (int i = 0; i < n; i++) {
+        if (!SDL_IsGameController(i)) continue;
+        if (SDL_JoystickGetDeviceInstanceID(i) == exclude_id) continue;
+        if (SDL_GameController* next = SDL_GameControllerOpen(i)) {
+            g_pad = next;
+            LOGI("input: switched to remaining controller: %s", SDL_GameControllerName(g_pad));
+            return;
+        }
+    }
 }
 
 // Controller events; true if `e` was one.
@@ -1288,7 +1561,10 @@ bool pad_event(const SDL_Event& e) {
         if (!g_pad) {
             g_pad = SDL_GameControllerOpen(e.cdevice.which);
             LOGI("input: controller connected: %s", g_pad ? SDL_GameControllerName(g_pad) : SDL_GetError());
-            if (g_pad) g_pad_active = true;
+            if (g_pad) {
+                g_pad_active = true;
+                refresh_pad_capabilities();
+            }
         }
         return true;
     case SDL_CONTROLLERDEVICEREMOVED:
@@ -1296,9 +1572,14 @@ bool pad_event(const SDL_Event& e) {
             SDL_GameControllerClose(g_pad);
             g_pad = nullptr;
             g_pad_active = false;
+            g_run_toggle = false;
             for (int c = 0; c < 128; c++)
                 if (g_pad_down[c]) pad_button(kPadCode + c, false);
+            if (g_rmb) release_action(B_AIM);
+            if (g_lmb) release_action(B_FIRE);
             std::memset(g_axis, 0, sizeof g_axis);
+            open_fallback_controller(e.cdevice.which);
+            refresh_pad_capabilities();
             LOGI("input: controller disconnected");
             if (!g_mouse_captured) SDL_ShowCursor(SDL_ENABLE);
         }
@@ -1437,19 +1718,7 @@ bool event(const SDL_Event& e, SDL_Window* win) {
         release_code(kMouseCode + e.button.button);
         return true;
     case SDL_MOUSEWHEEL: {
-        u32 player = g_player;
-        if (!player) return true;
-        int cur = int(mem::r32(player + 0x2e8));
-        int dir = e.wheel.y > 0 ? -1 : 1;
-        // cycle the four guns; slot 4 holds the stasis module, which is not a selectable weapon
-        // (the RIG never offers it; selecting it leaves the player empty-handed and frozen)
-        for (int i = 1; i <= 4; i++) {
-            int w = ((cur + dir * i) % 4 + 4) % 4;
-            if (mem::r32(player + 0x2d4 + 4 * u32(w))) {
-                push({EV_WEAPON, w});
-                break;
-            }
-        }
+        if (e.wheel.y != 0) push({EV_WEAPON_CYCLE, e.wheel.y > 0 ? -1 : 1});
         return true;
     }
     case SDL_KEYDOWN:
@@ -1551,16 +1820,15 @@ bool frame(SDL_Window* win) {
         if (sm > 0.24f) {
             mx = g_axis[0], my = g_axis[1];
             pace = std::clamp((sm - 0.24f) / 0.5f, 0.3f, 1.0f);
-            pad_run = pad_code_down(g_padbind[P_RUN]) || g_run_toggle;
-        } else {
-            g_run_toggle = false;  // stick let go: the sprint ends
+            pad_run = pad_code_down(active_pad_code(P_RUN));
         }
     }
-    if (mx != 0 || my != 0) {
+    const bool moving = mx != 0 || my != 0;
+    g_run_toggle = update_run_toggle(g_run_toggle, moving, g_rmb);
+    if (moving) {
         float len = std::sqrt(mx * mx + my * my) / pace;
-        bool run_key = pad_run || bind_down(B_RUN) || (!code_bound(SDL_SCANCODE_RSHIFT) && ks[SDL_SCANCODE_RSHIFT]);
-        if (g_rmb) g_run_toggle = false;
-        int run = run_key && my < 0 && !g_rmb ? 1 : 0;  // holding aim stops sprinting
+        bool hold_run = pad_run || bind_down(B_RUN) || (!code_bound(SDL_SCANCODE_RSHIFT) && ks[SDL_SCANCODE_RSHIFT]);
+        int run = resolve_run_requested(hold_run, g_run_toggle, my < 0, g_rmb) ? 1 : 0;  // holding aim stops sprinting
         push({EV_MOVE, 0, mx / len, my / len, run});
         g_moving = true;
     } else if (g_moving) {
@@ -1606,18 +1874,31 @@ bool frame(SDL_Window* win) {
         }
     }
 
+    // aim held: re-raise the weapon automatically once back in normal locomotion (e.g. after a
+    // 180 quick turn or kinesis release) if the user kept holding RMB / LT. Uses EV_RAISE_AIM so
+    // it can never fire an accidental shot.
+    static int raise_retry = 0;
+    if (should_raise_aim(g_rmb, g_aiming, g_state)) {
+        if (raise_retry++ % 6 == 0) push({EV_RAISE_AIM});
+    } else {
+        raise_retry = 0;
+    }
+
     // aim released: the game ignores "lower" while a shot is still playing, so keep asking until
     // the weapon is down (not while holding a kinesis object)
     static int lower_retry = 0;
-    if (g_aiming && !g_rmb && g_pending_fire == 0 && g_state != 0x12) {
+    if (should_lower_aim(g_rmb, g_aiming, g_pending_fire > 0, g_state)) {
         if (++lower_retry % 6 == 0) action(9);
     } else {
         lower_retry = 0;
     }
 
-    // left click while the weapon was still being raised: fire once it is up
+    // left click / RT while the weapon was still being raised: fire once it is up
+    // (never fire a stale pending shot during or after kinesis, or after aim is released)
     if (g_pending_fire > 0) {
-        if (g_aiming) {
+        if (g_state == 0x12 || !g_rmb) {
+            g_pending_fire = 0;
+        } else if (g_aiming) {
             action(6);
             g_pending_fire = 0;
         } else {

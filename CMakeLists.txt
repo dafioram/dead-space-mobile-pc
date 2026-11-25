@@ -61,6 +61,7 @@ add_executable(deadspace
     src/devmode.cpp
     src/objects.cpp
     src/interact.cpp
+    src/telekinesis_release.cpp
     src/ammo_pickup.cpp
     src/limb_use.cpp
     src/limb_cleanup.cpp

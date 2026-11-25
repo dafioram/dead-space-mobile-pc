@@ -13,12 +13,14 @@ namespace settings {
 namespace {
 std::mutex g_lock;
 std::string g_path;
+bool g_loaded_from_file = false;
 std::map<std::string, std::string> g_values;
 }  // namespace
 
 void load(const std::string& path) {
     std::lock_guard lk(g_lock);
     g_path = path;
+    g_loaded_from_file = false;
     g_values.clear();
     std::ifstream f(save_io::utf8_path(path));
     if (!f) {
@@ -28,6 +30,7 @@ void load(const std::string& path) {
         else LOGE("[save-io] port settings read open FAILED path=%s reason=%s", path.c_str(), error ? error.message().c_str() : "unreadable file");
         return;
     }
+    g_loaded_from_file = true;
     std::string line;
     while (std::getline(f, line)) {
         if (line.empty() || line[0] == '#' || line[0] == ';') continue;
@@ -77,10 +80,26 @@ std::string get_string(const std::string& key, const std::string& def) {
     return it == g_values.end() ? def : it->second;
 }
 
+bool loaded_from_file() {
+    std::lock_guard lk(g_lock);
+    return g_loaded_from_file;
+}
+
 void set_string(const std::string& key, const std::string& value) {
     {
         std::lock_guard lk(g_lock);
         g_values[key] = value;
+    }
+    save();
+}
+
+void erase_prefix(const std::string& prefix) {
+    {
+        std::lock_guard lk(g_lock);
+        for (auto it = g_values.begin(); it != g_values.end();) {
+            if (it->first.rfind(prefix, 0) == 0) it = g_values.erase(it);
+            else ++it;
+        }
     }
     save();
 }
