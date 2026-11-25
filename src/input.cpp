@@ -911,10 +911,10 @@ void set_gameplay_capture(bool want) {
         const int result = SDL_SetRelativeMouseMode(want ? SDL_TRUE : SDL_FALSE);
         host_diagnostics::mouse_capture(want, result, result < 0 ? SDL_GetError() : nullptr);
     }
-    LOGI("input: gameplay controls %s", want ? "active (mouse capture requested)" : "released");
+    LOGD("input: gameplay controls %s", want ? "active (mouse capture requested)" : "released");
     u32 player = g_player, hud = g_hud;
     if (player && hud)
-        LOGI("input: native ownership route=%u passthrough=%u player-state=%u freeze=%08x epoch=%u",
+        LOGD("input: native ownership route=%u passthrough=%u player-state=%u freeze=%08x epoch=%u",
              mem::r32(hud + 0x2a4), mem::r8(hud + 0x2a8), mem::r32(player + 0x210),
              mem::r32(player + 0x1b4), g_input_epoch.load());
     g_mouse_captured = want;

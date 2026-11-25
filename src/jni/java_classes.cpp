@@ -332,7 +332,7 @@ void register_java_classes() {
             return JValue::I(int(n));
         }
         // stats: time the game spends producing each buffer, and how often the device ran dry
-        static u64 last_return = 0, busy = 0, writes = 0, underruns = 0;
+        static u64 last_return = 0, busy = 0, writes = 0, underruns = 0, reported_underruns = 0;
         u64 t_in = SDL_GetPerformanceCounter();
         if (last_return) busy += t_in - last_return;
         if (SDL_GetQueuedAudioSize(g_audio.dev) == 0 && writes > 10) underruns++;

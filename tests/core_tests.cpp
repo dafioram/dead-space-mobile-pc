@@ -15,6 +15,7 @@
 #include "interaction_geometry.h"
 #include "input_policy.h"
 #include "locator_input.h"
+#include "log_path.h"
 #include "menu_geometry.h"
 #include "menu_widget_safety.h"
 #include "menu_window_cache.h"
@@ -833,6 +834,41 @@ void test_noninteractive_scripted_input() {
     require(input::queued_gameplay_input_allowed(true, 6, 6), "fresh input resumes after the cutscene");
 }
 
+void test_log_paths(const fs::path& root) {
+    const fs::path app = root / "game";
+    const fs::path data = root / "external_data";
+    fs::create_directories(app / "gamedata");
+    fs::create_directories(data);
+
+    logging::set_path_roots(host_file::utf8(app), host_file::utf8(data));
+    const std::string fake_home = host_file::utf8(root);
+
+    require(logging::display_path(app, fake_home) == ".", "app root formats as '.'");
+    require(logging::display_path(app / "gamedata" / "libDeadSpace.so", fake_home) == "gamedata/libDeadSpace.so",
+            "paths inside app root format relatively with forward slashes");
+    require(logging::display_path(app / "userdata" / "port_settings.ini", fake_home) == "userdata/port_settings.ini",
+            "app-local userdata paths format relatively");
+    require(logging::display_path(data, fake_home) == "userdata",
+            "external profile root formats as 'userdata'");
+    require(logging::display_path(data / "01_CheckpointSave.sb", fake_home) == "userdata/01_CheckpointSave.sb",
+            "files inside external profile root format under 'userdata/'");
+    require(logging::display_path(root / "Downloads" / "game.apk", fake_home) == "~/Downloads/game.apk",
+            "paths under home directory collapse home prefix to '~'");
+
+    // Sibling prefix must not falsely match root or home.
+    const std::string sibling = host_file::utf8(root) + "2/other.txt";
+    require(logging::display_path(sibling, fake_home).rfind("~/", 0) != 0,
+            "sibling directory sharing a prefix must not collapse to '~'");
+
+    // Control characters are sanitized to prevent log injection.
+    const std::string injected = host_file::utf8(app / "gamedata") + "/bad\nname\r\t.bin";
+    const std::string cleaned = logging::display_path(injected, fake_home);
+    require(cleaned == "gamedata/bad?name??.bin", "control characters must be sanitized in display_path");
+
+    // Clean up global roots so later tests are unaffected.
+    logging::clear_path_roots();
+}
+
 }  // namespace
 
 int main() {
@@ -840,6 +876,7 @@ int main() {
         TempDirectory temp;
         test_asset_files(temp.path);
         test_settings(temp.path);
+        test_log_paths(temp.path);
         test_interaction_geometry();
         test_interaction_frames();
         test_oriented_zones();

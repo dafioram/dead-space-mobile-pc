@@ -12,6 +12,7 @@
 #endif
 
 #include "hle/hle.h"
+#include "log_path.h"
 #include "save_io.h"
 #include "hle/io_buffer.h"
 
@@ -85,7 +86,7 @@ void register_stdio() {
             std::error_code ec;
             std::filesystem::create_directories(save_io::utf8_path(hp).parent_path(), ec);
             if (ec) {
-                LOGE("[save-io] fopen parent creation failed path=%s reason=%s", hp.c_str(), ec.message().c_str());
+                LOGE("[save-io] fopen parent creation failed path=%s reason=%s", logging::display_path(hp).c_str(), ec.message().c_str());
                 set_errno(ec == std::errc::permission_denied ? G_EACCES : G_EIO);
                 return c.ret(0);
             }

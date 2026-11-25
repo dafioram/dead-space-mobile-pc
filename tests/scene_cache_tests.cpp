@@ -79,6 +79,7 @@ namespace elf {
 u32 find(const std::string&) { return 0; }
 }
 namespace logging {
+bool g_verbose = false;
 void write(char, const char*, ...) {}
 }
 uint32_t SDL_GetTicks() { return ticks; }
