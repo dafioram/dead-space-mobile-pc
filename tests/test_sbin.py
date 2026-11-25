@@ -160,7 +160,11 @@ class SbinTest(unittest.TestCase):
     def test_paths(self):
         self.assertEqual(sbin.parse_path("a.b[2].c"), ["a", "b", 2, "c"])
         self.assertEqual(sbin.parse_path('x["we.ird"].y'), ["x", "we.ird", "y"])
+        self.assertEqual(sbin.parse_path('["root.key"][0].a'), ["root.key", 0, "a"])
         self.assertEqual(sbin.format_path(["a", "we.ird", 3]), 'a["we.ird"][3]')
+        for bad in ("", ".a", "a.", "a..b", "items[0]count", "a.[0]"):
+            with self.assertRaises(sbin.Problem, msg=bad):
+                sbin.parse_path(bad)
         with self.assertRaises(sbin.Problem):
             sbin.find(sbin.build_tree(sbin.SBin(save_like())), ["player", "nope"])
 
@@ -241,6 +245,94 @@ class SbinTest(unittest.TestCase):
         bad_string = patched(root + 4 + 12 + 8, struct.pack("<H", 500))  # savetype -> string 500
         self.assertIn("string index 500", cli("verify", self.write("str.sb", bad_string)).stdout)
 
+    def test_verify_handles_null_array_refs_and_struct_inner_fields(self):
+        # Signed -1 array reference (type 17) is valid and must verify clean.
+        db = Db()
+        item = db.struct_def("item", [("type", 13, 0), ("extra_arr", 17, 4)])
+        root, items = db.reserve(), db.reserve()
+        db.put(root, 1, db.dict_body([("null_arr", 17, -1), ("items", 15, items)]))
+        db.put(items, 2, db.array_body(16, 1, struct.pack("<Hxxi", db.s("AMMO"), -1), item))
+        good = db.build()
+        r = cli("verify", self.write("nullref.sb", good), "--strict")
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+        # Corrupt the string index inside the struct array element and re-hash DATA.
+        parsed = sbin.SBin(good)
+        d_off, d_size, _ = parsed.c["DATA"]
+        _, _, _, dp, _ = sbin.array_info(parsed, items)
+        bad = bytearray(good)
+        struct.pack_into("<H", bad, dp, 999)
+        struct.pack_into("<I", bad, d_off - 4, sbin.fnv1(bytes(bad[d_off:d_off + d_size])))
+        r_bad = cli("verify", self.write("badstructstr.sb", bytes(bad)))
+        self.assertEqual(r_bad.returncode, 1)
+        self.assertIn("string index 999", r_bad.stdout)
+
+        # Corrupt the array ref inside the struct array element to a positive out-of-range index.
+        bad_ref = bytearray(good)
+        struct.pack_into("<i", bad_ref, dp + 4, 42)
+        struct.pack_into("<I", bad_ref, d_off - 4, sbin.fnv1(bytes(bad_ref[d_off:d_off + d_size])))
+        r_ref = cli("verify", self.write("badstructref.sb", bytes(bad_ref)))
+        self.assertEqual(r_ref.returncode, 1)
+        self.assertIn("missing object 42", r_ref.stdout)
+
+    def test_diff_detects_small_float_changes_and_empty_containers(self):
+        def make_float_db(val, with_empty=False):
+            db = Db()
+            root = db.reserve()
+            entries = [("hp", 10, val)]
+            if with_empty:
+                empty_d, empty_a = db.reserve(), db.reserve()
+                db.put(empty_d, 1, db.dict_body([]))
+                db.put(empty_a, 2, db.array_body(5, 0, b""))
+                entries.extend([("actors", 15, empty_d), ("triggers", 15, empty_a)])
+            db.put(root, 1, db.dict_body(entries))
+            return db.build()
+
+        # Differ past 6 significant digits (would both format as '100000' with %g)
+        a = self.write("f1.sb", make_float_db(100000.125, with_empty=False))
+        b = self.write("f2.sb", make_float_db(100000.25, with_empty=True))
+        r = cli("diff", a, b)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("~ hp: 100000.125 -> 100000.25", r.stdout)
+        self.assertIn("+ actors = {}", r.stdout)
+        self.assertIn("+ triggers = []", r.stdout)
+        self.assertIn("3 differences", r.stdout)
+
+    def test_diff_directories(self):
+        d1 = os.path.join(self.tmp.name, "before")
+        d2 = os.path.join(self.tmp.name, "after")
+        os.makedirs(d1)
+        os.makedirs(d2)
+        for p, data in (
+            (os.path.join(d1, "same.sb"), save_like(credits=10)),
+            (os.path.join(d2, "same.sb"), save_like(credits=10)),
+            (os.path.join(d1, "changed.sb"), save_like(credits=10)),
+            (os.path.join(d2, "changed.sb"), save_like(credits=20)),
+            (os.path.join(d1, "only_a.sb"), save_like(credits=1)),
+            (os.path.join(d2, "only_b.sb"), save_like(credits=2)),
+        ):
+            with open(p, "wb") as f:
+                f.write(data)
+
+        r = cli("diff", d1, d2)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("- only in %s: only_a.sb" % d1, r.stdout)
+        self.assertIn("+ only in %s: only_b.sb" % d2, r.stdout)
+        self.assertIn("~ player.inventory.credits: 10 -> 20", r.stdout)
+        self.assertNotIn("same.sb", r.stdout)
+
+        # Single-dir diff compares *.sb against *.sb.bak siblings.
+        bak_dir = os.path.join(self.tmp.name, "live")
+        os.makedirs(bak_dir)
+        with open(os.path.join(bak_dir, "00_LevelSave.sb.bak"), "wb") as f:
+            f.write(save_like(credits=50))
+        with open(os.path.join(bak_dir, "00_LevelSave.sb"), "wb") as f:
+            f.write(save_like(credits=75))
+        r_bak = cli("diff", bak_dir)
+        self.assertEqual(r_bak.returncode, 1)
+        self.assertIn("~ player.inventory.credits: 50 -> 75", r_bak.stdout)
+        self.assertEqual(cli("diff", d1, os.path.join(d2, "same.sb")).returncode, 2)
+
     # ---- set -------------------------------------------------------------------------------------------------
     def test_set_changes_values_fixes_the_hash_and_keeps_everything_else(self):
         src = self.write("a.sb", save_like())
@@ -263,12 +355,35 @@ class SbinTest(unittest.TestCase):
         src = self.write("a.sb", save_like())
         before = read(src)
         for bad in ("player.weapons.ripper.clip=-1", "player.weapons.ripper.clip=4294967296",
-                    "player.inventory.credits=2147483648", "plus=256", "savetype=never_seen_before",
-                    "player.hp=abc", "player.weapons=1", "player.nope=1", "player.transform=1"):
+                    "player.inventory.credits=2147483648", "plus=256", "plus=2", "plus=-1",
+                    "savetype=never_seen_before", "player.hp=abc", "player.hp=nan", "player.hp=inf",
+                    "player.weapons=1", "player.nope=1", "player.transform=1"):
             r = cli("set", src, bad, "--in-place")
             self.assertEqual(r.returncode, 2, bad + r.stdout)
             self.assertEqual(read(src), before)
         self.assertFalse([n for n in os.listdir(self.tmp.name) if ".preedit" in n])
+        # -o and --in-place are mutually exclusive.
+        r_conflict = cli("set", src, "player.inventory.credits=1", "-o", src + ".out", "--in-place")
+        self.assertNotEqual(r_conflict.returncode, 0)
+        self.assertEqual(read(src), before)
+
+    def test_set_repeated_assignment_tracks_intermediate_value(self):
+        src = self.write("a.sb", save_like(credits=100))
+        out = os.path.join(self.tmp.name, "b.sb")
+        r = cli("set", src, "player.inventory.credits=200", "player.inventory.credits=300", "-o", out)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("player.inventory.credits: 100 -> 200", r.stdout)
+        self.assertIn("player.inventory.credits: 200 -> 300", r.stdout)
+        self.assertEqual(sbin.flat(sbin.SBin(read(out)))["player.inventory.credits"].value, 300)
+
+    def test_clean_errors_on_missing_or_corrupt_files(self):
+        missing = os.path.join(self.tmp.name, "does_not_exist.sb")
+        junk = self.write("junk.sb", b"not an sbin")
+        for argv in (("dump", missing), ("dump", junk), ("diff", junk, junk), ("set", missing, "a=1", "--dry-run")):
+            r = cli(*argv)
+            self.assertEqual(r.returncode, 2, argv)
+            self.assertIn("error:", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
 
     def test_set_in_place_keeps_the_original(self):
         src = self.write("a.sb", save_like())
@@ -281,14 +396,33 @@ class SbinTest(unittest.TestCase):
         self.assertEqual(cli("set", src, "player.inventory.credits=3", "--dry-run").returncode, 0)
 
     # ---- census --------------------------------------------------------------------------------------------
-    def test_census_lists_key_names_types_and_ranges(self):
-        self.write("a.sb", save_like(credits=100))
-        self.write("b.sb", save_like(credits=900))
+    def test_census_groups_by_schema_path_and_supports_by_leaf(self):
+        def with_actors_and_objectives(credits):
+            db = Db()
+            root, inv, actors, a1, objectives, o1 = (db.reserve() for _ in range(6))
+            db.put(root, 1, db.dict_body([("inventory", 15, inv), ("actors", 15, actors), ("objectives", 15, objectives)]))
+            db.put(inv, 1, db.dict_body([("credits", 5, credits)]))
+            db.put(actors, 1, db.dict_body([("door_01", 15, a1)]))
+            db.put(a1, 1, db.dict_body([("state", 5, 7)]))
+            db.put(objectives, 1, db.dict_body([("obj_01", 15, o1)]))
+            db.put(o1, 1, db.dict_body([("state", 5, 2)]))
+            return db.build()
+
+        self.write("a.sb", with_actors_and_objectives(100))
+        self.write("b.sb", with_actors_and_objectives(900))
         out = cli("census", self.tmp.name, check=True).stdout
         self.assertIn("2 file(s)", out)
-        credits = [l for l in out.splitlines() if l.startswith("credits")][0]
+        credits = [l for l in out.splitlines() if l.startswith("inventory.credits")][0]
         self.assertIn("int32", credits)
         self.assertIn("100..900", credits)
+        actor_state = [l for l in out.splitlines() if l.startswith("actors.*.state")][0]
+        obj_state = [l for l in out.splitlines() if l.startswith("objectives.*.state")][0]
+        self.assertIn("7..7", actor_state)
+        self.assertIn("2..2", obj_state)
+
+        leaf_out = cli("census", "--by-leaf", self.tmp.name, check=True).stdout
+        merged_state = [l for l in leaf_out.splitlines() if l.startswith("state ")][0]
+        self.assertIn("2..7", merged_state)
 
     # ---- the original behaviour ------------------------------------------------------------------------------
     def test_layout_listing_still_works(self):

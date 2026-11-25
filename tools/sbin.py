@@ -5,10 +5,10 @@ game's own save files (settings.sb, AchievementsSave.sb, NN_CheckpointSave.sb, N
 usage:
   sbin.py FILE [LAYOUT_ID]                list the layouts of layouts.xml.sb (the original behaviour)
   sbin.py dump FILE [PATH] [--types] [--ids]   print the decoded tree (or one subtree)
-  sbin.py diff A [B] [--types]            semantic diff; B defaults to A, and A to A.bak (the game's own backup)
+  sbin.py diff A [B] [--types]            semantic diff of files or dirs (default: .bak against current)
   sbin.py verify FILE... [--coverage] [--strict]   check hashes, lengths, references, types and unexplained bytes
-  sbin.py census FILE_OR_DIR...           every key name with its types and value ranges, over many files
-  sbin.py set FILE PATH=VALUE... (-o OUT | --in-place) [--dry-run]   change scalar values in place
+  sbin.py census FILE_OR_DIR... [--by-leaf]    every schema path (or leaf name) with its types and value ranges
+  sbin.py set FILE PATH=VALUE... (-o OUT | --in-place | --dry-run)   change scalar values in place
 
 PATH looks like  player.weapons.ripper.clip  or  inventory.items[2].count ; a key with odd characters is written
 ["like.this"]. `set` only changes values that keep their size (ints, floats, bools and strings that already exist in
@@ -33,6 +33,7 @@ arrays, 17 array reference. Inferred only from TYPE_SIZE (1..4 and 7/8 look like
 bytes; 11 double; 12 u16 enum): shown as raw hex, never decoded.
 """
 import argparse
+import math
 import os
 import re
 import struct
@@ -118,7 +119,7 @@ class SBin:
         return out
 
     def struct_size(self, si):
-        return max(off + TYPE_SIZE.get(t, 4) for _, t, off in self.struct_fields(si))
+        return max((off + TYPE_SIZE.get(t, 4) for _, t, off in self.struct_fields(si)), default=0)
 
     def read_array(self, idx):
         kind, p = self.obj(idx)
@@ -144,7 +145,8 @@ class SBin:
 
 def layouts_main(argv):
     """sbin.py FILE [LAYOUT_ID]: list the layouts of layouts.xml.sb (the original behaviour)."""
-    db = SBin(open(argv[0], "rb").read())
+    with open(argv[0], "rb") as f:
+        db = SBin(f.read())
     want = argv[1] if len(argv) > 1 else None
     for i in range(len(db.ohdr)):
         kind, _ = db.obj(i)
@@ -306,16 +308,41 @@ def leaf_or_ref(db, typ, pos, size, stack):
 
 # ---- paths ----------------------------------------------------------------------------------------------------
 
-_PATH_TOKEN = re.compile(r'\.?([^.\[\]"]+)|\[(\d+)\]|\["([^"]*)"\]')
+_BARE_KEY = re.compile(r'[^.\[\]"]+')
+_INDEX_TOK = re.compile(r'\[(\d+)\]')
+_QUOTED_TOK = re.compile(r'\["([^"]*)"\]')
 
 
 def parse_path(text):
+    if not text:
+        raise Problem("empty path")
     out, i = [], 0
     while i < len(text):
-        m = _PATH_TOKEN.match(text, i)
-        if not m or m.end() == i:
+        if i > 0:
+            if text[i] == ".":
+                i += 1
+                if i >= len(text) or text[i] in ".[":
+                    raise Problem("cannot parse path %r at %r" % (text, text[i - 1:]))
+            elif text[i] != "[":
+                raise Problem("cannot parse path %r at %r" % (text, text[i:]))
+        elif text[i] == ".":
             raise Problem("cannot parse path %r at %r" % (text, text[i:]))
-        out.append(m.group(1) if m.group(1) is not None else int(m.group(2)) if m.group(2) is not None else m.group(3))
+        if text[i] == "[":
+            m = _INDEX_TOK.match(text, i)
+            if m:
+                out.append(int(m.group(1)))
+                i = m.end()
+                continue
+            m = _QUOTED_TOK.match(text, i)
+            if m:
+                out.append(m.group(1))
+                i = m.end()
+                continue
+            raise Problem("cannot parse path %r at %r" % (text, text[i:]))
+        m = _BARE_KEY.match(text, i)
+        if not m:
+            raise Problem("cannot parse path %r at %r" % (text, text[i:]))
+        out.append(m.group(0))
         i = m.end()
     return out
 
@@ -340,7 +367,7 @@ def find(node, parts):
             node = node.items[want][1]
         elif node.kind == "dict":
             for k, v in node.items:
-                if k == want or (isinstance(want, int) and False):
+                if k == want:
                     node = v
                     break
             else:
@@ -424,32 +451,133 @@ def flat(db):
     return d
 
 
+def leaves_and_empties(node, parts=()):
+    """Yield (path tuple, Node) for scalar leaves and empty containers, in file order."""
+    if node.kind == "leaf" or not node.items:
+        yield parts, node
+    else:
+        for k, child in node.items:
+            yield from leaves_and_empties(child, parts + (k,))
+
+
+def flat_for_diff(db):
+    d = {}
+    for parts, node in leaves_and_empties(build_tree(db, 0)):
+        d[format_path(parts)] = node
+    return d
+
+
+def show_diff_node(node, types=False, float_fmt="%g"):
+    if node.kind == "dict":
+        return "{}"
+    if node.kind == "array":
+        suffix = "  [%s]" % TYPE_NAME.get(node.elem_type, "t%s" % node.elem_type) if types and node.elem_type is not None else ""
+        return "[]" + suffix
+    if node.typ == 10 and node.known:
+        s = float_fmt % node.value
+        if types:
+            s += "  [float]"
+        return s
+    return show_value(node, types)
+
+
+def nodes_equal(na, nb):
+    if na.kind != nb.kind or na.typ != nb.typ or na.known != nb.known:
+        return False
+    if na.kind != "leaf":
+        return na.elem_type == nb.elem_type
+    if na.typ == 10 and na.known:
+        return struct.pack("<f", na.value) == struct.pack("<f", nb.value)
+    return na.value == nb.value
+
+
+def diff_pair(a_path, b_path, types=False, quiet_same=False):
+    fa, fb = flat_for_diff(load(a_path)), flat_for_diff(load(b_path))
+    lines = []
+    for path, nb in fb.items():
+        na = fa.get(path)
+        if na is None:
+            lines.append("+ %s = %s" % (path, show_diff_node(nb, types)))
+        elif not nodes_equal(na, nb):
+            float_fmt = "%g"
+            if na.kind == "leaf" and nb.kind == "leaf" and na.typ == 10 and nb.typ == 10 and na.known and nb.known:
+                if ("%g" % na.value) == ("%g" % nb.value):
+                    float_fmt = "%.9g"
+            suffix = "" if (na.kind == nb.kind and na.typ == nb.typ) else "   (type %s -> %s)" % (
+                na.typ if na.kind == "leaf" else na.kind, nb.typ if nb.kind == "leaf" else nb.kind)
+            lines.append("~ %s: %s -> %s%s" % (
+                path, show_diff_node(na, types, float_fmt), show_diff_node(nb, types, float_fmt), suffix))
+    for path, na in fa.items():
+        if path not in fb:
+            lines.append("- %s = %s" % (path, show_diff_node(na, types)))
+    if lines or not quiet_same:
+        print("--- %s\n+++ %s" % (a_path, b_path))
+        for line in lines:
+            print(line)
+        print("%d difference%s" % (len(lines), "" if len(lines) == 1 else "s"))
+    return len(lines)
+
+
+def list_sb_files(directory):
+    found = {}
+    for root, _, names in os.walk(directory):
+        for n in sorted(names):
+            if n.endswith(".sb"):
+                full = os.path.join(root, n)
+                rel = os.path.relpath(full, directory).replace("\\", "/")
+                found[rel] = full
+    return found
+
+
 def cmd_diff(args):
-    a_path = args.a
-    b_path = args.b or args.a
-    if not args.b:
+    a_is_dir = os.path.isdir(args.a)
+    if args.b is None:
+        if a_is_dir:
+            files = list_sb_files(args.a)
+            pairs = [(full + ".bak", full) for _, full in sorted(files.items()) if os.path.exists(full + ".bak")]
+            if not pairs:
+                raise Problem("no *.sb files with a .bak sibling in %s" % args.a)
+            total, changed = 0, 0
+            for a_path, b_path in pairs:
+                n = diff_pair(a_path, b_path, args.types, quiet_same=True)
+                if n:
+                    changed += 1
+                    total += n
+            print("%d file(s) checked, %d changed, %d total difference%s" % (
+                len(pairs), changed, total, "" if total == 1 else "s"))
+            return 1 if total else 0
         a_path = args.a + ".bak"
         if not os.path.exists(a_path):
             print("%s does not exist; give two files to compare" % a_path, file=sys.stderr)
             return 2
-    fa, fb = flat(load(a_path)), flat(load(b_path))
-    print("--- %s\n+++ %s" % (a_path, b_path))
-    n = 0
-    for path, nb in fb.items():
-        na = fa.get(path)
-        if na is None:
-            print("+ %s = %s" % (path, show_value(nb, args.types)))
-            n += 1
-        elif show_value(na, args.types) != show_value(nb, args.types) or na.typ != nb.typ:
-            suffix = "" if na.typ == nb.typ else "   (type %s -> %s)" % (na.typ, nb.typ)
-            print("~ %s: %s -> %s%s" % (path, show_value(na, args.types), show_value(nb, args.types), suffix))
-            n += 1
-    for path, na in fa.items():
-        if path not in fb:
-            print("- %s = %s" % (path, show_value(na, args.types)))
-            n += 1
-    print("%d difference%s" % (n, "" if n == 1 else "s"))
-    return 1 if n else 0
+        return 1 if diff_pair(a_path, args.a, args.types) else 0
+
+    b_is_dir = os.path.isdir(args.b)
+    if a_is_dir != b_is_dir:
+        raise Problem("cannot diff a directory against a file")
+    if a_is_dir:
+        fa_map, fb_map = list_sb_files(args.a), list_sb_files(args.b)
+        all_rels = sorted(set(fa_map) | set(fb_map))
+        total, changed = 0, 0
+        for rel in all_rels:
+            if rel not in fb_map:
+                print("- only in %s: %s" % (args.a, rel))
+                changed += 1
+                total += 1
+            elif rel not in fa_map:
+                print("+ only in %s: %s" % (args.b, rel))
+                changed += 1
+                total += 1
+            else:
+                n = diff_pair(fa_map[rel], fb_map[rel], args.types, quiet_same=True)
+                if n:
+                    changed += 1
+                    total += n
+        print("%d file(s) compared, %d changed, %d total difference%s" % (
+            len(all_rels), changed, total, "" if total == 1 else "s"))
+        return 1 if total else 0
+
+    return 1 if diff_pair(args.a, args.b, args.types) else 0
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -569,9 +697,41 @@ def verify_data(data, coverage=False):
         if typ not in TYPE_SIZE and typ not in (16,):
             report.warn("field definition %d: unknown type %d" % (fi, typ))
     extents, referenced, extras, types_seen = {}, set(), 0, {}
+
+    def check_ref(typ, pos, label):
+        if typ == 17:
+            ref = struct.unpack_from("<i", data, pos)[0]
+            if ref < 0:
+                return
+        else:
+            ref = struct.unpack_from("<I", data, pos)[0]
+        if ref >= len(db.ohdr):
+            report.error("%s: reference to missing object %d" % (label, ref))
+        else:
+            referenced.add(ref)
+
+    def check_str_idx(pos, label):
+        sidx = struct.unpack_from("<H", data, pos)[0]
+        if sidx > len(db.strs):
+            report.error("%s: string index %d out of range" % (label, sidx))
+
+    def check_struct_fields(si, base_pos, label):
+        for fname, ftype, foff in db.struct_fields(si):
+            fpos = base_pos + foff
+            fsize = TYPE_SIZE.get(ftype)
+            if fsize is None:
+                continue
+            if fpos + fsize > d_end:
+                report.error("%s.%s: value outside DATA" % (label, fname))
+                continue
+            if ftype in (15, 17):
+                check_ref(ftype, fpos, "%s.%s" % (label, fname))
+            elif ftype == 13:
+                check_str_idx(fpos, "%s.%s" % (label, fname))
+
     for idx in range(len(db.ohdr)):
         kind, p = db.obj(idx)
-        if not 0 <= p < d_end:
+        if not d_off <= p < d_end:
             report.error("object %d: offset outside DATA" % idx)
             continue
         ext = object_extent(db, idx, report)
@@ -581,7 +741,10 @@ def verify_data(data, coverage=False):
             report.error("object %d: runs %d byte(s) past DATA" % (idx, ext[1] - d_end))
             continue
         extents[idx] = ext
-        if kind == 1:
+        if kind == 0:
+            si = struct.unpack_from("<H", data, p)[0]
+            check_struct_fields(si, p + 2, "object %d" % idx)
+        elif kind == 1:
             _, entries, _ = unstructured(db, idx)
             for e in entries:
                 types_seen[e["type"]] = types_seen.get(e["type"], 0) + 1
@@ -593,28 +756,20 @@ def verify_data(data, coverage=False):
                     extras += 1
                     report.note("object %d key %s: extra field is %d (zero everywhere else)" % (idx, e["key"], e["extra"]))
                 if e["type"] in (15, 17):
-                    ref = struct.unpack_from("<I", data, e["pos"])[0]
-                    if ref >= len(db.ohdr):
-                        report.error("object %d key %s: reference to missing object %d" % (idx, e["key"], ref))
-                    else:
-                        referenced.add(ref)
+                    check_ref(e["type"], e["pos"], "object %d key %s" % (idx, e["key"]))
                 elif e["type"] == 13:
-                    sidx = struct.unpack_from("<H", data, e["pos"])[0]
-                    if sidx > len(db.strs):
-                        report.error("object %d key %s: string index %d out of range" % (idx, e["key"], sidx))
+                    check_str_idx(e["pos"], "object %d key %s" % (idx, e["key"]))
         elif kind == 2:
             et, si, n, dp, stride = array_info(db, idx)
             if et in (15, 17):
                 for i in range(n):
-                    ref = struct.unpack_from("<I", data, dp + i * stride)[0]
-                    if ref >= len(db.ohdr):
-                        report.error("object %d element %d: reference to missing object %d" % (idx, i, ref))
-                    else:
-                        referenced.add(ref)
+                    check_ref(et, dp + i * stride, "object %d element %d" % (idx, i))
             elif et == 13:
                 for i in range(n):
-                    if struct.unpack_from("<H", data, dp + 2 * i)[0] > len(db.strs):
-                        report.error("object %d element %d: string index out of range" % (idx, i))
+                    check_str_idx(dp + 2 * i, "object %d element %d" % (idx, i))
+            elif et == 16:
+                for i in range(n):
+                    check_struct_fields(si, dp + i * stride, "object %d element %d" % (idx, i))
     if len(db.ohdr) and 0 not in extents:
         report.error("the root object (0) could not be decoded")
     unreached = [i for i in extents if i != 0 and i not in referenced]
@@ -676,7 +831,8 @@ def cmd_verify(args):
     status = 0
     for path in args.files:
         try:
-            data = open(path, "rb").read()
+            with open(path, "rb") as f:
+                data = f.read()
         except OSError as e:
             print("%s: cannot read (%s)" % (path, e.strerror))
             status = 1
@@ -710,19 +866,40 @@ def iter_files(paths):
             yield p
 
 
+_DYNAMIC_MAP_PARENTS = {"actors", "objectives"}
+
+
+def schema_path(parts):
+    """Normalize a concrete leaf path into a schema path: indices -> [], dynamic map keys -> *."""
+    out = ""
+    prev = None
+    for p in parts:
+        if isinstance(p, int):
+            out += "[]"
+            prev = None
+        else:
+            seg = "*" if prev in _DYNAMIC_MAP_PARENTS else p
+            out += ("." if out else "") + seg
+            prev = p
+    return out or "(root)"
+
+
 def cmd_census(args):
     stats, files, bad = {}, 0, 0
     for path in iter_files(args.paths):
         try:
             db = load(path)
         except Exception as e:
-            print("%s: cannot read (%r)" % (path, e), file=sys.stderr)
+            print("%s: cannot read (%s)" % (path, e), file=sys.stderr)
             bad += 1
             continue
         files += 1
         for parts, node in leaves(build_tree(db, 0)):
-            names = [p for p in parts if isinstance(p, str)]
-            key = names[-1] if names else "(root)"
+            if args.by_leaf:
+                names = [p for p in parts if isinstance(p, str)]
+                key = names[-1] if names else "(root)"
+            else:
+                key = schema_path(parts)
             st = stats.setdefault(key, {"types": set(), "n": 0, "values": set(), "lo": None, "hi": None})
             st["n"] += 1
             st["types"].add(TYPE_NAME.get(node.typ, "t%s" % node.typ))
@@ -733,11 +910,13 @@ def cmd_census(args):
             if len(st["values"]) < 8:
                 st["values"].add(show_value(node))
     print("%d file(s)%s" % (files, ", %d unreadable" % bad if bad else ""))
+    width = max((len(k) for k in stats), default=34)
+    width = max(34, min(width, 60))
     for key in sorted(stats):
         st = stats[key]
         rng = "" if st["lo"] is None else "  range %g..%g" % (st["lo"], st["hi"])
         vals = "" if st["lo"] is not None else "  e.g. " + ", ".join(sorted(st["values"])[:4])
-        print("%-34s %6d  %-18s%s%s" % (key, st["n"], "/".join(sorted(st["types"])), rng, vals))
+        print("%-*s %6d  %-18s%s%s" % (width, key, st["n"], "/".join(sorted(st["types"])), rng, vals))
     return 0 if not bad else 1
 
 
@@ -746,39 +925,56 @@ def cmd_census(args):
 # ---------------------------------------------------------------------------------------------------------------
 
 def encode_value(db, node, text):
-    """Bytes to write for `text` at scalar leaf `node`; the size never changes."""
+    """(bytes, decoded_value) to write for `text` at scalar leaf `node`; the size never changes."""
     t = node.typ
     try:
         if t == 5:
             v = int(text, 0)
             if not -2 ** 31 <= v < 2 ** 31:
                 raise Problem("%s does not fit int32" % text)
-            return struct.pack("<i", v)
+            return struct.pack("<i", v), v
         if t == 6:
             v = int(text, 0)
             if not 0 <= v < 2 ** 32:
                 raise Problem("%s does not fit uint32" % text)
-            return struct.pack("<I", v)
+            return struct.pack("<I", v), v
         if t == 9:
             low = text.lower()
-            v = 1 if low == "true" else 0 if low == "false" else int(text, 0)
-            if not 0 <= v <= 255:
-                raise Problem("%s does not fit a byte" % text)
-            return bytes([v])
+            if low == "true":
+                v = 1
+            elif low == "false":
+                v = 0
+            else:
+                v = int(text, 0)
+            if v not in (0, 1):
+                raise Problem("%r is not a valid bool (expected true, false, 0 or 1)" % text)
+            return bytes([v]), v
         if t == 10:
-            return struct.pack("<f", float(text))
+            v = float(text)
+            if not math.isfinite(v):
+                raise Problem("%r is not a finite float" % text)
+            raw = struct.pack("<f", v)
+            return raw, struct.unpack("<f", raw)[0]
         if t == 13:
             if text not in db.strs:
                 raise Problem("%r is not in the file's string table (adding strings is not supported)" % text)
-            return struct.pack("<H", db.strs.index(text) + 1)
+            return struct.pack("<H", db.strs.index(text) + 1), text
     except ValueError:
         raise Problem("%r is not a valid value for a %s" % (text, TYPE_NAME.get(t)))
     raise Problem("type %s cannot be changed by this tool" % t)
 
 
 def cmd_set(args):
-    data = bytearray(open(args.file, "rb").read())
-    db = SBin(bytes(data))
+    try:
+        with open(args.file, "rb") as f:
+            original = f.read()
+    except OSError as e:
+        raise Problem("cannot read %s: %s" % (args.file, e.strerror or e))
+    data = bytearray(original)
+    try:
+        db = SBin(original)
+    except Exception as e:
+        raise Problem("cannot parse %s as SBIN (%s)" % (args.file, e))
     root = build_tree(db, 0)
     changes = []
     for item in args.assignments:
@@ -789,11 +985,10 @@ def cmd_set(args):
         node = find(root, parts)
         if node.kind != "leaf" or node.pos is None:
             raise Problem("%s is not a scalar value" % path)
-        new = encode_value(db, node, text)
-        old = bytes(data[node.pos:node.pos + len(new)])
-        data[node.pos:node.pos + len(new)] = new
+        new_bytes, decoded = encode_value(db, node, text)
+        data[node.pos:node.pos + len(new_bytes)] = new_bytes
         changes.append((format_path(parts), show_value(node), text, TYPE_NAME.get(node.typ), node.pos))
-        node.value = None  # a second assignment to the same path would read stale values
+        node.value = decoded
     d_off, d_size, _ = db.c["DATA"]
     struct.pack_into("<I", data, d_off - 4, fnv1(bytes(data[d_off:d_off + d_size])))
     report = verify_data(bytes(data))
@@ -816,7 +1011,7 @@ def cmd_set(args):
             n += 1
             backup = "%s.preedit%d" % (args.file, n)
         with open(backup, "wb") as f:
-            f.write(open(args.file, "rb").read())
+            f.write(original)
         print("original kept as " + backup)
     else:
         print("give -o OUT or --in-place (or --dry-run to only look)")
@@ -828,7 +1023,17 @@ def cmd_set(args):
 
 
 def load(path):
-    return SBin(open(path, "rb").read())
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError as e:
+        raise Problem("cannot read %s: %s" % (path, e.strerror or e))
+    if len(raw) < 8 or raw[:4] != b"SBIN":
+        raise Problem("%s is not an SBIN file" % path)
+    try:
+        return SBin(raw)
+    except Exception as e:
+        raise Problem("cannot parse %s as SBIN (%s)" % (path, e))
 
 
 COMMANDS = {"dump", "diff", "verify", "census", "set"}
@@ -842,7 +1047,7 @@ def build_parser():
     p.add_argument("path", nargs="?")
     p.add_argument("--types", action="store_true", help="show value types")
     p.add_argument("--ids", action="store_true", help="show object indexes")
-    p = sub.add_parser("diff", help="semantic diff of two files (default: FILE.bak against FILE)")
+    p = sub.add_parser("diff", help="semantic diff of two files or directories (default: .bak against current)")
     p.add_argument("a")
     p.add_argument("b", nargs="?")
     p.add_argument("--types", action="store_true")
@@ -851,13 +1056,15 @@ def build_parser():
     p.add_argument("--coverage", action="store_true", help="also print how every DATA gap was explained")
     p.add_argument("--strict", action="store_true", help="warnings fail too")
     p.add_argument("--notes", action="store_true", help="also print informational notes")
-    p = sub.add_parser("census", help="key names, types and value ranges over many files")
+    p = sub.add_parser("census", help="schema paths (or leaf names), types and value ranges over many files")
     p.add_argument("paths", nargs="+")
+    p.add_argument("--by-leaf", action="store_true", help="group by leaf key name instead of normalized schema path")
     p = sub.add_parser("set", help="change scalar values in place")
     p.add_argument("file")
     p.add_argument("assignments", nargs="+", metavar="PATH=VALUE")
-    p.add_argument("-o", "--output")
-    p.add_argument("--in-place", action="store_true")
+    dest = p.add_mutually_exclusive_group()
+    dest.add_argument("-o", "--output")
+    dest.add_argument("--in-place", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     return ap
 

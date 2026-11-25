@@ -75,8 +75,10 @@ Names are exactly as stored. Meanings are what the key name and the game's own f
   `objectives`, `triggers`, `misc`.
 - `current_level`: `level_id` (string, for example `03_water_02`), `savetype` (`new_level` or `checkpoint`; other values
   **unknown**), `next_actor_id` (counter behind the generated actor names `uan_NNNN`), `cheat_game`, `demo_game`.
-- `misc`: `difficulty` (string, `SOFT` seen), `time` and `level_time` (int32 milliseconds; **unknown** whether
-  `level_time` restarts per level - both were equal, probably because the test profile jumped levels), `gameCompleted`,
+- `misc`: `difficulty` (string; `SOFT` seen in saves; `SaveGame::getDifficultyString` / `getDifficulty` in the game
+  library define `NONE`, `SOFT`, `NORMAL`, `HARD`, `DIFF_NIGHT`), `time` and `level_time` (int32 milliseconds;
+  **unknown** whether `level_time` restarts per level - both were equal, probably because the test profile jumped
+  levels), `gameCompleted` (bool; read by `LayerMainMenu` / `ProfileButton` for completed-slot New Game+ flow),
   `nonPlasmaCutterUsed`, `plus` (new game plus).
 - `player`: `transform` (12 floats: a 3x3 basis in rows, then the position in the last three - **inferred** from
   `SaveGame::serializeTransform`/`deserializeTransform` and a diff after moving), `hp` (float), `upgrade_level_health`,
@@ -107,24 +109,26 @@ Names are exactly as stored. Meanings are what the key name and the game's own f
 **settings.sb**: `brightness`, `sfx_volume`, `music_volume`, `sensitivity` (floats), `language`, `profile_index`,
 `profile_active`, `profile00_active`..`profile02_active`, `launched_with_active_profile`, `subtitles_enabled`,
 `tutorials_enabled`, `auto_reload`, `y_flipped`, `aim_toggle_insted_hold` (sic), `alt_fire_toggle_mode` (int32, 0
-seen).
+seen). From the game library (`Settings::unlockHard`, `Settings::unlockedHard`, `Settings::unlockedNewgamePlus`,
+checked by `LayerDifficulty::stateTransition`), three additional bool keys are written when unlocked (absent in a fresh
+file, not yet verified against a completed save): `hard_unlocked`, `notified_hard_unlocked`, and `plus_unlocked`.
 
 ## Still open
 
 1. `extra`; types 1-4, 7, 8, 11, 12, 18-20; whether 6 is really unsigned (edit a value above 2^31 and look at what the game does).
-2. The enum values behind `state`, objective states, `tutorial_flags`, `savetype`, `difficulty`, and the achievement index tables
+2. The enum values behind `state`, objective states, `tutorial_flags`, `savetype`, `levelCompletes[].difficulty`, and the achievement index tables
    (`EnemyType`, `WeaponType`). Two ways in: diff a save after one deliberate change, or read the game's own strings
-   (`SaveGame::getDifficultyString`, `AchievementData::loadAchievementList`, the actor-record functions).
+   (`AchievementData::loadAchievementList`, the actor-record functions).
 3. What the game does with slots 01 and 02, with a missing key, and with a type it does not expect.
 4. Whether an Android-origin save and a port-written one differ in anything but values.
 
 ## Tools
 
 ```
-python tools/sbin.py dump FILE [PATH] [--types]      tree, or one subtree
-python tools/sbin.py diff FILE [OTHER]               semantic diff; FILE.bak against FILE by default
-python tools/sbin.py verify FILE... [--coverage]     hashes, lengths, references, unexplained bytes
-python tools/sbin.py census FILE_OR_DIR...           key names, types and value ranges over many files
-python tools/sbin.py set FILE PATH=VALUE... -o OUT   change scalar values in place (same size; fixes the hash)
+python tools/sbin.py dump FILE [PATH] [--types]          tree, or one subtree
+python tools/sbin.py diff A [B] [--types]                semantic diff of files or dirs (default: .bak against current)
+python tools/sbin.py verify FILE... [--coverage]         hashes, lengths, references, unexplained bytes
+python tools/sbin.py census FILE_OR_DIR... [--by-leaf]   schema paths (or leaf names), types and value ranges
+python tools/sbin.py set FILE PATH=VALUE... -o OUT       change scalar values in place (same size; fixes the hash)
 ```
 Work on copies, load them with `--no-save`, and run `verify` before using a file.
