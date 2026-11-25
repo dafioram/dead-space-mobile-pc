@@ -619,8 +619,15 @@ struct PresentationGl {
         p_glGenRenderbuffers(1, &id);
         if (!id) return 0;
         p_glBindRenderbuffer(GL_RENDERBUFFER, id);
-        if (count) p_glRenderbufferStorageMultisample(GL_RENDERBUFFER, count, format, w, h);
-        else p_glRenderbufferStorage(GL_RENDERBUFFER, format, w, h);
+        if (count) {
+            if (!p_glRenderbufferStorageMultisample) {
+                p_glDeleteRenderbuffers(1, &id);
+                return 0;
+            }
+            p_glRenderbufferStorageMultisample(GL_RENDERBUFFER, count, format, w, h);
+        } else {
+            p_glRenderbufferStorage(GL_RENDERBUFFER, format, w, h);
+        }
         GLint width = 0, height = 0;
         p_glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &width);
         p_glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &height);
@@ -688,6 +695,7 @@ static void end_guest_read(GLint fb) {
 }
 
 int max_msaa() {
+    if (!p_glRenderbufferStorageMultisample) return 0;
     GLint m = 0;
     glGetIntegerv(GL_MAX_SAMPLES, &m);
     return m;
@@ -741,6 +749,13 @@ void set_msaa(int samples) {
 void present_init(int w, int h, int samples) {
     load(p_glBlitFramebuffer, "glBlitFramebuffer");
     load(p_glRenderbufferStorageMultisample, "glRenderbufferStorageMultisample");
+    if (!p_glGenFramebuffers || !p_glDeleteFramebuffers || !p_glBindFramebuffer || !p_glCheckFramebufferStatus ||
+        !p_glFramebufferTexture2D || !p_glFramebufferRenderbuffer || !p_glGenRenderbuffers ||
+        !p_glDeleteRenderbuffers || !p_glBindRenderbuffer || !p_glRenderbufferStorage ||
+        !p_glGetRenderbufferParameteriv || !p_glBlitFramebuffer) {
+        LOGE("OpenGL driver is missing required framebuffer object (FBO) entry points; cannot initialize presentation target");
+        std::abort();
+    }
     g_rw = w;
     g_rh = h;
     glGenTextures(1, &g_present_tex);
@@ -765,6 +780,7 @@ void present_init(int w, int h, int samples) {
 void present_begin() { p_glBindFramebuffer(GL_FRAMEBUFFER, g_default_fbo); }
 
 namespace {
+std::mutex g_overlay_mutex;
 struct OverlayLine {
     float x0, y0, x1, y1;
     unsigned rgba;
@@ -803,10 +819,14 @@ const unsigned char kFont5x7[95 * 5] = {
 0x00,0x00,0x77,0x00,0x00, 0x00,0x41,0x36,0x08,0x00, 0x02,0x01,0x02,0x04,0x02};
 }  // namespace
 
-void overlay_rect(float x, float y, float w, float h, unsigned rgba) { g_overlay_rects.push_back({x, y, w, h, rgba}); }
+void overlay_rect(float x, float y, float w, float h, unsigned rgba) {
+    std::lock_guard lk(g_overlay_mutex);
+    g_overlay_rects.push_back({x, y, w, h, rgba});
+}
 
 float overlay_text(float x, float y, float px, const char* text, unsigned rgba) {
     float x0 = x;
+    std::lock_guard lk(g_overlay_mutex);
     for (const char* p = text; *p; p++) {
         unsigned c = static_cast<unsigned char>(*p);
         if (c >= 32 && c < 127)
@@ -820,10 +840,20 @@ float overlay_text(float x, float y, float px, const char* text, unsigned rgba) 
     return x - x0;
 }
 
-void overlay_line(float x0, float y0, float x1, float y1, unsigned rgba) { g_overlay.push_back({x0, y0, x1, y1, rgba}); }
+void overlay_line(float x0, float y0, float x1, float y1, unsigned rgba) {
+    std::lock_guard lk(g_overlay_mutex);
+    g_overlay.push_back({x0, y0, x1, y1, rgba});
+}
 
 void overlay_draw() {
-    if (g_overlay.empty() && g_overlay_rects.empty()) return;
+    std::vector<OverlayLine> lines;
+    std::vector<OverlayRect> rects;
+    {
+        std::lock_guard lk(g_overlay_mutex);
+        if (g_overlay.empty() && g_overlay_rects.empty()) return;
+        lines.swap(g_overlay);
+        rects.swap(g_overlay_rects);
+    }
     glPushAttrib(GL_ALL_ATTRIB_BITS);
     glPushClientAttrib(GL_CLIENT_ALL_ATTRIB_BITS);
     p_glBindFramebuffer(GL_FRAMEBUFFER, g_default_fbo);
@@ -847,7 +877,7 @@ void overlay_draw() {
     glPushMatrix();
     glLoadIdentity();
     glBegin(GL_QUADS);
-    for (auto& r : g_overlay_rects) {
+    for (auto& r : rects) {
         glColor4ub(GLubyte(r.rgba >> 24), GLubyte(r.rgba >> 16), GLubyte(r.rgba >> 8), GLubyte(r.rgba));
         glVertex2f(r.x, r.y);
         glVertex2f(r.x + r.w, r.y);
@@ -857,7 +887,7 @@ void overlay_draw() {
     glEnd();
     glLineWidth(float(std::max(2, g_rh / 360)));
     glBegin(GL_LINES);
-    for (auto& l : g_overlay) {
+    for (auto& l : lines) {
         glColor4ub(GLubyte(l.rgba >> 24), GLubyte(l.rgba >> 16), GLubyte(l.rgba >> 8), GLubyte(l.rgba));
         glVertex2f(l.x0, l.y0);
         glVertex2f(l.x1, l.y1);
@@ -869,8 +899,6 @@ void overlay_draw() {
     glPopMatrix();
     glPopClientAttrib();
     glPopAttrib();
-    g_overlay.clear();
-    g_overlay_rects.clear();
 }
 
 void present_end(int ww, int wh) {
@@ -1005,10 +1033,32 @@ void register_gles() {
     reg("glGetFloatv", [](Ctx& c) { glGetFloatv(c.arg(0), c.argp<GLfloat>(1)); });
     reg("glGetBooleanv", [](Ctx& c) { glGetBooleanv(c.arg(0), c.argp<GLboolean>(1)); });
     reg("glGetFixedv", [](Ctx& c) {
+        GLenum pname = c.arg(0);
+        int n = 1;
+        switch (pname) {
+        case GL_MODELVIEW_MATRIX:
+        case GL_PROJECTION_MATRIX:
+        case GL_TEXTURE_MATRIX: n = 16; break;
+        case GL_COLOR_CLEAR_VALUE:
+        case GL_CURRENT_COLOR:
+        case GL_FOG_COLOR:
+        case GL_LIGHT_MODEL_AMBIENT:
+        case GL_SCISSOR_BOX:
+        case GL_VIEWPORT: n = 4; break;
+        case GL_CURRENT_NORMAL: n = 3; break;
+        case GL_ALIASED_LINE_WIDTH_RANGE:
+        case GL_ALIASED_POINT_SIZE_RANGE:
+        case GL_DEPTH_RANGE:
+        case GL_SMOOTH_LINE_WIDTH_RANGE:
+        case GL_SMOOTH_POINT_SIZE_RANGE:
+        case GL_MAX_VIEWPORT_DIMS: n = 2; break;
+        default: n = 1; break;
+        }
+        u32 dst = c.arg(1);
+        if (!dst || !mem::range_mapped(dst, u32(n * 4))) return;
         GLfloat f[16] = {};
-        glGetFloatv(c.arg(0), f);
-        s32* out = c.argp<s32>(1);
-        int n = c.arg(0) == GL_MODELVIEW_MATRIX || c.arg(0) == GL_PROJECTION_MATRIX || c.arg(0) == GL_TEXTURE_MATRIX ? 16 : 4;
+        glGetFloatv(pname, f);
+        s32* out = mem::ptr<s32>(dst);
         for (int i = 0; i < n; i++) out[i] = s32(f[i] * 65536.0f);
     });
     reg("glGetPointerv", [](Ctx& c) {
@@ -1185,9 +1235,15 @@ void register_gles() {
     reg("glLightxv", [](Ctx& c) { XV_TO_FV(4) glLightfv(c.arg(0), c.arg(1), v); });
     reg("glGetLightfv", [](Ctx& c) { glGetLightfv(c.arg(0), c.arg(1), c.argp<GLfloat>(2)); });
     reg("glGetLightxv", [](Ctx& c) {
+        GLenum pname = c.arg(1);
+        int n = pname == GL_SPOT_DIRECTION ? 3
+                : (pname == GL_AMBIENT || pname == GL_DIFFUSE || pname == GL_SPECULAR || pname == GL_POSITION) ? 4
+                                                                                                               : 1;
+        u32 dst = c.arg(2);
+        if (!dst || !mem::range_mapped(dst, u32(n * 4))) return;
         GLfloat v[4] = {};
-        glGetLightfv(c.arg(0), c.arg(1), v);
-        for (int i = 0; i < 4; i++) mem::w32(c.arg(2) + 4 * i, u32(s32(v[i] * 65536)));
+        glGetLightfv(c.arg(0), pname, v);
+        for (int i = 0; i < n; i++) mem::w32(dst + 4 * u32(i), u32(s32(v[i] * 65536)));
     });
     reg("glMaterialf", [](Ctx& c) { glMaterialf(c.arg(0), c.arg(1), c.argf(2)); });
     reg("glMaterialfv", [](Ctx& c) { glMaterialfv(c.arg(0), c.arg(1), c.argp<GLfloat>(2)); });
@@ -1195,9 +1251,13 @@ void register_gles() {
     reg("glMaterialxv", [](Ctx& c) { XV_TO_FV(4) glMaterialfv(c.arg(0), c.arg(1), v); });
     reg("glGetMaterialfv", [](Ctx& c) { glGetMaterialfv(c.arg(0), c.arg(1), c.argp<GLfloat>(2)); });
     reg("glGetMaterialxv", [](Ctx& c) {
+        GLenum pname = c.arg(1);
+        int n = (pname == GL_AMBIENT || pname == GL_DIFFUSE || pname == GL_SPECULAR || pname == GL_EMISSION) ? 4 : 1;
+        u32 dst = c.arg(2);
+        if (!dst || !mem::range_mapped(dst, u32(n * 4))) return;
         GLfloat v[4] = {};
-        glGetMaterialfv(c.arg(0), c.arg(1), v);
-        for (int i = 0; i < 4; i++) mem::w32(c.arg(2) + 4 * i, u32(s32(v[i] * 65536)));
+        glGetMaterialfv(c.arg(0), pname, v);
+        for (int i = 0; i < n; i++) mem::w32(dst + 4 * u32(i), u32(s32(v[i] * 65536)));
     });
     reg("glLightModelf", [](Ctx& c) { glLightModelf(c.arg(0), c.argf(1)); });
     reg("glLightModelfv", [](Ctx& c) { glLightModelfv(c.arg(0), c.argp<GLfloat>(1)); });
@@ -1370,7 +1430,12 @@ void register_gles() {
         GLenum target = c.arg(0), fmt = c.arg(2);
         GLint level = GLint(c.arg(1));
         GLsizei w = GLsizei(c.arg(3)), h = GLsizei(c.arg(4)), size = GLsizei(c.arg(6));
-        const u8* data = static_cast<const u8*>(hp(c.arg(7)));
+        u32 addr = c.arg(7);
+        if (w <= 0 || h <= 0 || size <= 0 || !addr || !mem::range_mapped(addr, u32(size))) {
+            LOGW("glCompressedTexImage2D: invalid input fmt=0x%x %dx%d size=%d addr=%08x", fmt, w, h, size, addr);
+            return;
+        }
+        const u8* data = static_cast<const u8*>(hp(addr));
         if (level <= 0) {
             auto& t = g_tex[g_bound_tex[g_active_unit]];
             t.w = w;
@@ -1386,10 +1451,17 @@ void register_gles() {
             }
         }
         LOGD("glCompressedTexImage2D tex=%u level=%d fmt=0x%x %dx%d", g_bound_tex[g_active_unit], level, fmt, w, h);
+        auto block_bytes = [&](bool alpha) -> u64 {
+            return ((u64(w) + 3) / 4) * ((u64(h) + 3) / 4) * (alpha ? 16u : 8u);
+        };
         if (level <= 0) render::texture_format(g_bound_tex[g_active_unit], GL_RGBA);  // every compressed path decodes to RGBA
         render::texture_level(g_bound_tex[g_active_unit], level < 0 ? 0 : level);
         if (level < 0) render::texture_game_mipmaps(g_bound_tex[g_active_unit]);  // paletted: -level extra mip levels
         if (fmt == k_ATC_RGB || fmt == k_ATC_RGBA_EXPLICIT || fmt == k_ATC_RGBA_INTERP) {
+            if (u64(size) < block_bytes(fmt != k_ATC_RGB)) {
+                LOGW("glCompressedTexImage2D: truncated ATC/ETC2 payload (%d < %llu)", size, (unsigned long long)block_bytes(fmt != k_ATC_RGB));
+                return;
+            }
             // The fan-fixed APK re-encoded its ATC textures as ETC2 (same block sizes) but the game still
             // labels them ATC. A pristine APK has real ATC data: --atc-textures selects that decoder.
             auto img = g_real_atc ? decode_atc(fmt, data, w, h) : decode_etc2(data, w, h, fmt != k_ATC_RGB);
@@ -1397,17 +1469,40 @@ void register_gles() {
             return;
         }
         if (fmt == 0x9274 || fmt == 0x9278) {  // genuine ETC2 RGB8 / RGBA8_EAC
+            if (u64(size) < block_bytes(fmt == 0x9278)) {
+                LOGW("glCompressedTexImage2D: truncated ETC2 payload (%d < %llu)", size, (unsigned long long)block_bytes(fmt == 0x9278));
+                return;
+            }
             auto img = decode_etc2(data, w, h, fmt == 0x9278);
             upload_rgba(target, level, w, h, img.data());
             return;
         }
         if (fmt == k_ETC1_RGB8_OES) {
+            if (u64(size) < block_bytes(false)) {
+                LOGW("glCompressedTexImage2D: truncated ETC1 payload (%d < %llu)", size, (unsigned long long)block_bytes(false));
+                return;
+            }
             auto img = decode_etc2(data, w, h, false);
             upload_rgba(target, level, w, h, img.data());
             return;
         }
         if (fmt >= k_PALETTE4_RGB8_OES && fmt <= k_PALETTE8_RGB5_A1_OES) {
             int levels = level < 0 ? 1 - level : 1;
+            int idx_bits = fmt <= 0x8B94 ? 4 : 8;
+            int f = (fmt - k_PALETTE4_RGB8_OES) % 5;
+            u64 entry = f == 0 ? 3 : f == 1 ? 4 : 2;
+            u64 need = (u64(1) << idx_bits) * entry;
+            u64 bits = 0;
+            for (int l = 0; l < levels; l++) {
+                u64 lw = u64(std::max(1, w >> l)), lh = u64(std::max(1, h >> l));
+                bits += lw * lh * u64(idx_bits);
+                bits = (bits + 7) & ~u64(7);
+            }
+            need += bits / 8;
+            if (u64(size) < need) {
+                LOGW("glCompressedTexImage2D: truncated palette payload (%d < %llu)", size, (unsigned long long)need);
+                return;
+            }
             auto imgs = decode_palette(fmt, data, w, h, levels);
             for (int l = 0; l < levels; l++) upload_rgba(target, l, std::max(1, w >> l), std::max(1, h >> l), imgs[l].data());
             return;
@@ -1535,20 +1630,26 @@ void register_gles() {
     });
     reg("glBufferData", [](Ctx& c) {
         GLenum target = c.arg(0);
+        u32 size = c.arg(1), src = c.arg(2);
+        if (src && size && !mem::range_mapped(src, size)) return;
         GLuint b = target == GL_ARRAY_BUFFER ? g_array_buffer : g_element_buffer;
         auto& sh = g_buf_shadow[b];
-        sh.assign(c.arg(1), 0);
-        if (c.arg(2)) std::memcpy(sh.data(), mem::host(c.arg(2)), c.arg(1));
-        p_glBufferData(target, GLsizeiptr(c.arg(1)), hp(c.arg(2)), c.arg(3));
+        sh.assign(size, 0);
+        if (src && size) std::memcpy(sh.data(), mem::host(src), size);
+        p_glBufferData(target, GLsizeiptr(size), hp(src), c.arg(3));
     });
     reg("glBufferSubData", [](Ctx& c) {
         GLenum target = c.arg(0);
+        u32 off = c.arg(1), size = c.arg(2), src = c.arg(3);
+        if (!size) return;
+        if (!src || !mem::range_mapped(src, size)) return;
+        u64 end = u64(off) + u64(size);
+        if (end > (u64(1) << 28)) return;  // reject bogus wraparound/huge offsets
         GLuint b = target == GL_ARRAY_BUFFER ? g_array_buffer : g_element_buffer;
         auto& sh = g_buf_shadow[b];
-        u32 off = c.arg(1), size = c.arg(2);
-        if (off + size > sh.size()) sh.resize(off + size);
-        std::memcpy(sh.data() + off, mem::host(c.arg(3)), size);
-        p_glBufferSubData(target, GLintptr(off), GLsizeiptr(size), hp(c.arg(3)));
+        if (end > sh.size()) sh.resize(size_t(end));
+        std::memcpy(sh.data() + off, mem::host(src), size);
+        p_glBufferSubData(target, GLintptr(off), GLsizeiptr(size), hp(src));
     });
     reg("glGetBufferParameteriv", [](Ctx& c) { p_glGetBufferParameteriv(c.arg(0), c.arg(1), c.argp<GLint>(2)); });
     reg("glMapBufferOES", [](Ctx& c) {

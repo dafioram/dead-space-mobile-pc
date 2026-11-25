@@ -1016,9 +1016,18 @@ void on_panel_width(cpu::Ctx& c) {
 // OptionsWindow::onEvent while not already snapping (+0xbc mode 0): the game's logic for any
 // page count. A drag of more than 49 units past the current page snaps to the next/previous.
 std::atomic<u32> g_loading_wait_ticks{0};  // LayerLoadingWait seen updating
-u32 g_window = 0, g_window_ticks = 0;  // options window seen recently (its events run every frame)
+u32 g_window = 0, g_window_vtable = 0, g_window_ticks = 0;  // options window seen recently (its events run every frame)
 int g_cur_page = 1;                    // page the window is on
 u32 g_label_str = 0;                   // the page label's format string (guest wide string, 48 chars)
+
+bool valid_window(u32 win) {
+    return win && mem::range_mapped(win, 0xc8) && (!g_window_vtable || mem::r32(win) == g_window_vtable);
+}
+
+void on_window_delete(cpu::Ctx& c) {
+    if (c.reg(0) != g_window) return;
+    g_window = g_window_vtable = g_window_ticks = 0;
+}
 
 void set_page_label(int page) {
     if (!g_label_str) return;
@@ -1040,15 +1049,19 @@ void set_panel_height(u32 win, int page) {
 
 void on_window_event(cpu::Ctx& c) {
     u32 win = c.reg(0), ev = c.reg(1);
+    if (!win || !mem::range_mapped(win, 0xc8)) return;
     g_window = win;
+    g_window_vtable = mem::r32(win);
     g_window_ticks = SDL_GetTicks();
     if (mem::r32(win + 0xbc) != 0) return;  // snapping animation: the game's own code
+    u32 panel = mem::r32(win + 0x7c);
+    if (!panel || !mem::range_mapped(panel, 0x78)) return;
     static u32 rect = mem::heap_alloc(16);
     cpu::call(fn_window_rect, {rect, win});
     float w;
     u32 bits = mem::r32(rect + 8);
     std::memcpy(&w, &bits, 4);
-    int pw = int(mem::r32(mem::r32(win + 0x7c) + 0x70));
+    int pw = int(mem::r32(panel + 0x70));
     int half = int(-(float(kGamePages * pw) - w)) / 2;  // -(page width), as the game computes it
     if (half == 0) return;
     int scroll = s32(mem::r32(win + 0x9c));
@@ -1091,13 +1104,15 @@ void on_window_event(cpu::Ctx& c) {
 // Starts the page-turn animation of `win` by `dir` pages, as a swipe would (OptionsWindow snap mode
 // +0xbc 1 = next / 2 = previous, from scroll +0xc0 to target +0xc4).
 bool turn_page(u32 win, int dir) {
-    if (mem::r32(win + 0xbc) != 0) return false;  // already turning
+    if (!valid_window(win) || mem::r32(win + 0xbc) != 0) return false;  // already turning
+    u32 panel = mem::r32(win + 0x7c);
+    if (!panel || !mem::range_mapped(panel, 0x78)) return false;
     static u32 rect = mem::heap_alloc(16);
     cpu::call(fn_window_rect, {rect, win});
     float w;
     u32 bits = mem::r32(rect + 8);
     std::memcpy(&w, &bits, 4);
-    int pw = int(mem::r32(mem::r32(win + 0x7c) + 0x70));
+    int pw = int(mem::r32(panel + 0x70));
     int half = int(-(float(kGamePages * pw) - w)) / 2;  // -(page width), as the game computes it
     if (half == 0) return false;
     int scroll = s32(mem::r32(win + 0x9c));
@@ -1116,7 +1131,14 @@ bool turn_page(u32 win, int dir) {
     return true;
 }
 
-bool window_open() { return g_window && SDL_GetTicks() - g_window_ticks < 200; }
+bool window_open() {
+    if (!g_window) return false;
+    if (!valid_window(g_window)) {
+        g_window = g_window_vtable = g_window_ticks = 0;
+        return false;
+    }
+    return SDL_GetTicks() - g_window_ticks < 200;
+}
 bool window_open_soon() { return window_open(); }
 
 // Patches one instruction after checking it is the expected one.
@@ -1163,6 +1185,10 @@ void install_paging() {
     g_page_math[3] = {draw, draw + 0x1e4};
     cpu::hook_entry(width, "OptionsPanel::getWidth", on_panel_width);
     cpu::hook_entry(ev, "OptionsWindow::onEvent", on_window_event);
+    if (u32 wdel0 = elf::find("_ZN13OptionsWindowD0Ev"))
+        cpu::hook_entry(wdel0, "OptionsWindow::~OptionsWindow (deleting)", on_window_delete);
+    if (u32 wdel1 = elf::find("_ZN13OptionsWindowD1Ev"))
+        cpu::hook_entry(wdel1, "OptionsWindow::~OptionsWindow (complete)", on_window_delete);
     LOGI("options: %u pages", n);
 }
 
@@ -1177,14 +1203,17 @@ std::map<u32, objs::Vec3> g_mirror_normal;
 
 void on_doppleganger_follow(cpu::Ctx& c) {
     u32 d = c.reg(0);
-    if (mem::r32(d + 0x1a4) != 1) return;  // not active: the game's code does nothing either
+    if (!d || !mem::range_mapped(d, 0x1ec) || mem::r32(d + 0x1a4) != 1) return;  // not active: the game's code does nothing either
     static u32 fn_player = elf::find("_ZNK10GameObject9getPlayerEv"),
                fn_face = elf::find("_ZN10GameObject13aiFaceTowardsERK9btVector3"),
                fn_moved = elf::find("_ZN10GameObject16registerMovementEv"),
                fn_update = elf::find("_ZN10GameObject20updateWorldTransformEv");
+    if (!fn_player || !fn_face || !fn_moved || !fn_update) return;
     static u32 buf = mem::heap_alloc(16, 16);
-    u32 player = cpu::call(fn_player, {d}), pb = mem::r32(player + 0x58), db = mem::r32(d + 0x58);
-    if (!player || !pb || !db) return;
+    u32 player = cpu::call(fn_player, {d});
+    if (!player || !mem::range_mapped(player + 0x58, 4)) return;
+    u32 pb = mem::r32(player + 0x58), db = mem::r32(d + 0x58);
+    if (!pb || !db || !mem::range_mapped(pb + 0x34, 12) || !mem::range_mapped(db + 0x34, 16)) return;
     objs::Vec3 cpt{objs::rf(d + 0x1dc), objs::rf(d + 0x1e0), objs::rf(d + 0x1e4)};
     objs::Vec3 p{objs::rf(pb + 0x34), objs::rf(pb + 0x38), objs::rf(pb + 0x3c)};
     auto it = g_mirror_normal.find(d);
@@ -1223,6 +1252,7 @@ void on_load_level(cpu::Ctx& c) {
     std::string id;
     for (u32 p = mem::r32(c.reg(1)), e = mem::r32(c.reg(1) + 4); p && p < e && id.size() < 64; p += 2) id += char(mem::r16(p));
     LOGI("loading level %s", id.c_str());
+    g_mirror_normal.clear();
     render::scene_changed();
     if (g_level_override.empty() || id == g_level_override) return;
     LOGI("debug: loading %s instead", g_level_override.c_str());
@@ -1374,6 +1404,7 @@ void install() {
     fn_wstring_ctor = elf::find("_ZN5eastl12basic_stringIwN2im20StringEASTLAllocatorEEC1EPKwRKS2_");
     u32 init = elf::find("_ZN12OptionsPanel4initEffff");
     u32 del = elf::find("_ZN12OptionsPanelD0Ev");
+    u32 del1 = elf::find("_ZN12OptionsPanelD1Ev");
     if (u32 ll = elf::find("_ZN11Application9loadLevelERKN5eastl12basic_stringIwN2im20StringEASTLAllocatorEEEi"))
         cpu::hook_entry(ll, "Application::loadLevel", on_load_level);
     if (!fn_add_toggle || !fn_add_slider || !fn_set_index || !fn_add_option || !fn_set_pct || !fn_alloc_ctor ||
@@ -1383,6 +1414,7 @@ void install() {
     }
     cpu::hook_entry(init, "OptionsPanel::init", on_panel_init);
     cpu::hook_entry(del, "OptionsPanel::~OptionsPanel", on_panel_delete);
+    if (del1) cpu::hook_entry(del1, "OptionsPanel::~OptionsPanel (complete)", on_panel_delete);
     install_paging();
     fn_set_tut = elf::find("_ZN12TutorialAnim15setTutorialTextERKN5eastl12basic_stringIwN2im20StringEASTLAllocatorEEES6_");
     if (fn_set_tut) cpu::hook_entry(fn_set_tut, "TutorialAnim::setTutorialText", on_set_tutorial_text);
@@ -1426,9 +1458,10 @@ void frame() {
     refresh_tutorial_text();
     draw_scrollbar();
     if (!g_selector) return;
-    if (mem::r32(g_panel) != g_panel_vtable) {  // panel went away without us noticing
+    if (!g_panel || !mem::range_mapped(g_panel, 4) || mem::r32(g_panel) != g_panel_vtable) {  // panel went away without us noticing
         g_panel = g_selector = 0;
         g_port.clear();
+        input::begin_capture(-1);
         return;
     }
     poll_port_rows();

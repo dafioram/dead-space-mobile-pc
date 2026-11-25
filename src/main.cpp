@@ -50,6 +50,7 @@ std::atomic<bool> g_quit{false};
 namespace jni {
 void audio_open(int rate, int channels, int buffer_frames);
 void audio_dump(const char* path);
+void audio_shutdown();
 ObjPtr activity();
 }
 
@@ -738,8 +739,10 @@ int main(int argc, char** argv) {
     }
 
     LOGI("shutting down");
+    g_quit = true;
     native(kActivity, "NativeOnPause", "()V", act);
     native(kActivity, "NativeOnStop", "()V", act);
+    jni::audio_shutdown();
     SDL_GL_DeleteContext(gl);
     SDL_DestroyWindow(win);
     SDL_Quit();

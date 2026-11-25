@@ -10,7 +10,7 @@ import zipfile
 
 
 PRIVATE_DIRS = {"apk", "assets", "gamedata", "userdata"}
-PRIVATE_SUFFIXES = {".apk", ".obb", ".so", ".sbin", ".m3g", ".pvr"}
+PRIVATE_SUFFIXES = {".apk", ".obb", ".so", ".sb", ".sbin", ".sps", ".sph", ".m3g", ".pvr"}
 
 
 def path_problem(name):

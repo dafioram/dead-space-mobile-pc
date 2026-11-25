@@ -90,6 +90,22 @@ std::string format(const char* fmt, ArgReader& args) {
         }
         case 's': {
             u32 a = args.next32();
+            auto append_formatted = [&](const char* str) {
+                if (spec == "%") {
+                    out += str;
+                    return;
+                }
+                std::string f = spec + "s";
+                std::string big(std::strlen(str) + 256, '\0');
+                int n = std::snprintf(big.data(), big.size(), f.c_str(), str);
+                if (n < 0) return;
+                if (size_t(n) >= big.size()) {
+                    big.resize(size_t(n) + 1);
+                    n = std::snprintf(big.data(), big.size(), f.c_str(), str);
+                    if (n < 0) return;
+                }
+                out.append(big.data(), std::min(size_t(n), big.size() - 1));
+            };
             if (lng == 1) {  // wide string (2-byte wchar_t)
                 std::string s;
                 if (a)
@@ -99,17 +115,10 @@ std::string format(const char* fmt, ArgReader& args) {
                     }
                 else
                     s = "(null)";
-                std::snprintf(buf, sizeof buf, (spec + "s").c_str(), s.c_str());
-                out += buf;
+                append_formatted(s.c_str());
             } else {
                 const char* s = a ? mem::cstr(a) : "(null)";
-                if (spec == "%") {
-                    out += s;
-                } else {
-                    std::string big(std::strlen(s) + 256, '\0');
-                    int n = std::snprintf(big.data(), big.size(), (spec + "s").c_str(), s);
-                    out.append(big.data(), size_t(std::max(0, n)));
-                }
+                append_formatted(s);
             }
             break;
         }

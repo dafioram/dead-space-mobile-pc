@@ -76,14 +76,22 @@ struct AudioOut {
     int rate = 44100, channels = 2;
     u32 max_queued = 0;
 };
+std::mutex g_audio_mutex;
 AudioOut g_audio;
+bool g_audio_closed = false;
 std::FILE* g_audio_dump = nullptr;  // debug: raw PCM capture
 
 }  // namespace
 
-void audio_dump(const char* path) { g_audio_dump = host_file::open(path, "wb"); }
+void audio_dump(const char* path) {
+    std::lock_guard lk(g_audio_mutex);
+    if (g_audio_dump) std::fclose(g_audio_dump);
+    g_audio_dump = host_file::open(path, "wb");
+}
 
 void audio_open(int rate, int channels, int buffer_frames) {
+    std::lock_guard lk(g_audio_mutex);
+    if (g_audio_closed) return;
     SDL_AudioSpec want{}, have{};
     want.freq = rate;
     want.format = AUDIO_S16SYS;
@@ -99,6 +107,20 @@ void audio_open(int rate, int channels, int buffer_frames) {
     // allow ~3 game buffers of latency before write() blocks
     g_audio.max_queued = u32(std::max(buffer_frames, 1024) * channels * 2 * 3);
     LOGI("audio: %d Hz, %d ch, game buffer %d frames", rate, channels, buffer_frames);
+}
+
+void audio_shutdown() {
+    std::lock_guard lk(g_audio_mutex);
+    g_audio_closed = true;
+    if (g_audio.dev) {
+        SDL_CloseAudioDevice(g_audio.dev);
+        g_audio.dev = 0;
+    }
+    if (g_audio_dump) {
+        std::fflush(g_audio_dump);
+        std::fclose(g_audio_dump);
+        g_audio_dump = nullptr;
+    }
 }
 
 ObjPtr activity() { return g_activity; }
@@ -297,19 +319,23 @@ void register_java_classes() {
     // ---------------------------------------------------------- android.media.AudioTrack
     const char* at = "android/media/AudioTrack";
     def(at, "play", [](auto&, auto&, auto&) {
-        if (g_audio.dev) SDL_PauseAudioDevice(g_audio.dev, 0);
+        std::lock_guard lk(g_audio_mutex);
+        if (!g_audio_closed && g_audio.dev) SDL_PauseAudioDevice(g_audio.dev, 0);
         return JValue{};
     });
     def(at, "pause", [](auto&, auto&, auto&) {
-        if (g_audio.dev) SDL_PauseAudioDevice(g_audio.dev, 1);
+        std::lock_guard lk(g_audio_mutex);
+        if (!g_audio_closed && g_audio.dev) SDL_PauseAudioDevice(g_audio.dev, 1);
         return JValue{};
     });
     def(at, "stop", [](auto&, auto&, auto&) {
-        if (g_audio.dev) SDL_PauseAudioDevice(g_audio.dev, 1);
+        std::lock_guard lk(g_audio_mutex);
+        if (!g_audio_closed && g_audio.dev) SDL_PauseAudioDevice(g_audio.dev, 1);
         return JValue{};
     });
     def(at, "flush", [](auto&, auto&, auto&) {
-        if (g_audio.dev) SDL_ClearQueuedAudio(g_audio.dev);
+        std::lock_guard lk(g_audio_mutex);
+        if (!g_audio_closed && g_audio.dev) SDL_ClearQueuedAudio(g_audio.dev);
         return JValue{};
     });
     def(at, "release", [](auto&, auto&, auto&) { return JValue{}; });
@@ -325,27 +351,44 @@ void register_java_classes() {
         u32 n = u32(count);
         static std::atomic<u64> total{0};
         if (total.fetch_add(n) == 0) LOGI("audio: game started streaming (%u samples per write)", n);
-        if (!g_audio.dev) {
+        int channels = 2, rate = 44100;
+        bool has_dev = false;
+        {
+            std::lock_guard lk(g_audio_mutex);
+            if (g_audio_closed) return JValue::I(int(n));
+            has_dev = g_audio.dev != 0;
+            channels = g_audio.channels;
+            rate = g_audio.rate;
+        }
+        if (!has_dev) {
             // no audio device: pace the game's mixer in real time
-            std::this_thread::sleep_for(std::chrono::microseconds(u64(n) * 1000000 / es / g_audio.channels /
-                                                                  std::max(1, g_audio.rate) * (es == 2 ? 1 : 1)));
+            std::this_thread::sleep_for(std::chrono::microseconds(u64(n) * 1000000 / es / channels /
+                                                                  std::max(1, rate) * (es == 2 ? 1 : 1)));
             return JValue::I(int(n));
         }
         // stats: time the game spends producing each buffer, and how often the device ran dry
         static u64 last_return = 0, busy = 0, writes = 0, underruns = 0, reported_underruns = 0;
         u64 t_in = SDL_GetPerformanceCounter();
         if (last_return) busy += t_in - last_return;
-        if (SDL_GetQueuedAudioSize(g_audio.dev) == 0 && writes > 10) underruns++;
-        while (SDL_GetQueuedAudioSize(g_audio.dev) > g_audio.max_queued && !g_quit)
+        for (;;) {
+            std::unique_lock lk(g_audio_mutex);
+            if (g_audio_closed || !g_audio.dev) return JValue::I(int(n));
+            u32 queued = SDL_GetQueuedAudioSize(g_audio.dev);
+            if (queued == 0 && writes > 10) underruns++;
+            if (queued <= g_audio.max_queued || g_quit) {
+                SDL_QueueAudio(g_audio.dev, mem::host(address), bytes);
+                if (g_audio_dump) std::fwrite(mem::host(address), 1, bytes, g_audio_dump);
+                break;
+            }
+            lk.unlock();
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        SDL_QueueAudio(g_audio.dev, mem::host(address), bytes);
+        }
         if (++writes % 1000 == 0) {
             LOGI("audio: %llu underruns so far, game mixes a %u-sample buffer in %.2f ms on average",
                  (unsigned long long)underruns, n, busy * 1000.0 / SDL_GetPerformanceFrequency() / 1000);
             busy = 0;
         }
         last_return = SDL_GetPerformanceCounter();
-        if (g_audio_dump) std::fwrite(mem::host(address), 1, bytes, g_audio_dump);
         return JValue::I(int(n));
     });
 }

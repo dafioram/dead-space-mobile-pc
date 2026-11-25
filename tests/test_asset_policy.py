@@ -19,7 +19,8 @@ spec.loader.exec_module(policy)
 class AssetPolicyTests(unittest.TestCase):
     def test_private_paths(self):
         for name in ("Game.APK", "x/game.obb", "gamedata/file", "assets/file", "x/userdata/save",
-                     "mods/textures/_dump/123.png", "texture.m3g", "data.sbin", "libDeadSpace.so",
+                     "mods/textures/_dump/123.png", "texture.m3g", "data.sbin", "soundBase.sb",
+                     "subtitles.sb", "clip.sps", "clip.sph", "libDeadSpace.so",
                      "gamedata\\file", "../outside", "C:/outside"):
             with self.subTest(name=name):
                 self.assertIsNotNone(policy.path_problem(name))

@@ -40,6 +40,7 @@ struct Src {
     float life_ms;  // fades out linearly over its life
     u32 id;         // object the light follows (0 = none): one light per object, moved on each update
 };
+std::mutex g_src_mutex;
 std::vector<Src> g_src;
 std::map<u32, std::array<float, 3>> g_weapon_color;  // weapon object -> colour of its last shot
 std::atomic<int> g_trace = 0;
@@ -52,6 +53,7 @@ float f32(u32 a) {
 }
 
 void push(float x, float y, float z, const float* c, float radius, float life_ms, u32 id = 0) {
+    std::lock_guard lock(g_src_mutex);
     if (id)
         for (Src& s : g_src)
             if (s.id == id) {
@@ -76,7 +78,10 @@ void on_fire(cpu::Ctx& c) {
                        : name.find("Corer") != std::string::npos   ? kCorer
                        : name.find("Stasis") != std::string::npos  ? kStasis
                                                                    : kPlasma;
-    g_weapon_color[c.reg(0)] = {col[0], col[1], col[2]};
+    {
+        std::lock_guard lock(g_src_mutex);
+        g_weapon_color[c.reg(0)] = {col[0], col[1], col[2]};
+    }
     if (g_trace) LOGI("[lights] onFire weapon=%08x (%s)", c.reg(0), name.c_str());
     u32 pl = input::player();
     if (!pl) return;
@@ -92,10 +97,14 @@ void on_impact(cpu::Ctx& c) {
     float px = f32(a), py = f32(a + 4), pz = f32(a + 8), nx = f32(b), ny = f32(b + 4), nz = f32(b + 8);
     if (g_trace) LOGI("[lights] impact weapon=%08x at %.2f %.2f %.2f normal %.2f %.2f %.2f", c.reg(0), px, py, pz, nx, ny, nz);
     if (!std::isfinite(px + py + pz + nx + ny + nz)) return;
-    auto it = g_weapon_color.find(c.reg(0));
-    const float* col = it != g_weapon_color.end() ? it->second.data() : kPlasma;
+    std::array<float, 3> col = {kPlasma[0], kPlasma[1], kPlasma[2]};
+    {
+        std::lock_guard lock(g_src_mutex);
+        auto it = g_weapon_color.find(c.reg(0));
+        if (it != g_weapon_color.end()) col = it->second;
+    }
     // lifted off the surface so the surface itself is lit
-    push(px + nx * 0.25f, py + ny * 0.25f, pz + nz * 0.25f, col, 2.5f, 160.0f);
+    push(px + nx * 0.25f, py + ny * 0.25f, pz + nz * 0.25f, col.data(), 2.5f, 160.0f);
 }
 
 void on_projectile(cpu::Ctx& c) {
@@ -541,9 +550,9 @@ void update_fixtures(u32 world) {
 // The spine bar shows health: GameObjectPlayable::setDisplayedHealth picks one of three textures
 // (above 50% / 25-50% / below 25% of maximum) and slides it down as health drops. The disc beside it is
 // the stasis meter. Both become small lights that sit just behind the back and follow those values.
-u32 g_slash_until = 0, g_slash_flash = 0;  // plasma saw: glow while the swing plays, flash when it connects
+std::atomic<u32> g_slash_until{0}, g_slash_flash{0};  // plasma saw: glow while the swing plays, flash when it connects
 int n_nav_log = 0;
-float g_stasis = -1;  // last GameObjectPlayable::setStasis value (-1: not seen yet = full)
+std::atomic<float> g_stasis{-1.0f};  // last GameObjectPlayable::setStasis value (-1: not seen yet = full)
 u32 fn_health_max = 0, fn_stasis_max = 0, fn_is_tk = 0;
 
 float call_f(u32 fn, u32 obj) {
@@ -555,13 +564,18 @@ float call_f(u32 fn, u32 obj) {
 
 void on_set_stasis(cpu::Ctx& c) {
     u32 v = c.reg(1);
-    std::memcpy(&g_stasis, &v, 4);
+    float s = -1.0f;
+    std::memcpy(&s, &v, 4);
+    g_stasis.store(s, std::memory_order_relaxed);
 }
 
-void on_start_slash(cpu::Ctx&) { g_slash_until = SDL_GetTicks() + 900; }
+void on_start_slash(cpu::Ctx&) { g_slash_until.store(SDL_GetTicks() + 900, std::memory_order_relaxed); }
 void on_do_slash(cpu::Ctx&) {
-    g_slash_flash = SDL_GetTicks();
-    g_slash_until = std::max(g_slash_until, g_slash_flash + 300);
+    u32 flash = SDL_GetTicks();
+    g_slash_flash.store(flash, std::memory_order_relaxed);
+    u32 target = flash + 300;
+    u32 cur = g_slash_until.load(std::memory_order_relaxed);
+    while (cur < target && !g_slash_until.compare_exchange_weak(cur, target, std::memory_order_relaxed)) {}
 }
 
 void on_player_post_camera(cpu::Ctx& c) {
@@ -587,7 +601,8 @@ void on_player_post_camera(cpu::Ctx& c) {
     }
 
     float smax = fn_stasis_max ? call_f(fn_stasis_max, pl) : 0;
-    float sf = smax > 0 ? (g_stasis < 0 ? 1.0f : std::clamp(g_stasis / smax, 0.0f, 1.0f)) : 0.0f;
+    float stasis = g_stasis.load(std::memory_order_relaxed);
+    float sf = smax > 0 ? (stasis < 0 ? 1.0f : std::clamp(stasis / smax, 0.0f, 1.0f)) : 0.0f;
     bool tk = fn_is_tk && (cpu::call(fn_is_tk, {pl}) & 0xff);
     // stasis meter: dims as it empties; while kinesis is held the module pulses brighter
     float sk = 0.08f + 0.27f * sf;
@@ -605,9 +620,11 @@ void on_player_post_camera(cpu::Ctx& c) {
     // its colour; no blade on screen, no light
     {
         float gp[3], gc[3];
-        if (now < g_slash_until + 300 && render::player_glow(gp, gc)) {
+        u32 slash_until = g_slash_until.load(std::memory_order_relaxed);
+        u32 slash_flash = g_slash_flash.load(std::memory_order_relaxed);
+        if (now < slash_until + 300 && render::player_glow(gp, gc)) {
             float k = 0.85f + 0.15f * std::sin(float(now) * 0.05f);  // flicker
-            if (now - g_slash_flash < 120) k += 0.6f;
+            if (now - slash_flash < 120) k += 0.6f;
             const float saw[3] = {gc[0] * k, gc[1] * k, gc[2] * k};
             push(gp[0], gp[1], gp[2], saw, 2.4f, 100.0f, 4);
         }
@@ -647,7 +664,7 @@ void on_player_post_camera(cpu::Ctx& c) {
         trace_nodes(p);
     }
     if (g_trace && (n++ % 60) == 0) LOGI("[lights] nav lights %d, slash %d", nav, now < g_slash_until);
-    if (g_trace && (n % 60) == 1) LOGI("[lights] rig: health %.0f/%.0f stasis %.0f/%.0f kinesis %d", health, hmax, g_stasis, smax, tk);
+    if (g_trace && (n % 60) == 1) LOGI("[lights] rig: health %.0f/%.0f stasis %.0f/%.0f kinesis %d", health, hmax, stasis, smax, tk);
 }
 
 void clear_scene_locked() {
@@ -815,17 +832,22 @@ void add(float x, float y, float z, float r, float g, float b, float radius, flo
 
 void eye_space(std::vector<render::Light>& out) {
     u32 now = SDL_GetTicks();
-    g_src.erase(std::remove_if(g_src.begin(), g_src.end(), [&](const Src& s) { return float(now - s.born_ms) >= s.life_ms; }),
-                g_src.end());
+    std::vector<Src> sources;
+    {
+        std::lock_guard lock(g_src_mutex);
+        g_src.erase(std::remove_if(g_src.begin(), g_src.end(), [&](const Src& s) { return float(now - s.born_ms) >= s.life_ms; }),
+                    g_src.end());
+        sources = g_src;
+    }
     float e[3] = {}, t[3] = {}, up[3] = {};
     bool cam = input::camera(e, t, up);
     static int n = 0;
-    if (g_trace && !g_src.empty() && (n++ % 30) == 0)
+    if (g_trace && !sources.empty() && (n++ % 30) == 0)
         LOGI("[lights] %zu sources, camera %s eye %.2f %.2f %.2f target %.2f %.2f %.2f up %.2f %.2f %.2f; first at %.2f %.2f %.2f",
-             g_src.size(), cam ? "ok" : "stale", e[0], e[1], e[2], t[0], t[1], t[2], up[0], up[1], up[2], g_src[0].p[0], g_src[0].p[1], g_src[0].p[2]);
+             sources.size(), cam ? "ok" : "stale", e[0], e[1], e[2], t[0], t[1], t[2], up[0], up[1], up[2], sources[0].p[0], sources[0].p[1], sources[0].p[2]);
     if (!cam) return;
     std::vector<Src> fixed;  // (the fixtures go to the renderer at the start of the frame: fixtures_world)
-    if (g_src.empty() && fixed.empty()) return;
+    if (sources.empty() && fixed.empty()) return;
     // right-handed look-at: the camera looks down -Z
     float f[3] = {t[0] - e[0], t[1] - e[1], t[2] - e[2]};
     float fl = std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
@@ -837,7 +859,7 @@ void eye_space(std::vector<render::Light>& out) {
     for (float& v : s) v /= sl;
     float u[3] = {s[1] * f[2] - s[2] * f[1], s[2] * f[0] - s[0] * f[2], s[0] * f[1] - s[1] * f[0]};
     // newest first: the renderer keeps a limited number
-    for (auto it = g_src.rbegin(); it != g_src.rend(); ++it) {
+    for (auto it = sources.rbegin(); it != sources.rend(); ++it) {
         float d[3] = {it->p[0] - e[0], it->p[1] - e[1], it->p[2] - e[2]};
         float k = 1.0f - float(now - it->born_ms) / it->life_ms;
         render::Light l;
@@ -959,16 +981,19 @@ void fixtures_world(const float at[3], std::vector<render::Light>& out) {
 
 void debug_list(std::vector<DebugLight>& out) {
     u32 now = SDL_GetTicks();
-    for (const Src& s : g_src) {
-        if (float(now - s.born_ms) >= s.life_ms) continue;
-        DebugLight d;
-        for (int i = 0; i < 3; i++) d.pos[i] = s.p[i], d.color[i] = s.c[i];
-        d.radius = s.radius;
-        d.kind = s.id == 1 || s.id == 5 ? "RIG HEALTH" : s.id == 2 ? "STASIS MODULE" : s.id == 3 ? "VISOR" : s.id == 4 ? "SAW" : s.id >= 10 && s.id < 20 ? "NAV LINE" : s.id ? "PROJECTILE" : "FLASH";
-        out.push_back(d);
+    {
+        std::lock_guard lock(g_src_mutex);
+        for (const Src& s : g_src) {
+            if (float(now - s.born_ms) >= s.life_ms) continue;
+            DebugLight d;
+            for (int i = 0; i < 3; i++) d.pos[i] = s.p[i], d.color[i] = s.c[i];
+            d.radius = s.radius;
+            d.kind = s.id == 1 || s.id == 5 ? "RIG HEALTH" : s.id == 2 ? "STASIS MODULE" : s.id == 3 ? "VISOR" : s.id == 4 ? "SAW" : s.id >= 10 && s.id < 20 ? "NAV LINE" : s.id ? "PROJECTILE" : "FLASH";
+            out.push_back(d);
+        }
     }
     // lit this frame by the renderer: alarm spotlights and the nearest strip lights
-    const std::vector<render::Light>& lit = render::debug_frame_lights();
+    const std::vector<render::Light> lit = render::debug_frame_lights();
     for (const render::Light& l : lit) {
         DebugLight d;
         for (int i = 0; i < 3; i++) d.pos[i] = l.wpos[i], d.color[i] = l.color[i], d.dir[i] = l.wdir[i];

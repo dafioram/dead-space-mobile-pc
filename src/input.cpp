@@ -895,8 +895,19 @@ void on_player_update(cpu::Ctx& c) {
     update_floor_snap_recovery(player, dt_ms);
 }
 
+std::atomic<u32> g_hud_vtable{0};
+
+bool hud_live() {
+    u32 h = g_hud;
+    if (!h || !mem::range_mapped(h, 4)) return false;
+    u32 vt = g_hud_vtable.load(std::memory_order_relaxed);
+    return !vt || mem::r32(h) == vt;
+}
+
 void on_hud_event(cpu::Ctx& c) {
-    g_hud = c.reg(0);
+    u32 h = c.reg(0);
+    g_hud = h;
+    if (h && mem::range_mapped(h, 4)) g_hud_vtable.store(mem::r32(h), std::memory_order_relaxed);
     if (!g_trace) return;
     u32 ev = c.reg(1);
     u32 type = mem::r32(ev + 4);
@@ -930,18 +941,27 @@ void on_player_event(cpu::Ctx& c) {
 
 void on_scheme_init(cpu::Ctx& c) { g_world = c.reg(1); }
 
+void on_hud_destroyed(cpu::Ctx& c) {
+    if (c.reg(0) != g_hud) return;
+    g_hud = 0;
+    g_hud_vtable.store(0, std::memory_order_relaxed);
+}
+
 // GameObjectPlayable destructor (level change, death reload): forget everything about that player
 void on_player_destroyed(cpu::Ctx& c) {
     if (c.reg(0) != g_player) return;
     g_movement_handoff.set_player(0);
     g_player = 0;
+    g_world = 0;
     g_hud = 0;
+    g_hud_vtable.store(0, std::memory_order_relaxed);
     g_paused = true;
     reset_free_look();
     g_frames_without_player = 1000;
     std::lock_guard lk(g_lock);
     g_input_epoch++;
     g_queue.clear();  // actions queued for the old player must not reach a respawn
+    g_jobs.clear();
 }
 
 // GameObjectPlayable::revertPitch(rate, target) eases the camera pitch back to level. Walking or
@@ -1275,6 +1295,9 @@ void install() {
         {"_ZN16InputSchemeBasic4initEP9GameWorld", "InputSchemeBasic::init", on_scheme_init},
         {"_ZN11InputScheme5resetEv", "InputScheme::reset", on_input_reset},
         {"_ZN18GameObjectPlayableD0Ev", "GameObjectPlayable::~GameObjectPlayable (deleting)", on_player_destroyed},
+        {"_ZN18GameObjectPlayableD1Ev", "GameObjectPlayable::~GameObjectPlayable (complete)", on_player_destroyed},
+        {"_ZN3HudD0Ev", "Hud::~Hud (deleting)", on_hud_destroyed},
+        {"_ZN3HudD1Ev", "Hud::~Hud (complete)", on_hud_destroyed},
         {"_ZN18GameObjectPlayable11revertPitchEff", "GameObjectPlayable::revertPitch", on_revert_pitch},
         {"_ZN19GameObjectCinematic8onUpdateEi", "GameObjectCinematic::onUpdate", on_cinematic_update},
         {"_ZN23GameObjectPowerNodeLock8onUpdateEi", "GameObjectPowerNodeLock::onUpdate", on_lock_update},
@@ -1464,7 +1487,7 @@ void pad_button(int code, bool down) {
             if (code == active_pad_code(P_FIRE)) g_lmb = false;
             return;
         }
-        bool in_rig = g_hud && fn_in_rig && (cpu::call(fn_in_rig, {g_hud}) & 0xff);
+        bool in_rig = hud_live() && fn_in_rig && (cpu::call(fn_in_rig, {g_hud}) & 0xff);
         switch (b) {
         case SDL_CONTROLLER_BUTTON_DPAD_UP: synth_key(SDL_SCANCODE_UP, SDLK_UP); break;
         case SDL_CONTROLLER_BUTTON_DPAD_DOWN: synth_key(SDL_SCANCODE_DOWN, SDLK_DOWN); break;
@@ -1691,7 +1714,7 @@ bool event(const SDL_Event& e, SDL_Window* win) {
     if (e.type == SDL_KEYDOWN && !e.key.repeat && int(e.key.keysym.scancode) == g_bind[B_LOCATOR] &&
         activate_locator(true)) return true;
     // the RIG key closes the RIG menu (it is a menu: gameplay keys are not handled while it is open)
-    if (e.type == SDL_KEYDOWN && !e.key.repeat && int(e.key.keysym.scancode) == g_bind[B_RIG] && g_hud &&
+    if (e.type == SDL_KEYDOWN && !e.key.repeat && int(e.key.keysym.scancode) == g_bind[B_RIG] && hud_live() &&
         fn_in_rig && (cpu::call(fn_in_rig, {g_hud}) & 0xff)) {
         hud_button(g_hud, "BTN_RIG");  // same as tapping the RIG icon again
         return true;
