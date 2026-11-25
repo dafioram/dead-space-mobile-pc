@@ -106,6 +106,15 @@ void test_controller_dispatch() {
     const PadCombatFlags alt_only{false, false, false, true};
     require(input::resolve_pad_combat(alt_only, {true, true, true}) == DispatchResult::none,
             "separate mode-switch button does nothing while carrying");
+
+    // During a grab/struggle, Modern RT/R2 (fire+stomp) and RB/R1 (melee+alt) advance the struggle
+    // rather than routing to stomp (which does not break free).
+    require(input::resolve_pad_combat(rt, {false, false, false}, input::ControlPreset::modern, true) == DispatchResult::fire,
+            "Modern RT advances a grab instead of routing to stomp");
+    require(input::resolve_pad_combat(rb, {false, false, false}, input::ControlPreset::modern, true) == DispatchResult::fire,
+            "Modern RB advances a grab");
+    require(input::resolve_pad_combat(stomp_only, {false, false, false}, input::ControlPreset::modern, true) == DispatchResult::stomp,
+            "standalone stomp-only button does not masquerade as fire during a grab");
 }
 
 void test_weapon_cycling() {
@@ -191,6 +200,16 @@ void test_presets_and_classic_compatibility() {
     require(std::string(input::preset_setting_name(ControlPreset::modern)) == "modern" &&
                 std::string(input::preset_setting_name(ControlPreset::classic)) == "classic",
             "preset setting names are stable");
+
+    // Persisted binding loading preserves explicit unbound ("-") across restarts.
+    const auto unbound = input::resolve_loaded_binding("-", 0, 9);
+    require(unbound.code == 0 && unbound.custom, "saved '-' stays intentionally unbound instead of reverting to default");
+    const auto custom = input::resolve_loaded_binding("G", 10, 9);
+    require(custom.code == 10 && custom.custom, "saved valid key loads as custom");
+    const auto absent = input::resolve_loaded_binding("", 0, 9);
+    require(absent.code == 9 && !absent.custom, "absent key uses preset default");
+    const auto malformed = input::resolve_loaded_binding("NotARealKey", 0, 9);
+    require(malformed.code == 9 && !malformed.custom, "unrecognized key falls back to preset default");
 
     // Classic Port combat semantics remain intact.
     const PadCombatFlags classic_rt{true, false, false, false};

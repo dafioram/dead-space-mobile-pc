@@ -328,17 +328,17 @@ void load_bindings() {
     LOGI("input: control preset=%s (settings_file=%d)", preset_setting_name(p), settings::loaded_from_file() ? 1 : 0);
     for (int i = 0; i < B_COUNT; i++) {
         const std::string saved = settings::get_string(std::string("bind_") + kBindings[i].key, "");
-        const int c = code_from_name(saved);
-        g_bind_custom[i] = c != 0;
-        g_bind[i] = c ? c : kb_default_code(p, i);
+        const auto resolved = resolve_loaded_binding(saved, code_from_name(saved), kb_default_code(p, i));
+        g_bind_custom[i] = resolved.custom;
+        g_bind[i] = resolved.code;
     }
     const PadFamily fam = g_pad_family.load();
     const bool tp = g_pad_has_touchpad.load();
     for (int i = 0; i < P_COUNT; i++) {
         const std::string saved = settings::get_string(std::string("padbind_") + kPad[i].b.key, "");
-        const int c = pad_code_from_name(saved);
-        g_padbind_custom[i] = c != 0;
-        g_padbind[i] = c ? c : pad_default_code(p, i, fam, tp);
+        const auto resolved = resolve_loaded_binding(saved, pad_code_from_name(saved), pad_default_code(p, i, fam, tp));
+        g_padbind_custom[i] = resolved.custom;
+        g_padbind[i] = resolved.code;
     }
 }
 bool code_down(int code) {
@@ -1078,6 +1078,8 @@ void set_preset(ControlPreset p) {
     g_preset = p;
     g_run_toggle = false;
     g_pending_fire = 0;
+    g_rmb = false;
+    g_lmb = false;
     settings::erase_prefix("bind_");
     settings::erase_prefix("padbind_");
     settings::set_string("control_preset", preset_setting_name(p));
@@ -1425,6 +1427,8 @@ void release_code(int code) {
 void release_all() {
     for (int i = 0; i < B_COUNT; i++)
         if (code_down(g_bind[i])) release_action(i);
+    if (g_rmb) release_action(B_AIM);
+    if (g_lmb) release_action(B_FIRE);
     g_run_toggle = false;
     g_pending_fire = 0;
     std::memset(g_keys, 0, sizeof g_keys);
@@ -1452,7 +1456,14 @@ void pad_button(int code, bool down) {
     const int b = code - kPadCode;
     if (!g_mouse_captured) {
         // menus, cinematics, loading screens: the D-pad moves the highlight, A confirms, B / Start go back
-        if (!down) return;
+        if (!down) {
+            if (code == active_pad_code(P_AIM) && g_rmb) {
+                g_rmb = false;
+                g_pending_fire = 0;
+            }
+            if (code == active_pad_code(P_FIRE)) g_lmb = false;
+            return;
+        }
         bool in_rig = g_hud && fn_in_rig && (cpu::call(fn_in_rig, {g_hud}) & 0xff);
         switch (b) {
         case SDL_CONTROLLER_BUTTON_DPAD_UP: synth_key(SDL_SCANCODE_UP, SDLK_UP); break;
@@ -1522,12 +1533,25 @@ void pad_button(int code, bool down) {
         }
         press_action(act);
     }
-    if (down) emit_dispatch(resolve_pad_combat(combat, st, preset_now));
+    if (down) emit_dispatch(resolve_pad_combat(combat, st, preset_now, g_grab_state != 0));
     if (bound || !down || preset_now != ControlPreset::classic) return;
     // Classic Port D-pad fallback: the four weapons when D-pad is unbound
     int w = b == SDL_CONTROLLER_BUTTON_DPAD_UP ? 0 : b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT ? 1
             : b == SDL_CONTROLLER_BUTTON_DPAD_DOWN ? 2 : b == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? 3 : -1;
     if (w >= 0) push({EV_WEAPON, w});
+}
+
+void open_fallback_controller(SDL_JoystickID exclude_id) {
+    const int n = SDL_NumJoysticks();
+    for (int i = 0; i < n; i++) {
+        if (!SDL_IsGameController(i)) continue;
+        if (SDL_JoystickGetDeviceInstanceID(i) == exclude_id) continue;
+        if (SDL_GameController* next = SDL_GameControllerOpen(i)) {
+            g_pad = next;
+            LOGI("input: switched to remaining controller: %s", SDL_GameControllerName(g_pad));
+            return;
+        }
+    }
 }
 
 // Controller events; true if `e` was one.
@@ -1551,7 +1575,10 @@ bool pad_event(const SDL_Event& e) {
             g_run_toggle = false;
             for (int c = 0; c < 128; c++)
                 if (g_pad_down[c]) pad_button(kPadCode + c, false);
+            if (g_rmb) release_action(B_AIM);
+            if (g_lmb) release_action(B_FIRE);
             std::memset(g_axis, 0, sizeof g_axis);
+            open_fallback_controller(e.cdevice.which);
             refresh_pad_capabilities();
             LOGI("input: controller disconnected");
             if (!g_mouse_captured) SDL_ShowCursor(SDL_ENABLE);

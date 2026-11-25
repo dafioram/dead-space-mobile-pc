@@ -32,6 +32,21 @@ inline const char* preset_setting_name(ControlPreset p) {
     return p == ControlPreset::modern ? "modern" : "classic";
 }
 
+struct LoadedBinding {
+    int code = 0;
+    bool custom = false;
+};
+
+// Resolve a persisted binding entry from port_settings.ini:
+//   - "-" means explicitly unbound by the user (preserved as 0 across restarts)
+//   - a recognized non-zero parsed_code keeps that custom binding
+//   - empty or unrecognized text falls back to default_code (non-custom)
+inline LoadedBinding resolve_loaded_binding(const std::string& saved, int parsed_code, int default_code) {
+    if (saved == "-") return {0, true};
+    if (parsed_code != 0) return {parsed_code, true};
+    return {default_code, false};
+}
+
 // Classify controller family from SDL_GameControllerType values without pulling SDL headers here.
 // SDL_CONTROLLER_TYPE_PS3 = 3, SDL_CONTROLLER_TYPE_PS4 = 4, SDL_CONTROLLER_TYPE_PS5 = 7.
 inline PadFamily classify_pad_family(int sdl_controller_type) {
@@ -153,7 +168,9 @@ struct PadCombatFlags {
 //   - Classic (RT = fire/melee, RB = stomp/alt_fire):
 //     Preserves original RT fire/melee/throw and RB stomp/alt_fire split.
 inline DispatchResult resolve_pad_combat(PadCombatFlags f, ActionState s,
-                                         ControlPreset preset = ControlPreset::modern) {
+                                         ControlPreset preset = ControlPreset::modern,
+                                         bool in_grab = false) {
+    if (in_grab && (f.fire || f.melee)) return DispatchResult::fire;
     if (preset == ControlPreset::classic) {
         if (f.fire) return resolve_keyboard_fire(s);
         if (f.alt_fire && s.aiming()) return DispatchResult::alt_fire;
