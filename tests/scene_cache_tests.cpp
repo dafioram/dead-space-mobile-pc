@@ -95,7 +95,7 @@ Vec3 facing(u32) { return {}; }
 }
 namespace render {
 bool player_glow(float[3], float[3]) { return false; }
-const std::vector<Light>& debug_frame_lights() { static std::vector<Light> lights; return lights; }
+std::vector<Light> debug_frame_lights() { return {}; }
 }
 
 namespace {

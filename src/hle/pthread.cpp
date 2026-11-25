@@ -1,8 +1,11 @@
 // bionic pthreads + semaphores + sleeping. Guest sync objects are 4-byte words; the real
 // state lives host side, keyed by the object's guest address.
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -65,10 +68,12 @@ struct GMutex {
 };
 
 struct GCond {
+    struct Waiter {
+        bool signaled = false;
+    };
     std::mutex m;
     std::condition_variable cv;
-    int waiters = 0;
-    int wakeups = 0;
+    std::deque<Waiter*> queue;  // FIFO waiters; prevents stolen or lost wakeups
 };
 
 struct GSem {
@@ -78,33 +83,33 @@ struct GSem {
 };
 
 std::mutex g_obj_lock;
-std::unordered_map<u32, GMutex*> g_mutexes;
-std::unordered_map<u32, GCond*> g_conds;
-std::unordered_map<u32, GSem*> g_sems;
+std::unordered_map<u32, std::shared_ptr<GMutex>> g_mutexes;
+std::unordered_map<u32, std::shared_ptr<GCond>> g_conds;
+std::unordered_map<u32, std::shared_ptr<GSem>> g_sems;
 
-GMutex* get_mutex(u32 a) {
+std::shared_ptr<GMutex> get_mutex(u32 a) {
     std::lock_guard lk(g_obj_lock);
     auto& p = g_mutexes[a];
     if (!p) {
-        p = new GMutex;
+        p = std::make_shared<GMutex>();
         u32 v = mem::r32(a);
         p->type = (v & 0xC000) == 0x4000 ? 1 : (v & 0xC000) == 0x8000 ? 2 : 0;
     }
     return p;
 }
 
-GCond* get_cond(u32 a) {
+std::shared_ptr<GCond> get_cond(u32 a) {
     std::lock_guard lk(g_obj_lock);
     auto& p = g_conds[a];
-    if (!p) p = new GCond;
+    if (!p) p = std::make_shared<GCond>();
     return p;
 }
 
-GSem* get_sem(u32 a) {
+std::shared_ptr<GSem> get_sem(u32 a) {
     std::lock_guard lk(g_obj_lock);
     auto& p = g_sems[a];
     if (!p) {
-        p = new GSem;
+        p = std::make_shared<GSem>();
         p->count = mem::r32(a);
     }
     return p;
@@ -119,17 +124,18 @@ Clock::time_point abs_time(u32 ts) {
 
 int cond_wait(u32 cond, u32 mutex, const Clock::time_point* deadline) {
     u32 self = cpu::thread().tid;
-    GCond* c = get_cond(cond);
-    GMutex* m = get_mutex(mutex);
+    auto c = get_cond(cond);
+    auto m = get_mutex(mutex);
+    GCond::Waiter waiter{};
     int saved;
     bool timed_out = false;
     {
         std::unique_lock lk(c->m);
-        c->waiters++;
+        c->queue.push_back(&waiter);
         saved = m->release_all(self);
-        while (c->wakeups == 0) {
+        while (!waiter.signaled) {
             if (deadline) {
-                if (c->cv.wait_until(lk, *deadline) == std::cv_status::timeout && c->wakeups == 0) {
+                if (c->cv.wait_until(lk, *deadline) == std::cv_status::timeout && !waiter.signaled) {
                     timed_out = true;
                     break;
                 }
@@ -137,8 +143,10 @@ int cond_wait(u32 cond, u32 mutex, const Clock::time_point* deadline) {
                 c->cv.wait(lk);
             }
         }
-        if (!timed_out) c->wakeups--;
-        c->waiters--;
+        if (timed_out) {
+            auto it = std::find(c->queue.begin(), c->queue.end(), &waiter);
+            if (it != c->queue.end()) c->queue.erase(it);
+        }
     }
     m->reacquire(self, saved);
     return timed_out ? G_ETIMEDOUT : 0;
@@ -171,19 +179,14 @@ void register_pthread() {
         int type = c.arg(1) ? int(mem::r32(c.arg(1))) : 0;
         mem::w32(a, type == 1 ? 0x4000 : type == 2 ? 0x8000 : 0);
         std::lock_guard lk(g_obj_lock);
-        auto& p = g_mutexes[a];
-        delete p;
-        p = new GMutex;
+        auto p = std::make_shared<GMutex>();
         p->type = type;
+        g_mutexes[a] = std::move(p);
         c.ret(0);
     });
     reg("pthread_mutex_destroy", [](Ctx& c) {
         std::lock_guard lk(g_obj_lock);
-        auto it = g_mutexes.find(c.arg(0));
-        if (it != g_mutexes.end()) {
-            delete it->second;
-            g_mutexes.erase(it);
-        }
+        g_mutexes.erase(c.arg(0));
         c.ret(0);
     });
     reg("pthread_mutex_lock", [](Ctx& c) { c.ret(u32(get_mutex(c.arg(0))->lock(cpu::thread().tid, false))); });
@@ -194,33 +197,31 @@ void register_pthread() {
     reg("pthread_cond_init", [](Ctx& c) {
         mem::w32(c.arg(0), 0);
         std::lock_guard lk(g_obj_lock);
-        auto& p = g_conds[c.arg(0)];
-        delete p;
-        p = new GCond;
+        g_conds[c.arg(0)] = std::make_shared<GCond>();
         c.ret(0);
     });
     reg("pthread_cond_destroy", [](Ctx& c) {
         std::lock_guard lk(g_obj_lock);
-        auto it = g_conds.find(c.arg(0));
-        if (it != g_conds.end()) {
-            delete it->second;
-            g_conds.erase(it);
-        }
+        g_conds.erase(c.arg(0));
         c.ret(0);
     });
     reg("pthread_cond_signal", [](Ctx& c) {
-        GCond* cv = get_cond(c.arg(0));
+        auto cv = get_cond(c.arg(0));
         std::lock_guard lk(cv->m);
-        if (cv->waiters > cv->wakeups) {
-            cv->wakeups++;
-            cv->cv.notify_one();
+        if (!cv->queue.empty()) {
+            cv->queue.front()->signaled = true;
+            cv->queue.pop_front();
+            cv->cv.notify_all();
         }
         c.ret(0);
     });
     reg("pthread_cond_broadcast", [](Ctx& c) {
-        GCond* cv = get_cond(c.arg(0));
+        auto cv = get_cond(c.arg(0));
         std::lock_guard lk(cv->m);
-        cv->wakeups = cv->waiters;
+        while (!cv->queue.empty()) {
+            cv->queue.front()->signaled = true;
+            cv->queue.pop_front();
+        }
         cv->cv.notify_all();
         c.ret(0);
     });
@@ -234,23 +235,18 @@ void register_pthread() {
     reg("sem_init", [](Ctx& c) {
         mem::w32(c.arg(0), c.arg(2));
         std::lock_guard lk(g_obj_lock);
-        auto& p = g_sems[c.arg(0)];
-        delete p;
-        p = new GSem;
+        auto p = std::make_shared<GSem>();
         p->count = c.arg(2);
+        g_sems[c.arg(0)] = std::move(p);
         c.ret(0);
     });
     reg("sem_destroy", [](Ctx& c) {
         std::lock_guard lk(g_obj_lock);
-        auto it = g_sems.find(c.arg(0));
-        if (it != g_sems.end()) {
-            delete it->second;
-            g_sems.erase(it);
-        }
+        g_sems.erase(c.arg(0));
         c.ret(0);
     });
     reg("sem_post", [](Ctx& c) {
-        GSem* s = get_sem(c.arg(0));
+        auto s = get_sem(c.arg(0));
         std::lock_guard lk(s->m);
         s->count++;
         mem::w32(c.arg(0), s->count);
@@ -258,7 +254,7 @@ void register_pthread() {
         c.ret(0);
     });
     reg("sem_wait", [](Ctx& c) {
-        GSem* s = get_sem(c.arg(0));
+        auto s = get_sem(c.arg(0));
         std::unique_lock lk(s->m);
         s->cv.wait(lk, [&] { return s->count > 0; });
         s->count--;
@@ -266,7 +262,7 @@ void register_pthread() {
         c.ret(0);
     });
     reg("sem_trywait", [](Ctx& c) {
-        GSem* s = get_sem(c.arg(0));
+        auto s = get_sem(c.arg(0));
         std::lock_guard lk(s->m);
         if (!s->count) {
             set_errno(G_EAGAIN);
@@ -277,7 +273,7 @@ void register_pthread() {
         c.ret(0);
     });
     reg("sem_timedwait", [](Ctx& c) {
-        GSem* s = get_sem(c.arg(0));
+        auto s = get_sem(c.arg(0));
         auto dl = abs_time(c.arg(1));
         std::unique_lock lk(s->m);
         if (!s->cv.wait_until(lk, dl, [&] { return s->count > 0; })) {
@@ -289,7 +285,7 @@ void register_pthread() {
         c.ret(0);
     });
     reg("sem_getvalue", [](Ctx& c) {
-        GSem* s = get_sem(c.arg(0));
+        auto s = get_sem(c.arg(0));
         std::lock_guard lk(s->m);
         mem::w32(c.arg(1), s->count);
         c.ret(0);

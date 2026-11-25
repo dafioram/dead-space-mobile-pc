@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -696,6 +698,8 @@ int g_lights = 0;  // dynamic lights: 0 off, 1 low, 2 medium, 3 high
 bool g_vignette = true;       // darkened picture edges
 bool g_light_shadows = true;  // the dynamic lights cast shadows
 int g_specular = 0;  // specular highlights from those lights, 0-3
+std::mutex g_cross_thread_mutex;  // guards g_spots_prev, g_pglow_out, g_pglow_ms across render/game threads
+std::atomic<bool> g_scene_dirty{false};
 std::vector<Light> g_spots_prev;  // last frame's g_spots (debug view)
 std::vector<Light> g_frame_lights, g_spots;  // g_spots: spotlights found while drawing this frame
 bool g_gbuf_ok = false;  // the second color target can be used
@@ -2223,6 +2227,7 @@ std::vector<Light> g_glow_lights;  // from the last frame, world space
 void glow_frame_end() {
     if (g_pglow_w > 1e-5f) {
         float mx = std::max(g_pglow_col[0], std::max(g_pglow_col[1], g_pglow_col[2]));
+        std::lock_guard lk(g_cross_thread_mutex);
         for (int r = 0; r < 3; r++) g_pglow_out[r] = g_pglow_pos[r] / g_pglow_w, g_pglow_out[3 + r] = mx > 1e-5f ? g_pglow_col[r] / mx : 1.0f;
         g_pglow_ms = SDL_GetTicks();
     }
@@ -2858,6 +2863,7 @@ void draw_still_scene(const Tile& t) {
 }
 
 void assign_tiles() {
+    if (!g_gbuf_ok || !p_glClearBufferfv || !g_atlas_fbo || !g_satlas_fbo) return;
     const u32 now = SDL_GetTicks();
     auto dist = [](const float* a, const float* b) { return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2])); };
 
@@ -3440,13 +3446,17 @@ int set_fog_veil(int on) {
 }
 void set_vignette(bool on) { g_vignette = on; }
 bool vignette() { return g_vignette; }
-const std::vector<Light>& debug_frame_lights() { return g_spots_prev; }
+std::vector<Light> debug_frame_lights() {
+    std::lock_guard lk(g_cross_thread_mutex);
+    return g_spots_prev;
+}
 void set_tile_debug(int tile) { g_tile_debug = tile; }
 void set_vertex_color_debug(int mode) { g_vc_debug = std::clamp(mode, 0, 2); }
 int vertex_color_debug() { return g_vc_debug; }
 void set_glow_gain(float v) { g_glow_gain = std::clamp(v, 0.0f, 4.0f); }
 void set_env_shadows(bool on) { g_env_shadows = on; }
 bool player_glow(float pos[3], float color[3]) {
+    std::lock_guard lk(g_cross_thread_mutex);
     if (!g_pglow_ms || SDL_GetTicks() - g_pglow_ms > 80) return false;
     std::memcpy(pos, g_pglow_out, 12);
     std::memcpy(color, g_pglow_out + 3, 12);
@@ -3459,7 +3469,8 @@ void probe(float x, float y, float z, float r) {
     g_probe_on = r > 0;
     for (int t = 0; t < kTiles; t++)
         if (g_tiles[t].used) LOGI("probe map %d: light at %.2f %.2f %.2f facing %.2f %.2f %.2f rotating %d", t + 1, g_tiles[t].pos[0], g_tiles[t].pos[1], g_tiles[t].pos[2], g_tiles[t].dir[0], g_tiles[t].dir[1], g_tiles[t].dir[2], g_tiles[t].rotating);
-    for (const Light& l : g_spots_prev) {
+    std::vector<Light> spots = debug_frame_lights();
+    for (const Light& l : spots) {
         float d = std::hypot(l.wpos[0] - x, l.wpos[2] - z);
         if (d < r + 3.0f) LOGI("probe light: at %.2f %.2f %.2f radius %.1f tile %d spot %d glow %d colour %.2f %.2f %.2f (lockdown %.2f, tint seen %d)", l.wpos[0], l.wpos[1], l.wpos[2], l.radius, l.tile, l.cos_outer > 0, l.glow, l.color[0], l.color[1], l.color[2], lights::lockdown_level(), g_tint_active);
     }
@@ -3467,19 +3478,33 @@ void probe(float x, float y, float z, float r) {
 void set_lshade(float v) { g_lshade = std::clamp(v, 0.0f, 1.0f); }
 void set_fanshade(float v) { g_fanshade = std::clamp(v, 0.0f, 2.0f); }  // (2 = debug view)
 bool light_shadows() { return g_light_shadows; }
-void scene_changed() {
+namespace {
+void apply_scene_change() {
     g_sverts.clear();
     g_sidx.clear();
     g_smesh.clear();
     g_skey.clear();
     g_schanges.clear();
+    g_supload = false;
     g_facing.clear();
     for (Tile& t : g_tiles) t = Tile{};
     for (Tile& k : g_bakes) k = Tile{};
     g_lamps.clear();
     g_lamp_done.clear();
     g_solid.clear();
+    g_casters.clear();
+    g_casters_now.clear();
+    g_glows.clear();
     g_glow_lights.clear();
+    g_spots.clear();
+    g_frame_lights.clear();
+    g_pglow_w = 0;
+    for (int r = 0; r < 3; r++) g_pglow_pos[r] = g_pglow_col[r] = 0;
+    {
+        std::lock_guard lk(g_cross_thread_mutex);
+        g_spots_prev.clear();
+        g_pglow_ms = 0;
+    }
     g_tex_images.clear();
     g_lamp_masks.clear();
     g_gobo_tex = 0;
@@ -3491,6 +3516,8 @@ void scene_changed() {
     g_pending.clear();
     g_seen.clear();
 }
+}  // namespace
+void scene_changed() { g_scene_dirty.store(true, std::memory_order_release); }
 int specular() { return g_specular; }
 void set_ao_tuning(float gain, float radius) { g_ao_gain = gain, g_ao_radius = radius; }
 int ao() { return g_ao; }
@@ -3660,8 +3687,9 @@ void draw_elements(GLenum mode, int count, GLenum type, const void* indices) {
 
 void draw_arrays(GLenum mode, int first, int count) {
     if (count <= 0 || !g_arr[A_VERTEX].enabled || !g_arr[A_VERTEX].data) return;
+    if (count > 65536) count = 65536;
     post_before_draw();
-    g_gbuf_draw = g_shadow_draw = g_mesh_moves = false;
+    g_gbuf_draw = g_veil_draw = g_shadow_draw = g_mesh_moves = false;
     g_idx.resize(size_t(count));
     for (int i = 0; i < count; i++) g_idx[size_t(i)] = u16(i);
     build_vertices(u32(first), u32(count));
@@ -3672,6 +3700,7 @@ void draw_arrays(GLenum mode, int first, int count) {
 }
 
 void begin_frame() {
+    if (g_scene_dirty.exchange(false, std::memory_order_acq_rel)) apply_scene_change();
     g_trace_draws = g_trace_next;
     g_trace_next = false;
     g_seen_world = g_post_done = g_have_world_proj = g_normals_cleared = false;
@@ -3699,7 +3728,10 @@ void begin_frame() {
     g_veil_draws_prev = g_veil_draws;
     g_veil_draws = 0;
     g_veil_depth = false;
-    g_spots_prev = g_spots;
+    {
+        std::lock_guard lk(g_cross_thread_mutex);
+        g_spots_prev = g_spots;
+    }
     glow_frame_end();
     g_spots.clear();
     static int tlog = 0;

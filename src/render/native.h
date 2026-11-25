@@ -119,7 +119,7 @@ struct Light {
     float gm[4] = {0, 0, 0, 0}, guv[2] = {0.5f, 0.5f}, gh = 1;
 };
 // Dev: the lights fixed at the start of the last frame (alarm spotlights, lit strip lights), world space.
-const std::vector<Light>& debug_frame_lights();  // dev: show the reconstructed surface normals
+std::vector<Light> debug_frame_lights();  // dev: thread-safe snapshot of last frame's fixed lights
 void set_ao_tuning(float gain, float radius);  // dev: occlusion gain, radius override (0 = default)
 int ao();
 int bloom();
