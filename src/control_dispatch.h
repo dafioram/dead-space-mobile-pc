@@ -83,6 +83,18 @@ inline DispatchResult resolve_pad_combat(PadCombatFlags f, ActionState s) {
     return DispatchResult::none;
 }
 
+// Aim-hold synchronization between physical RMB/LT state and native weapon state:
+// - While aim is held, once the player returns to normal locomotion (state 0) with the weapon
+//   lowered (e.g. after a 180 quick turn or kinesis release), request a raise-only action.
+// - While aim is released, keep requesting lower until the weapon is down (outside kinesis).
+inline bool should_raise_aim(bool aim_held, bool weapon_raised, int player_state) {
+    return aim_held && !weapon_raised && player_state == 0;
+}
+
+inline bool should_lower_aim(bool aim_held, bool weapon_raised, bool pending_fire, int player_state) {
+    return !aim_held && weapon_raised && !pending_fire && player_state != 0x12;
+}
+
 // Shared owned-gun cycling for mouse wheel and controller D-pad Left / Right.
 // Considers only the four gun slots (0..3); slot 4 (stasis module) is never selectable.
 // Returns the next owned slot in `dir` (-1 previous, +1 next), or -1 when no other gun is owned

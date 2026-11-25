@@ -48,7 +48,7 @@ namespace input {
 namespace {
 
 enum EventKind {
-    EV_MOVE, EV_LOOK, EV_ACTION, EV_THROW_KINESIS, EV_INTERACT, EV_KINESIS, EV_HUD, EV_WEAPON, EV_WEAPON_CYCLE, EV_LOCATOR
+    EV_MOVE, EV_LOOK, EV_ACTION, EV_RAISE_AIM, EV_THROW_KINESIS, EV_INTERACT, EV_KINESIS, EV_HUD, EV_WEAPON, EV_WEAPON_CYCLE, EV_LOCATOR
 };
 struct Event {
     EventKind kind;
@@ -727,6 +727,14 @@ void on_player_update(cpu::Ctx& c) {
             snap_free_look(player);
             send_action(fn_player_event, player, e.a);
             break;
+        case EV_RAISE_AIM:
+            // Raise weapon only if still lowered in normal locomotion (state 0); never fire a shot
+            // or throw a held kinesis object if state changed while queued.
+            if (mem::r32(player + 0x210) == 0 && mem::r8(player + 0x1ed) == 0) {
+                snap_free_look(player);
+                send_action(fn_player_event, player, 6);
+            }
+            break;
         case EV_THROW_KINESIS:
             // Only throw if still in telekinesis state on the game thread so a race after release/throw
             // can never accidentally raise the weapon or fire a shot.
@@ -1175,7 +1183,7 @@ void press_action(int b) {
             float len = std::sqrt(mx * mx + my * my);
             if (len > 0) push({EV_MOVE, 0, mx / len, my / len, 0});
         }
-        if (!st.weapon_raised && !st.holding_kinesis) action(6);  // raise weapon
+        if (!st.weapon_raised && !st.holding_kinesis) push({EV_RAISE_AIM});  // raise weapon (never fires/throws)
         break;
     case B_FIRE:
         g_lmb = true;
@@ -1188,7 +1196,10 @@ void press_action(int b) {
         break;
     case B_RELOAD: action(10); break;
     case B_STASIS: action(11); break;
-    case B_QUICK_TURN: action(8); break;
+    case B_QUICK_TURN:
+        g_pending_fire = 0;
+        action(8);
+        break;
     case B_MELEE: emit_dispatch(resolve_keyboard_melee(st)); break;
     case B_STOMP: emit_dispatch(resolve_keyboard_stomp(st)); break;
     case B_ALT_FIRE: emit_dispatch(resolve_mode_switch(st)); break;  // switch fire mode (raised only)
@@ -1669,10 +1680,20 @@ bool frame(SDL_Window* win) {
         }
     }
 
+    // aim held: re-raise the weapon automatically once back in normal locomotion (e.g. after a
+    // 180 quick turn or kinesis release) if the user kept holding RMB / LT. Uses EV_RAISE_AIM so
+    // it can never fire an accidental shot.
+    static int raise_retry = 0;
+    if (should_raise_aim(g_rmb, g_aiming, g_state)) {
+        if (raise_retry++ % 6 == 0) push({EV_RAISE_AIM});
+    } else {
+        raise_retry = 0;
+    }
+
     // aim released: the game ignores "lower" while a shot is still playing, so keep asking until
     // the weapon is down (not while holding a kinesis object)
     static int lower_retry = 0;
-    if (g_aiming && !g_rmb && g_pending_fire == 0 && g_state != 0x12) {
+    if (should_lower_aim(g_rmb, g_aiming, g_pending_fire > 0, g_state)) {
         if (++lower_retry % 6 == 0) action(9);
     } else {
         lower_retry = 0;

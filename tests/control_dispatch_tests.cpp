@@ -151,6 +151,28 @@ void test_weapon_cycling() {
             "invalid/stasis current slot recovers to an owned gun slot in 0..3");
 }
 
+void test_aim_hold_sync() {
+    // Quick turn (state 2) lowers the weapon; while turning, do not re-raise yet.
+    require(!input::should_raise_aim(true, false, 2), "do not interrupt 180 quick turn while still turning");
+    // Once quick turn finishes (state 0), holding RMB/LT immediately re-raises the weapon.
+    require(input::should_raise_aim(true, false, 0), "holding aim after quick turn re-raises weapon");
+    // Once weapon is already raised, stop requesting raise.
+    require(!input::should_raise_aim(true, true, 0), "already-raised weapon must not request raise again");
+    // If RMB/LT was released during the turn, stay lowered.
+    require(!input::should_raise_aim(false, false, 0), "released aim must not re-raise weapon");
+    // Never request raise during kinesis (0x12), reload (6), stasis (5), grapple (9), etc.
+    for (int busy_state : {2, 3, 4, 5, 6, 9, 10, 11, 0x12}) {
+        require(!input::should_raise_aim(true, false, busy_state),
+                "busy/non-locomotion states must wait until returning to state 0 before re-raising");
+    }
+
+    // Lowering symmetry.
+    require(input::should_lower_aim(false, true, false, 0), "released aim lowers a raised weapon");
+    require(!input::should_lower_aim(true, true, false, 0), "held aim does not lower");
+    require(!input::should_lower_aim(false, true, true, 0), "pending fire delays lowering until shot fires");
+    require(!input::should_lower_aim(false, true, false, 0x12), "do not send lower during kinesis state");
+}
+
 }  // namespace
 
 int main() {
@@ -158,6 +180,7 @@ int main() {
         test_keyboard_dispatch();
         test_controller_dispatch();
         test_weapon_cycling();
+        test_aim_hold_sync();
         std::cout << "Control dispatch and weapon cycling tests passed; no game executed\n";
         return 0;
     } catch (const std::exception& error) {
