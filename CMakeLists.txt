@@ -58,6 +58,7 @@ add_executable(deadspace
     src/subtitle_defaults.cpp
     src/audio_voices.cpp
     src/sound_base_patch.cpp
+    src/unlock_hard.cpp
     src/rig_credits.cpp
     src/rig_credits_layout.cpp
     src/input.cpp

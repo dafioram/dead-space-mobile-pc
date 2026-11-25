@@ -30,6 +30,7 @@
 #include "subtitle_defaults.h"
 #include "audio_voices.h"
 #include "sound_base_patch.h"
+#include "unlock_hard.h"
 
 namespace patches {
 
@@ -1359,6 +1360,7 @@ void install() {
     solver::install_joint_row_clear();
     if (!subtitle_defaults::install()) LOGW("subtitle defaults: unrecognized game code; defaults unchanged");
     if (!audio_voices::install()) LOGW("audio voices: unrecognized game code; voice limit unchanged");
+    if (!unlock_hard::install()) LOGW("unlock-hard: unrecognized game code; Hard difficulty unchanged");
     g_rig_credits_ready = rig_credits::install();
     // GameObjectPlayable::onUpdate shows the navigation line by itself after the player has been idle for
     // a while (which also tilts the camera down). Skip that: the line only appears when asked for.

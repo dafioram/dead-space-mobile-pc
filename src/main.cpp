@@ -28,6 +28,7 @@
 #include "cpu.h"
 #include "elf_loader.h"
 #include "game_patches.h"
+#include "unlock_hard.h"
 #include "console.h"
 #include "devmode.h"
 #include "input.h"
@@ -241,6 +242,7 @@ int main(int argc, char** argv) {
         else if (a == "--dump-audio") jni::audio_dump(next().c_str());
         else if (a == "--data") data = next();
         else if (a == "--no-save") no_save = true;
+        else if (a == "--unlock-hard") unlock_hard::set_requested(true);
         else if (a == "--native-prep") {
             const std::string mode = next();
             if (mode == "optimized") optimized_native_prep = true;
