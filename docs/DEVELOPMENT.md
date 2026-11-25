@@ -186,8 +186,9 @@ write-permission job. The Windows installer stays manual; see [RELEASING.md](REL
 - `src/render/native.*`, `src/lights.*`: the new renderer: lighting, shadow maps, post-processing
 - `src/texpack.*`: texture packs
 - `src/input.*`, `src/menu_nav.*`: keyboard, mouse and controller; menu navigation
-- `src/sbin.*`, `src/game_patches.*`: patches the game's menu data (SBIN databases): the extra Options
-  pages, keyboard / controller wording, the main menu's Quit button
+- `src/sbin.*`, `src/sound_base_patch.*`, `src/game_patches.*`: patches the game's menu data (SBIN databases: the
+  extra Options pages, keyboard / controller wording, the main menu's Quit button) and repairs broken dialogue chains
+  in `published/sounds/soundBase.sb` (see [AUDIO_SUBTITLES.md](AUDIO_SUBTITLES.md))
 - `src/settings.*`: port settings (`userdata/port_settings.ini`)
 - `tools/`: dex disassembler, ARM disassembly helpers, texture/screenshot utilities
   (`tools/disas.py [--lib LIB.so] [-s] SYMBOL` disassembles a function of the game library, `-s` names the
@@ -197,6 +198,9 @@ write-permission job. The Windows installer stays manual; see [RELEASING.md](REL
 - `tools/sbin.py`: reads the game's SBIN databases (layouts and the save files): `dump`, `diff`, `verify`, `census`
   and an in-place `set`; the format is in [SAVE_FORMAT.md](SAVE_FORMAT.md). `tests/test_sbin.py` builds its own
   databases, so no save or asset is needed
+- `tools/audio_subtitles.py`: inspects and audits `soundBase.sb`, `subtitles.sb`, and `.sps`/`.sph` audio, exports
+  EA XAS1 `.sps` clips or full chains to `.wav`/`.mp3`, and exports subtitles to `.srt`/`.txt` (see
+  [AUDIO_SUBTITLES.md](AUDIO_SUBTITLES.md))
 
 ## Commit attribution
 
