@@ -26,6 +26,7 @@
 #include "sbin.h"
 #include "settings.h"
 #include "solver_init.h"
+#include "subtitle_defaults.h"
 
 namespace patches {
 
@@ -1335,6 +1336,7 @@ std::shared_ptr<const std::vector<u8>> asset(const std::string& path) {
 
 void install() {
     solver::install_joint_row_clear();
+    if (!subtitle_defaults::install()) LOGW("subtitle defaults: unrecognized game code; defaults unchanged");
     g_rig_credits_ready = rig_credits::install();
     // GameObjectPlayable::onUpdate shows the navigation line by itself after the player has been idle for
     // a while (which also tilts the camera down). Skip that: the line only appears when asked for.
