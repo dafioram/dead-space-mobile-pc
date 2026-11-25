@@ -1,9 +1,13 @@
 #include "telekinesis_release.h"
+#include "interact_selection.h"
+#include "outcome.h"
+#include "objects.h"
 #include "elf_loader.h"
 
 #include <iostream>
 #include <stdexcept>
 #include <unordered_map>
+#include <vector>
 
 namespace {
 
@@ -174,6 +178,91 @@ void run_tests() {
     require(telekinesis::query_release(player).action == A::release, "restored signatures work again");
 }
 
+void run_selection_split_tests() {
+    struct Cand {
+        int id;
+        objs::Box local_zone;
+        bool selectable;
+        bool telekinesis_target;
+        bool in_hitbox;
+        interact::Outcome outcome;
+    };
+
+    // nearby_selectable must exclude every telekinesisable object, even when interactive/interactive_plus is true.
+    require(interact::nearby_selectable(false, false, true, false, false), "normal interactive object is selectable");
+    require(interact::nearby_selectable(false, false, false, true, false), "interactive_plus pickup/door is selectable");
+    require(!interact::nearby_selectable(false, false, true, true, true),
+            "telekinesisable object must never be selectable for nearby interact");
+    require(!interact::nearby_selectable(true, false, true, true, false), "hidden object is not selectable");
+    require(!interact::nearby_selectable(false, true, true, true, false), "skipped class is not selectable");
+
+    auto make_box = [](float cx, float cy, float cz) -> objs::Box {
+        return {{cx - 0.25f, cy - 0.25f, cz - 0.25f}, {cx + 0.25f, cy + 0.25f, cz + 0.25f}};
+    };
+
+    // Door + nearby crate in hitbox: E gets only the door, F gets only the crate.
+    {
+        std::vector<Cand> cands{
+            {1, make_box(0.0f, 0.5f, 1.0f), false, true, true, interact::Outcome::unverified},   // crate (closer)
+            {2, make_box(0.3f, 0.5f, 1.2f), true, false, true, interact::Outcome::acts},         // door
+        };
+        const Cand* use_pick = interact::best_selectable(cands);
+        const Cand* tk_pick = interact::best_kinesis(cands);
+        require(use_pick && use_pick->id == 2, "E must pick the door, never the closer crate");
+        require(tk_pick && tk_pick->id == 1, "F must pick the crate, never the door");
+    }
+
+    // Only a crate in reach: E does nothing; F grabs it.
+    {
+        std::vector<Cand> cands{
+            {1, make_box(0.0f, 0.5f, 1.0f), false, true, true, interact::Outcome::unverified},
+        };
+        require(interact::best_selectable(cands) == nullptr, "E must not grab a lone nearby crate");
+        const Cand* tk_pick = interact::best_kinesis(cands);
+        require(tk_pick && tk_pick->id == 1, "F must grab the nearby crate");
+    }
+
+    // Only a door/terminal in reach and in sight cone: E uses it; F does nothing.
+    {
+        std::vector<Cand> cands{
+            {2, make_box(0.0f, 0.5f, 1.2f), true, false, true, interact::Outcome::acts},
+        };
+        const Cand* use_pick = interact::best_selectable(cands);
+        require(use_pick && use_pick->id == 2, "E uses the nearby door");
+        require(interact::best_kinesis(cands) == nullptr, "F must never operate a door/terminal");
+    }
+
+    // Sight cone preference vs close-range hitbox fallback:
+    // Aimed canister at 5m beats an off-center limb at the player's feet.
+    {
+        std::vector<Cand> cands{
+            {10, make_box(0.5f, -0.5f, 0.6f), false, true, true, interact::Outcome::unverified},   // off-center floor limb
+            {20, make_box(0.0f, 0.5f, 5.0f), false, true, false, interact::Outcome::unverified},   // aimed canister
+        };
+        const Cand* tk_pick = interact::best_kinesis(cands);
+        require(tk_pick && tk_pick->id == 20, "F prefers aimed target in sight cone over off-center floor limb");
+    }
+
+    // Close-range off-center crate in hitbox with nothing in sight cone: F falls back to the close crate.
+    {
+        std::vector<Cand> cands{
+            {10, make_box(0.5f, 0.5f, 0.6f), false, true, true, interact::Outcome::unverified},
+        };
+        const Cand* tk_pick = interact::best_kinesis(cands);
+        require(tk_pick && tk_pick->id == 10, "F falls back to close-range telekinesis object in hitbox");
+    }
+
+    // Distant target out of range (>9m), behind player (z<=0), or outside vertical limit (>=3m) -> none.
+    {
+        std::vector<Cand> cands{
+            {1, make_box(0.0f, 0.5f, 10.5f), false, true, false, interact::Outcome::unverified},
+            {2, make_box(0.0f, 0.5f, -2.0f), false, true, false, interact::Outcome::unverified},
+            {3, make_box(0.0f, 4.0f, 3.0f), false, true, false, interact::Outcome::unverified},
+        };
+        require(interact::best_kinesis(cands) == nullptr, "out-of-range/behind/too-high targets are ignored by F");
+    }
+}
+
 }  // namespace
 
 namespace elf {
@@ -186,7 +275,8 @@ u32 find(const std::string& name) {
 int main() {
     try {
         run_tests();
-        std::cout << "Telekinesis release query and signature tests passed; no game executed\n";
+        run_selection_split_tests();
+        std::cout << "Telekinesis release and interact/kinesis split tests passed; no game executed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

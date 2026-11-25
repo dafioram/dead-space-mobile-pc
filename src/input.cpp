@@ -46,7 +46,7 @@ namespace input {
 
 namespace {
 
-enum EventKind { EV_MOVE, EV_LOOK, EV_ACTION, EV_INTERACT, EV_HUD, EV_WEAPON, EV_LOCATOR };
+enum EventKind { EV_MOVE, EV_LOOK, EV_ACTION, EV_INTERACT, EV_KINESIS, EV_HUD, EV_WEAPON, EV_LOCATOR };
 struct Event {
     EventKind kind;
     int a = 0;            // action id / weapon index
@@ -135,7 +135,7 @@ bool g_mouse_btn[8] = {};
 
 // Rebindable actions, in menu order
 enum Bind {
-    B_FORWARD, B_BACK, B_LEFT, B_RIGHT, B_RUN, B_AIM, B_FIRE, B_INTERACT, B_RELOAD, B_STASIS,
+    B_FORWARD, B_BACK, B_LEFT, B_RIGHT, B_RUN, B_AIM, B_FIRE, B_INTERACT, B_KINESIS, B_RELOAD, B_STASIS,
     B_QUICK_TURN, B_MELEE, B_STOMP, B_ALT_FIRE, B_JUMP, B_RIG, B_LOCATOR, B_COUNT
 };
 const Binding kBindings[B_COUNT] = {
@@ -146,14 +146,15 @@ const Binding kBindings[B_COUNT] = {
     {"run", "Run", SDL_SCANCODE_LSHIFT},
     {"aim", "Aim", kMouseCode + SDL_BUTTON_RIGHT},
     {"fire", "Fire / Melee", kMouseCode + SDL_BUTTON_LEFT},
-    {"interact", "Interact / Kinesis", SDL_SCANCODE_E},
+    {"interact", "Interact", SDL_SCANCODE_E},
+    {"kinesis", "Kinesis", SDL_SCANCODE_F},
     {"reload", "Reload", SDL_SCANCODE_R},
-    {"stasis", "Stasis", SDL_SCANCODE_F},
+    {"stasis", "Stasis", SDL_SCANCODE_C},
     {"quick_turn", "Quick Turn", SDL_SCANCODE_Q},
     {"melee", "Melee", SDL_SCANCODE_V},
-    {"stomp", "Stomp", SDL_SCANCODE_C},
+    {"stomp", "Stomp", SDL_SCANCODE_SPACE},
     {"alt_fire", "Alt Fire", SDL_SCANCODE_X},
-    {"jump", "Zero-G Jump", SDL_SCANCODE_SPACE},
+    {"jump", "Zero-G Jump", SDL_SCANCODE_LCTRL},
     {"rig", "RIG / Weapons", SDL_SCANCODE_TAB},
     {"locator", "Navigation Line", SDL_SCANCODE_B},
 };
@@ -176,8 +177,8 @@ int code_from_name(const std::string& n) {
     SDL_Scancode sc = SDL_GetScancodeFromName(n.c_str());
     return sc == SDL_SCANCODE_UNKNOWN ? 0 : int(sc);
 }
-// ---- controller bindings (defaults follow the Dead Space remake's layout)
-enum PadBind { P_RUN, P_RUN_TOGGLE, P_AIM, P_FIRE, P_INTERACT, P_RELOAD, P_STASIS, P_QUICK_TURN, P_STOMP, P_ALT_FIRE, P_JUMP, P_RIG, P_LOCATOR, P_COUNT };
+// ---- controller bindings (defaults follow the planned modern layout)
+enum PadBind { P_RUN, P_RUN_TOGGLE, P_AIM, P_FIRE, P_INTERACT, P_KINESIS, P_RELOAD, P_STASIS, P_QUICK_TURN, P_STOMP, P_ALT_FIRE, P_JUMP, P_RIG, P_LOCATOR, P_COUNT };
 constexpr int kLT = kPadCode + 100, kRT = kPadCode + 101;
 struct PadDef {
     Binding b;
@@ -188,15 +189,16 @@ const PadDef kPad[P_COUNT] = {
     {{"run_toggle", "Run (click)", kPadCode + SDL_CONTROLLER_BUTTON_LEFTSTICK}, B_RUN},
     {{"aim", "Aim", kLT}, B_AIM},
     {{"fire", "Fire / Melee", kRT}, B_FIRE},
-    {{"interact", "Interact / Kinesis", kPadCode + SDL_CONTROLLER_BUTTON_A}, B_INTERACT},
+    {{"interact", "Interact", kPadCode + SDL_CONTROLLER_BUTTON_A}, B_INTERACT},
+    {{"kinesis", "Kinesis", kPadCode + SDL_CONTROLLER_BUTTON_B}, B_KINESIS},
     {{"reload", "Reload", kPadCode + SDL_CONTROLLER_BUTTON_X}, B_RELOAD},
     {{"stasis", "Stasis", kPadCode + SDL_CONTROLLER_BUTTON_Y}, B_STASIS},
-    {{"quick_turn", "Quick Turn", kPadCode + SDL_CONTROLLER_BUTTON_B}, B_QUICK_TURN},
+    {{"quick_turn", "Quick Turn", kPadCode + SDL_CONTROLLER_BUTTON_DPAD_DOWN}, B_QUICK_TURN},
     {{"stomp", "Stomp (not aiming)", kPadCode + SDL_CONTROLLER_BUTTON_RIGHTSHOULDER}, B_STOMP},
     {{"alt_fire", "Alt Fire (aiming)", kPadCode + SDL_CONTROLLER_BUTTON_RIGHTSHOULDER}, B_ALT_FIRE},
-    {{"jump", "Zero-G Jump (aiming)", kPadCode + SDL_CONTROLLER_BUTTON_B}, B_JUMP},
+    {{"jump", "Zero-G Jump", kPadCode + SDL_CONTROLLER_BUTTON_RIGHTSTICK}, B_JUMP},
     {{"rig", "RIG / Weapons", kPadCode + SDL_CONTROLLER_BUTTON_BACK}, B_RIG},
-    {{"locator", "Navigation Line", kPadCode + SDL_CONTROLLER_BUTTON_RIGHTSTICK}, B_LOCATOR},
+    {{"locator", "Navigation Line", kPadCode + SDL_CONTROLLER_BUTTON_DPAD_UP}, B_LOCATOR},
 };
 int g_padbind[P_COUNT];
 std::atomic<float> g_health_frac{1.0f};  // player health / maximum
@@ -727,6 +729,13 @@ void on_player_update(cpu::Ctx& c) {
             interact::use(player, g_world, look, g_trace || dev::active());
             break;
         }
+        case EV_KINESIS: {
+            float look = g_free_yaw;
+            if (grab_state(player) != 0) break;  // struggle/swarm owns input
+            snap_free_look(player);
+            interact::kinesis(player, g_world, look, g_trace || dev::active());
+            break;
+        }
         case EV_HUD:
             if (hud) hud_button(hud, e.id);
             break;
@@ -1133,11 +1142,12 @@ void press_action(int b) {
         }
         break;
     case B_INTERACT: push({EV_INTERACT}); break;
+    case B_KINESIS: push({EV_KINESIS}); break;
     case B_RELOAD: action(10); break;
     case B_STASIS: action(11); break;
     case B_QUICK_TURN: action(8); break;
     case B_MELEE: action(14); break;
-    case B_STOMP: action(13); break;
+    case B_STOMP: if (!g_aiming && !g_rmb) action(13); break;
     case B_ALT_FIRE: action(7); break;  // switch fire mode
     case B_JUMP: action(12); break;     // zero-G jump
     case B_RIG: push({EV_HUD, 0, 0, 0, 0, "BTN_RIG"}); break;
@@ -1271,7 +1281,7 @@ void pad_button(int code, bool down) {
         }
         // one button can carry two actions: which one depends on whether the weapon is up
         if (p == P_RUN_TOGGLE) g_run_toggle = !g_run_toggle;
-        if (act == B_RUN || ((act == B_ALT_FIRE || act == B_JUMP) && !aiming) || ((act == B_STOMP || act == B_QUICK_TURN) && aiming)) continue;
+        if (act == B_RUN || (act == B_ALT_FIRE && !aiming) || (act == B_STOMP && aiming)) continue;
         press_action(act);
     }
     if (bound || !down) return;

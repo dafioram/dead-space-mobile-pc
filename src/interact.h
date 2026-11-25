@@ -1,9 +1,12 @@
-// "Use" button: interacts with the object in front of the player (game thread only).
+// "Use" and "Kinesis" buttons (game thread only).
 //
-// A hitbox in front of the player (pointing where the camera looks, flattened to horizontal) is
-// tested against each usable object's interaction zone (its bounding box, padded to a minimum
-// size, adjusted per class). The overlapping object nearest the line of sight is used; nothing
-// else. With nothing in reach, kinesis targets further along the line of sight are grabbed.
+// Nearby interact (E / A): a hitbox in front of the player (pointing where the camera looks,
+// flattened to horizontal) is tested against each non-telekinesis usable object's interaction zone
+// (its bounding box, padded to a minimum size, adjusted per class). The overlapping object nearest
+// the line of sight is used; nothing else.
+//
+// Kinesis (F / B): releases the currently held object if carrying one; otherwise grabs the best
+// telekinesis target along the line of sight (or overlapping the nearby hitbox as fallback).
 #pragma once
 #include <string>
 
@@ -13,9 +16,12 @@
 namespace interact {
 
 // look_yaw: extra rotation of the view relative to the player's facing (free look orbit).
+// Nearby non-telekinesis interaction only (doors, pickups, lockers, terminals, benches, stores...).
 // Returns true if something was used. report: log every candidate (F9 / dev "interact").
 bool use(u32 player, u32 world, float look_yaw, bool report);
-// Same selection without acting; returns a description of what E would pick.
+// Kinesis grab / non-throw release only; never operates nearby non-telekinesis objects.
+bool kinesis(u32 player, u32 world, float look_yaw, bool report);
+// Same selection without acting; returns a description of what E and F would pick.
 std::string preview(u32 player, u32 world, float look_yaw);
 
 // Save repair (call about twice a second, game thread): a control panel saved as already used
