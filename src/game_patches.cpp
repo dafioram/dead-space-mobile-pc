@@ -474,7 +474,7 @@ bool patch_strings(sbin::Database& db, const Lang& lang) {
                 {"TUTORIAL_STASIS_TEXT", "While aiming, press " + key("stasis") + " to fire a stasis blast at the door."},
                 {"TUTORIAL_KINESIS_TEXT", "Press " + key("kinesis") + " to grab an object with kinesis. Press " + key("kinesis") + " again to drop it, or " + fire + " to launch it."},
                 {"TUTORIAL_LOCATOR_TEXT", "Press " + key("locator") + " to access your locator."},
-                {"TUTORIAL_WEAPON_SELECT_TEXT", std::string(pad ? "Use the D-pad" : "Press 1-4 or use the mouse wheel") + " to select a weapon. " + rig + " opens the RIG."},
+                {"TUTORIAL_WEAPON_SELECT_TEXT", std::string(pad ? "Use " + key("weapon_prev") + " / " + key("weapon_next") : "Press 1-4 or use the mouse wheel") + " to select a weapon. " + rig + " opens the RIG."},
                 {"TUTORIAL_ALT_FIRE_TEXT", "Outside Zero-G, aim and press " + alt + " to switch fire modes."},
                 {"TUTORIAL_ALT_FIRE_PC_TEXT", "Outside Zero-G, aim and press " + alt + " to switch fire modes."},
                 {"TUTORIAL_TILT_BUTTON", "Outside Zero-G, aim and press " + alt + " to switch fire modes."},
@@ -495,7 +495,7 @@ bool patch_strings(sbin::Database& db, const Lang& lang) {
                 {"LOADING_TIP_14", look + " to steer the Corer's secondary fire beam attack."},
                 {"LOADING_TIP_15", "When using the Ripper's secondary fire, press " + fire + " to fire a powerful high velocity saw blade."},
                 {"LOADING_TIP_16", "Press " + key("stasis") + " while aiming to fire a stasis blast. Stasis slows down enemies dramatically for a short period of time."},
-                {"LOADING_TIP_17", std::string(pad ? "Use the D-pad" : "Press 1-4 or use the mouse wheel") + " to select a weapon."},
+                {"LOADING_TIP_17", std::string(pad ? "Use " + key("weapon_prev") + " / " + key("weapon_next") : "Press 1-4 or use the mouse wheel") + " to select a weapon."},
                 {"LOADING_TIP_18", "In Zero-G, aim at a walkable surface and press " + key("jump") + " to jump."},
             };
             int changed = 0;
