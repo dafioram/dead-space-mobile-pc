@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <mutex>
@@ -28,6 +29,7 @@
 #include "solver_init.h"
 #include "subtitle_defaults.h"
 #include "audio_voices.h"
+#include "sound_base_patch.h"
 
 namespace patches {
 
@@ -1316,21 +1318,39 @@ std::shared_ptr<const std::vector<u8>> asset(const std::string& path) {
     std::string p = path;
     while (!p.empty() && p[0] == '/') p.erase(0, 1);
     bool layouts = p == "published/layoutdata/layouts.xml.sb";
+    bool sound_base_file = p == "published/sounds/soundBase.sb";
     const Lang* lang = nullptr;
     for (auto& l : kLangs)
         if (p == std::string("published/stringdata/") + l.dir + "/deadspace.bin") lang = &l;
-    if (!layouts && !lang) return nullptr;
+    if (!layouts && !sound_base_file && !lang) return nullptr;
 
     std::lock_guard lk(g_asset_lock);
     auto it = g_assets.find(p);
     if (it != g_assets.end()) return it->second;
     std::shared_ptr<const std::vector<u8>> result;
-    sbin::Database db;
-    if (db.parse(read_file(hle::g_assets_dir + "/" + p))) {
-        bool ok = layouts ? patch_layouts(db) : patch_strings(db, *lang);
-        if (ok) result = std::make_shared<const std::vector<u8>>(db.serialize());
+    if (sound_base_file) {
+        std::vector<sound_base::Record> records;
+        if (sound_base::parse(read_file(hle::g_assets_dir + "/" + p), records)) {
+            auto exists = [](const std::string& rel) {
+                std::error_code ec;
+                return std::filesystem::is_regular_file(host_file::path(hle::g_assets_dir + "/" + rel), ec);
+            };
+            auto r = sound_base::patch_dialogue_chains(records, exists);
+            if (r.modified) {
+                result = std::make_shared<const std::vector<u8>>(sound_base::serialize(records));
+                LOGI("soundBase: repaired %u dialogue chain(s), added %u orphan VO entry(s)",
+                     unsigned(r.chains_linked), unsigned(r.records_added));
+            }
+        }
+        if (!result) LOGW("could not patch %s; serving the original", p.c_str());
+    } else {
+        sbin::Database db;
+        if (db.parse(read_file(hle::g_assets_dir + "/" + p))) {
+            bool ok = layouts ? patch_layouts(db) : patch_strings(db, *lang);
+            if (ok) result = std::make_shared<const std::vector<u8>>(db.serialize());
+        }
+        if (!result) LOGW("could not patch %s; serving the original", p.c_str());
     }
-    if (!result) LOGW("could not patch %s; serving the original", p.c_str());
     g_assets[p] = result;
     return result;
 }
