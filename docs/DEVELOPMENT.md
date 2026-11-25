@@ -193,7 +193,11 @@ write-permission job. The Windows installer stays manual; see [RELEASING.md](REL
 - `tools/`: dex disassembler, ARM disassembly helpers, texture/screenshot utilities
   (`tools/disas.py [--lib LIB.so] [-s] SYMBOL` disassembles a function of the game library, `-s` names the
   targets of its calls, and `--grep REGEX` lists symbols; use it to check object layouts before the port relies
-  on them. It needs `pip install capstone` and binutils' `readelf`/`c++filt`)
+  on them. It reads the ELF file itself and needs only `pip install capstone`; binutils' `c++filt` is optional and
+  only makes `-s` output readable)
+- `tools/sbin.py`: reads the game's SBIN databases (layouts and the save files): `dump`, `diff`, `verify`, `census`
+  and an in-place `set`; the format is in [SAVE_FORMAT.md](SAVE_FORMAT.md). `tests/test_sbin.py` builds its own
+  databases, so no save or asset is needed
 - `tools/audio_subtitles.py`: inspects and audits `soundBase.sb`, `subtitles.sb`, and `.sps`/`.sph` audio, exports
   EA XAS1 `.sps` clips or full chains to `.wav`/`.mp3`, and exports subtitles to `.srt`/`.txt` (see
   [AUDIO_SUBTITLES.md](AUDIO_SUBTITLES.md))
