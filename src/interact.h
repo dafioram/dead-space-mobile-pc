@@ -16,13 +16,15 @@
 namespace interact {
 
 // look_yaw: extra rotation of the view relative to the player's facing (free look orbit).
-// Nearby non-telekinesis interaction only (doors, pickups, lockers, terminals, benches, stores...).
+// When combined_kinesis is false (Modern preset): nearby non-telekinesis interaction only.
+// When combined_kinesis is true (Classic Port preset): nearby objects plus 9 m kinesis fallback
+// (and non-throw release if carrying an object).
 // Returns true if something was used. report: log every candidate (F9 / dev "interact").
-bool use(u32 player, u32 world, float look_yaw, bool report);
+bool use(u32 player, u32 world, float look_yaw, bool report, bool combined_kinesis = false);
 // Kinesis grab / non-throw release only; never operates nearby non-telekinesis objects.
 bool kinesis(u32 player, u32 world, float look_yaw, bool report);
-// Same selection without acting; returns a description of what E and F would pick.
-std::string preview(u32 player, u32 world, float look_yaw);
+// Same selection without acting; returns a description of what E (and F in Modern) would pick.
+std::string preview(u32 player, u32 world, float look_yaw, bool combined_kinesis = false);
 
 // Save repair (call about twice a second, game thread): a control panel saved as already used
 // ("switched") while the current objective still asks for it can never be used again; after the
@@ -30,8 +32,8 @@ std::string preview(u32 player, u32 world, float look_yaw);
 void repair_objective_panel(u32 world);
 
 // Debug view (F10): draws the hitbox (cyan), usable zones nearby (white) and the one E would
-// use (green) over the game. Call once per game frame (game thread) while enabled.
-void draw_debug(u32 player, u32 world, float look_yaw);
+// use (green) over the game (plus F's kinesis pick in amber in Modern). Call once per game frame.
+void draw_debug(u32 player, u32 world, float look_yaw, bool combined_kinesis = false);
 
 // Debug / testing
 struct Approach {
@@ -41,6 +43,6 @@ struct Approach {
 // object faces (its "use" side).
 Approach approach_point(u32 obj, float dist);
 // "Class addr" of what E would use right now, or "" for nothing (no side effects).
-std::string pick_name(u32 player, u32 world, float look_yaw);
+std::string pick_name(u32 player, u32 world, float look_yaw, bool combined_kinesis = false);
 
 }  // namespace interact

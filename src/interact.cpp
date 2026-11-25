@@ -162,7 +162,7 @@ const char* outcome_text(const Cand& c) {
     }
 }
 
-std::vector<Cand> gather(const View& v, u32 world, u32 player_object, bool report) {
+std::vector<Cand> gather(const View& v, u32 world, u32 player_object, bool report, bool combined_kinesis) {
     std::vector<Cand> out;
     Zone player{v, {{-kHalfWidth, kBottom, -kBack}, {kHalfWidth, kTop, kReach}}};
     for (u32 o : objs::world_objects(world)) {
@@ -171,8 +171,11 @@ std::vector<Cand> gather(const View& v, u32 world, u32 player_object, bool repor
         const ClassRule* rule = rule_for(c.cls);
         bool hidden = objs::is_hidden(o);
         c.telekinesis_target = !hidden && objs::is_telekinesisable(o);
-        c.selectable = nearby_selectable(hidden, rule && rule->skip, objs::is_interactive(o),
-                                         objs::is_interactive_plus(o), c.telekinesis_target);
+        c.selectable = combined_kinesis
+                           ? (!hidden && !(rule && rule->skip) &&
+                              (objs::is_interactive(o) || objs::is_interactive_plus(o)))
+                           : nearby_selectable(hidden, rule && rule->skip, objs::is_interactive(o),
+                                               objs::is_interactive_plus(o), c.telekinesis_target);
         if (!c.selectable && !c.telekinesis_target && !report) continue;
         bool found = false;
         for (const auto& zone : zones_of(o, rule)) {
@@ -216,18 +219,35 @@ void report_all(const std::vector<Cand>& cands, const View& v) {
 
 }  // namespace
 
-bool use(u32 player, u32 world, float look_yaw, bool report) {
+bool use(u32 player, u32 world, float look_yaw, bool report, bool combined_kinesis) {
     if (!player || !world) return false;
+    if (combined_kinesis) {
+        if (const auto tk = telekinesis::query_release(player); tk.action != telekinesis::ReleaseAction::none) {
+            if (tk.action == telekinesis::ReleaseAction::release) {
+                const std::string target_cls = objs::class_name(tk.target);
+                cpu::call(tk.abort_fn, {player});
+                emit(report, fmt("E: release telekinesis %s %08x (beam=%u)", target_cls.c_str(), tk.target, tk.beam_state));
+                return true;
+            }
+            emit(report, fmt("E: telekinesis busy (state=%u beam=%u target=%08x); ignoring", tk.tk_state, tk.beam_state, tk.target));
+            return false;
+        }
+    }
     View v = view_of(player, look_yaw);
-    auto cands = gather(v, world, player, report);
+    auto cands = gather(v, world, player, report, combined_kinesis);
     if (report) report_all(cands, v);
     const Cand* c = best_selectable(cands);
+    bool via_kinesis = false;
+    if (!c && combined_kinesis) {
+        c = best_kinesis(cands);
+        via_kinesis = c != nullptr;
+    }
     if (!c) {
-        emit(report, "E: nothing usable in reach");
+        emit(report, combined_kinesis ? "E: nothing in front of the player" : "E: nothing usable in reach");
         return false;
     }
     bool ok = send_use(c->obj);
-    emit(report, fmt("E: use %s %08x -> %s", c->cls.c_str(), c->obj, ok ? "accepted" : "refused"));
+    emit(report, fmt("E: %s %s %08x -> %s", via_kinesis ? "telekinesis" : "use", c->cls.c_str(), c->obj, ok ? "accepted" : "refused"));
     return ok;
 }
 
@@ -244,7 +264,7 @@ bool kinesis(u32 player, u32 world, float look_yaw, bool report) {
         return false;
     }
     View v = view_of(player, look_yaw);
-    auto cands = gather(v, world, player, report);
+    auto cands = gather(v, world, player, report, false);
     if (report) report_all(cands, v);
     const Cand* c = best_kinesis(cands);
     if (!c) {
@@ -269,14 +289,17 @@ void draw_box(u32 world, const Vec3 c[8], unsigned rgba) {
 }
 }  // namespace
 
-void draw_debug(u32 player, u32 world, float look_yaw) {
+void draw_debug(u32 player, u32 world, float look_yaw, bool combined_kinesis) {
     if (!player || !world) return;
     View v = view_of(player, look_yaw);
-    auto cands = gather(v, world, player, false);
+    auto cands = gather(v, world, player, false, combined_kinesis);
     const Cand* best_use = best_selectable(cands);
-    const Cand* best_tk = telekinesis::query_release(player).action == telekinesis::ReleaseAction::none
-                              ? best_kinesis(cands)
-                              : nullptr;
+    const Cand* best_tk = nullptr;
+    if (combined_kinesis) {
+        if (!best_use) best_use = best_kinesis(cands);
+    } else if (telekinesis::query_release(player).action == telekinesis::ReleaseAction::none) {
+        best_tk = best_kinesis(cands);
+    }
     for (auto& c : cands) {
         if (!c.selectable && !c.telekinesis_target) continue;
         unsigned col = &c == best_use ? 0x30ff30ffu
@@ -299,11 +322,12 @@ void draw_debug(u32 player, u32 world, float look_yaw) {
     draw_box(world, corners, 0x30e0ffd0u);
 }
 
-std::string pick_name(u32 player, u32 world, float look_yaw) {
+std::string pick_name(u32 player, u32 world, float look_yaw, bool combined_kinesis) {
     if (!player || !world) return "";
     View v = view_of(player, look_yaw);
-    auto cands = gather(v, world, player, false);
+    auto cands = gather(v, world, player, false, combined_kinesis);
     const Cand* c = best_selectable(cands);
+    if (!c && combined_kinesis) c = best_kinesis(cands);
     return c ? fmt("%s %08x", c->cls.c_str(), c->obj) : "";
 }
 
@@ -386,12 +410,27 @@ void report_encounters(u32 player, u32 world) {
     }
 }
 
-std::string preview(u32 player, u32 world, float look_yaw) {
+std::string preview(u32 player, u32 world, float look_yaw, bool combined_kinesis) {
     if (!player || !world) return "no player";
     report_encounters(player, world);
     View v = view_of(player, look_yaw);
-    auto cands = gather(v, world, player, true);
+    auto cands = gather(v, world, player, true, combined_kinesis);
     report_all(cands, v);
+    if (combined_kinesis) {
+        if (const auto tk = telekinesis::query_release(player); tk.action != telekinesis::ReleaseAction::none) {
+            if (tk.action == telekinesis::ReleaseAction::release)
+                return fmt("E would release telekinesis %s %08x", objs::class_name(tk.target).c_str(), tk.target);
+            return fmt("E would do nothing (telekinesis busy: state=%u beam=%u)", tk.tk_state, tk.beam_state);
+        }
+        const Cand* c = best_selectable(cands);
+        bool via_kinesis = false;
+        if (!c) {
+            c = best_kinesis(cands);
+            via_kinesis = c != nullptr;
+        }
+        return c ? fmt("E would %s %s %08x", via_kinesis ? "telekinesis" : "use", c->cls.c_str(), c->obj)
+                 : "E would do nothing";
+    }
     const Cand* use_c = best_selectable(cands);
     std::string use_desc = use_c ? fmt("E would use %s %08x", use_c->cls.c_str(), use_c->obj) : "E would do nothing";
     std::string tk_desc;

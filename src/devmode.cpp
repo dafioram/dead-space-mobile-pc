@@ -463,10 +463,11 @@ void run(const std::string& line) {
                 auto approach = interact::approach_point(o, dist);
                 objs::teleport(pl, approach.stand);
                 face_point(pl, approach.target);
-                std::string pick = interact::pick_name(pl, input::world(), 0);
+                const bool combined = input::preset() == input::ControlPreset::classic;
+                std::string pick = interact::pick_name(pl, input::world(), 0, combined);
                 bool hit = pick.find(fmt("%08x", o)) != std::string::npos;
                 objs::turn_by(pl, kPi);
-                std::string away = interact::pick_name(pl, input::world(), 0);
+                std::string away = interact::pick_name(pl, input::world(), 0, combined);
                 bool away_hit = away.find(fmt("%08x", o)) != std::string::npos;
                 if (hit) ok++;
                 else if (pick.empty()) none++;
@@ -589,7 +590,10 @@ void run(const std::string& line) {
         else if (which == "hitboxes") debugview::set_hitboxes(on);
         else input::set_interact_debug(on);
     } else if (c == "look") {  // what E would pick (no action)
-        game_job([](u32 pl) { out(interact::preview(pl, input::world(), input::free_look_yaw())); });
+        game_job([](u32 pl) {
+            out(interact::preview(pl, input::world(), input::free_look_yaw(),
+                                  input::preset() == input::ControlPreset::classic));
+        });
     } else if (c == "goto") {
         std::string cls = arg(1);
         int idx = std::stoi(arg(2, "0"));

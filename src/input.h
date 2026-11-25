@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "control_dispatch.h"
+
 namespace input {
 
 void install();          // hooks into the game (call after the library is loaded)
@@ -45,13 +47,16 @@ bool controls_active();
 // Menus and interactive grapple/swarm sequences are excluded.
 bool blocks_gameplay_pointer();
 
-// ---- rebindable controls (used by the Options menu)
-// An input code is an SDL scancode (1..511) or kMouseCode + SDL mouse button.
+// ---- control presets & rebindable controls (used by the Options menu)
+ControlPreset preset();
+void set_preset(ControlPreset p);  // explicit user switch: persists control_preset and applies preset defaults
+
+// An input code is 0 (unbound), an SDL scancode (1..511), or kMouseCode + SDL mouse button.
 constexpr int kMouseCode = 1000;
 struct Binding {
     const char* key;    // port_settings.ini key (bind_<key>) and menu id suffix
     const char* label;  // English menu label
-    int def;            // default code
+    int def;            // default code (Modern preset)
 };
 int binding_count();
 const Binding& binding(int i);
@@ -59,7 +64,8 @@ int binding_code(int i);
 // Assigns a code; an action already using it takes this action's old code (swap).
 void set_binding(int i, int code);
 void reset_bindings();
-std::string code_name(int code);  // "W", "Left Shift", "Mouse Left"...
+std::string code_name(int code);  // canonical name for port_settings.ini: "W", "Left Shift", "A", "Touchpad"...
+std::string display_code_name(int code, PadFamily family);  // family-aware display name: "Cross", "R1", "View"...
 // Every code that can be bound (for building the menu's string table).
 const std::vector<int>& bindable_codes();
 // ---- controller
@@ -70,8 +76,11 @@ constexpr int kPadCode = 2000, kPadBindBase = 100;
 int pad_binding_count();
 void reset_pad_bindings();
 bool using_pad();  // the controller was the last device used (prompts follow it)
-// What to press for an action ("interact", "fire", "melee"...): the bound key, or the bound button.
+PadFamily pad_family();  // active controller family (Xbox / PS4-PS5 / PS3)
+// What to press for an action ("interact", "fire", "melee"...): display name for the active preset/family.
 std::string action_label(const std::string& key, bool pad);
+// Display label for a specific preset and controller family (for pre-built prompt string tables).
+std::string action_label_for(const std::string& key, bool pad, PadFamily family, ControlPreset p);
 // Waits for the next key / mouse button press and binds it to action i (Esc cancels).
 void begin_capture(int i);
 bool capturing();

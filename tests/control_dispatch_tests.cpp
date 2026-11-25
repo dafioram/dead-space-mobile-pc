@@ -173,6 +173,139 @@ void test_aim_hold_sync() {
     require(!input::should_lower_aim(false, true, false, 0x12), "do not send lower during kinesis state");
 }
 
+void test_presets_and_classic_compatibility() {
+    using input::ControlPreset;
+    // Fresh install (no INI on disk) -> Modern.
+    require(input::resolve_initial_preset(false, "") == ControlPreset::modern,
+            "fresh install without port_settings.ini defaults to Modern");
+    // Existing INI without control_preset -> Classic Port (non-destructive upgrade).
+    require(input::resolve_initial_preset(true, "") == ControlPreset::classic,
+            "existing port_settings.ini without control_preset preserves Classic Port");
+    // Explicit saved values always win regardless of file flag.
+    require(input::resolve_initial_preset(true, "modern") == ControlPreset::modern,
+            "explicit modern setting selects Modern");
+    require(input::resolve_initial_preset(false, "classic") == ControlPreset::classic,
+            "explicit classic setting selects Classic Port");
+    require(input::resolve_initial_preset(true, "unknown") == ControlPreset::classic,
+            "unrecognized setting falls back safely for existing INI");
+    require(std::string(input::preset_setting_name(ControlPreset::modern)) == "modern" &&
+                std::string(input::preset_setting_name(ControlPreset::classic)) == "classic",
+            "preset setting names are stable");
+
+    // Classic Port combat semantics remain intact.
+    const PadCombatFlags classic_rt{true, false, false, false};
+    const PadCombatFlags classic_rb{false, true, false, true};
+    require(input::resolve_pad_combat(classic_rt, {false, false, false}, ControlPreset::classic) == DispatchResult::melee,
+            "Classic RT with weapon lowered swings melee");
+    require(input::resolve_pad_combat(classic_rt, {true, true, false}, ControlPreset::classic) == DispatchResult::fire,
+            "Classic RT while aiming fires");
+    require(input::resolve_pad_combat(classic_rt, {false, false, true}, ControlPreset::classic) == DispatchResult::throw_kinesis,
+            "Classic RT while carrying throws");
+    require(input::resolve_pad_combat(classic_rb, {false, false, false}, ControlPreset::classic) == DispatchResult::stomp,
+            "Classic RB with weapon lowered stomps");
+    require(input::resolve_pad_combat(classic_rb, {true, true, false}, ControlPreset::classic) == DispatchResult::alt_fire,
+            "Classic RB while aiming switches fire mode");
+
+    require(input::resolve_keyboard_stomp({true, true, false}, ControlPreset::classic) == DispatchResult::stomp,
+            "Classic keyboard stomp passes straight through");
+    require(input::resolve_keyboard_melee({false, false, true}, ControlPreset::classic) == DispatchResult::melee,
+            "Classic keyboard melee stays melee");
+    require(input::resolve_mode_switch({false, false, false}, ControlPreset::classic) == DispatchResult::alt_fire,
+            "Classic alt-fire passes straight through");
+
+    // Classic vs Modern controller quick-turn / zero-G jump aim filtering.
+    require(!input::pad_quick_turn_allowed(true, ControlPreset::classic) &&
+                input::pad_quick_turn_allowed(false, ControlPreset::classic),
+            "Classic controller quick turn only fires when not aiming");
+    require(input::pad_jump_allowed(true, ControlPreset::classic) &&
+                !input::pad_jump_allowed(false, ControlPreset::classic),
+            "Classic controller zero-G jump requires aiming");
+    require(input::pad_quick_turn_allowed(true, ControlPreset::modern) &&
+                input::pad_quick_turn_allowed(false, ControlPreset::modern),
+            "Modern controller quick turn works aiming or not");
+    require(input::pad_jump_allowed(true, ControlPreset::modern) &&
+                input::pad_jump_allowed(false, ControlPreset::modern),
+            "Modern controller zero-G jump works aiming or not");
+}
+
+void test_playstation_support_and_capabilities() {
+    using input::ControlPreset;
+    using input::PadFamily;
+    constexpr int kBack = 2004;
+    constexpr int kTouchpad = 2020;
+
+    // Family classification from SDL_GameControllerType constants.
+    require(input::classify_pad_family(3) == PadFamily::ps3, "SDL PS3 type classifies as ps3");
+    require(input::classify_pad_family(4) == PadFamily::playstation, "SDL PS4 type classifies as playstation");
+    require(input::classify_pad_family(7) == PadFamily::playstation, "SDL PS5 type classifies as playstation");
+    require(input::classify_pad_family(1) == PadFamily::xbox, "Xbox 360 classifies as xbox");
+    require(input::classify_pad_family(2) == PadFamily::xbox, "Xbox One classifies as xbox");
+    require(input::classify_pad_family(0) == PadFamily::xbox, "Unknown/generic controller classifies as xbox");
+
+    // Default RIG mapping respects preset, family and exposed touchpad capability.
+    require(input::default_rig_pad_code(ControlPreset::modern, PadFamily::playstation, true, kBack, kTouchpad) == kTouchpad,
+            "Modern PS4/PS5 with exposed touchpad defaults RIG to physical Touchpad click");
+    require(input::default_rig_pad_code(ControlPreset::modern, PadFamily::playstation, false, kBack, kTouchpad) == kBack,
+            "Modern PS4/PS5 without exposed touchpad falls back to Back/Share so RIG stays accessible");
+    require(input::default_rig_pad_code(ControlPreset::modern, PadFamily::ps3, false, kBack, kTouchpad) == kBack,
+            "Modern PS3 defaults RIG to Select");
+    require(input::default_rig_pad_code(ControlPreset::modern, PadFamily::xbox, false, kBack, kTouchpad) == kBack,
+            "Modern Xbox defaults RIG to View/Back");
+    require(input::default_rig_pad_code(ControlPreset::classic, PadFamily::playstation, true, kBack, kTouchpad) == kBack,
+            "Classic Port keeps Back/Share default even on PS4/PS5");
+
+    // Runtime effective code fallback for saved Touchpad binding on a controller without touchpad.
+    require(input::effective_pad_code(kTouchpad, kBack, kTouchpad, true) == kTouchpad,
+            "saved Touchpad binding remains Touchpad when controller exposes it");
+    require(input::effective_pad_code(kTouchpad, kBack, kTouchpad, false) == kBack,
+            "saved Touchpad binding falls back to Back when controller lacks touchpad");
+    require(input::effective_pad_code(2002, kBack, kTouchpad, false) == 2002,
+            "non-Touchpad custom binding is preserved untouched");
+
+    // Family-aware button display labels.
+    require(std::string(input::pad_display_name(0, PadFamily::xbox)) == "A" &&
+                std::string(input::pad_display_name(1, PadFamily::xbox)) == "B" &&
+                std::string(input::pad_display_name(4, PadFamily::xbox)) == "View" &&
+                std::string(input::pad_display_name(6, PadFamily::xbox)) == "Menu" &&
+                std::string(input::pad_display_name(9, PadFamily::xbox)) == "LB" &&
+                std::string(input::pad_display_name(10, PadFamily::xbox)) == "RB" &&
+                std::string(input::pad_display_name(100, PadFamily::xbox)) == "LT" &&
+                std::string(input::pad_display_name(101, PadFamily::xbox)) == "RT",
+            "Xbox labels match expected conventions");
+    require(std::string(input::pad_display_name(0, PadFamily::playstation)) == "Cross" &&
+                std::string(input::pad_display_name(1, PadFamily::playstation)) == "Circle" &&
+                std::string(input::pad_display_name(2, PadFamily::playstation)) == "Square" &&
+                std::string(input::pad_display_name(3, PadFamily::playstation)) == "Triangle" &&
+                std::string(input::pad_display_name(4, PadFamily::playstation)) == "Share" &&
+                std::string(input::pad_display_name(6, PadFamily::playstation)) == "Options" &&
+                std::string(input::pad_display_name(9, PadFamily::playstation)) == "L1" &&
+                std::string(input::pad_display_name(10, PadFamily::playstation)) == "R1" &&
+                std::string(input::pad_display_name(20, PadFamily::playstation)) == "Touchpad" &&
+                std::string(input::pad_display_name(100, PadFamily::playstation)) == "L2" &&
+                std::string(input::pad_display_name(101, PadFamily::playstation)) == "R2",
+            "PS4/PS5 labels match PlayStation conventions");
+    require(std::string(input::pad_display_name(0, PadFamily::ps3)) == "Cross" &&
+                std::string(input::pad_display_name(4, PadFamily::ps3)) == "Select" &&
+                std::string(input::pad_display_name(6, PadFamily::ps3)) == "Start",
+            "PS3 uses Cross/Select/Start labels");
+}
+
+void test_run_toggle_policy() {
+    // Toggle stays latched while moving without aiming, clears when stopping or aiming.
+    require(input::update_run_toggle(true, true, false), "run toggle stays latched while moving");
+    require(!input::update_run_toggle(true, false, false), "stopping movement clears run toggle");
+    require(!input::update_run_toggle(true, true, true), "raising aim clears run toggle");
+    require(!input::update_run_toggle(false, true, false), "off toggle stays off");
+
+    // Hold-run OR run-toggle requests sprinting, subject to forward movement and not aiming.
+    require(input::resolve_run_requested(true, false, true, false), "hold-run sprints while moving forward");
+    require(input::resolve_run_requested(false, true, true, false), "run-toggle sprints while moving forward");
+    require(input::resolve_run_requested(true, true, true, false), "both hold and toggle sprint");
+    require(!input::resolve_run_requested(true, true, false, false), "sprinting requires forward movement");
+    require(!input::resolve_run_requested(true, true, true, true), "aiming prevents sprinting");
+    require(!input::resolve_run_requested(false, false, true, false), "neither hold nor toggle walks");
+}
+
 }  // namespace
 
 int main() {
@@ -181,7 +314,10 @@ int main() {
         test_controller_dispatch();
         test_weapon_cycling();
         test_aim_hold_sync();
-        std::cout << "Control dispatch and weapon cycling tests passed; no game executed\n";
+        test_presets_and_classic_compatibility();
+        test_playstation_support_and_capabilities();
+        test_run_toggle_policy();
+        std::cout << "Control dispatch, preset, PlayStation, run toggle and weapon cycling tests passed; no game executed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

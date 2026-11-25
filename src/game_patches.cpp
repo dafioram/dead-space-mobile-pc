@@ -82,13 +82,15 @@ const std::vector<PortRow>& port_rows() {
                                   {"VSYNC", "V-Sync", false, -1, kPageGraphics, 0},
                                   {"FPS_LIMIT", "Frame Rate Limit", false, -1, kPageGraphics, 0},
                                   {"SHOW_FPS", "Show FPS", false, -1, kPageGraphics, 0},
+                                  {"PRESET", "Control Preset", false, -1, kPageControls, 0},
                                   {"MOUSE_SENS", "Mouse Sensitivity", true, -1, kPageControls, 0},
                                   {"SMOOTHING", "Mouse Smoothing", false, -1, kPageControls, 0},
                                   {"FREE_LOOK", "Free Look (Standing)", false, -1, kPageControls, 0}};
         for (int i = 0; i < input::binding_count(); i++)
             r.push_back({"BIND_" + std::to_string(i), input::binding(i).label, false, i, kPageControls, 0});
         r.push_back({"RESET_BINDS", "Reset Controls", false, -1, kPageControls, 0});
-        // controller page: stick sensitivity, one row per remappable button, reset
+        // controller page: preset, stick sensitivity, one row per remappable button, reset
+        r.push_back({"PAD_PRESET", "Control Preset", false, -1, kPageController, 0});
         r.push_back({"PAD_SENS", "Stick Sensitivity", true, -1, kPageController, 0});
         for (int i = 0; i < input::pad_binding_count(); i++)
             r.push_back({"PADBIND_" + std::to_string(i), input::binding(input::kPadBindBase + i).label, false, input::kPadBindBase + i, kPageController, 0});
@@ -113,7 +115,20 @@ const char* page_title(int page) {
     static const char* t[] = {"", "General", "Game", "Camera", "Graphics", "Controls", "Controller"};
     return page >= 1 && page <= 6 ? t[page] : "";
 }
-std::string key_text_id(int code) { return "PORT_KEY_" + std::to_string(code); }
+std::string key_text_id(int code, input::PadFamily family) {
+    if (code <= 0) return "PORT_DASH";
+    if (code < input::kPadCode) return "PORT_KEY_" + std::to_string(code);
+    if (family == input::PadFamily::playstation) return "PORT_KEY_PS_" + std::to_string(code);
+    if (family == input::PadFamily::ps3) return "PORT_KEY_PS3_" + std::to_string(code);
+    return "PORT_KEY_XBOX_" + std::to_string(code);
+}
+std::string prompt_suffix(input::ControlPreset preset, bool pad, input::PadFamily family) {
+    std::string s = preset == input::ControlPreset::modern ? "_MOD_" : "_CLS_";
+    if (!pad) return s + "KB";
+    if (family == input::PadFamily::playstation) return s + "PS";
+    if (family == input::PadFamily::ps3) return s + "PS3";
+    return s + "XBOX";
+}
 
 // Mouse sensitivity slider: 0..1 maps linearly to 10%..300%
 constexpr int kSensMin = 10, kSensMax = 300;
@@ -444,76 +459,117 @@ bool patch_strings(sbin::Database& db, const Lang& lang) {
             put<u16>(&e[size_t(o_text)], db.add_string(text));
             d.insert(d.end(), e.begin(), e.end());
         };
-        // English: the game's touch instructions reworded for keyboard and mouse, naming the keys bound
-        // when the game starts (a rebound key shows after a restart)
-        if (std::string(lang.dir) == "en-us")
-        for (int pad = 0; pad < 2; pad++) {
-            auto key = [pad](const char* action) { return input::action_label(action, pad != 0); };
-            const std::string fwd = key("move_forward"), back = key("move_back"), left = key("move_left"), right = key("move_right");
-            std::string move = fwd.size() == 1 && back.size() == 1 && left.size() == 1 && right.size() == 1 ? fwd + left + back + right
-                                                                                                                 : fwd + ", " + left + ", " + back + ", " + right;
-            if (pad) move = "the Left Stick";
-            const std::string look = pad ? "Use the Right Stick" : "Move the mouse";
-            const std::string aim = key("aim"), fire = key("fire"), use = key("interact"), alt = key("alt_fire"), rig = key("rig");
-            const std::pair<const char*, std::string> texts[] = {
-                {"TAP_TO_CONTINUE", pad ? "Press A to continue" : "Press any key to continue"},
-                // (the same words label the plasma saw prompt and the grab prompts: the melee key does both)
-                {"SWIPE", "Press " + key("melee")},
-                {"TAP", "Tap " + key("melee")},
-                {"LOADING_TIP_06", "Tap " + use + " rapidly if a Swarm attaches to you to kill them."},
-                {"SWIPE_HINT", pad ? "D-pad Left / Right for more hints" : "Left / Right arrow keys for more hints"},
-                {"TUTORIAL_MOVE_TEXT", "Use " + move + " to walk and strafe. Hold " + key("run") + " to run."},
-                {"TUTORIAL_LOOK_TEXT", look + " to look around."},
-                {"TUTORIAL_AIM_TEXT", "Hold " + aim + " to raise your weapon. " + look + " to aim at the power box. Press " + fire + " to fire."},
-                {"TUTORIAL_FIRE_TEXT", "Press " + fire + " with your weapon raised to fire. Target enemy's limbs to kill them quickly."},
-                {"TUTORIAL_MELEE_TEXT", "Get close to the Power Box, press " + use + " to open it and press " + key("melee") + " to swing your Plasma Saw."},
-                {"TUTORIAL_PLASMA_SAW_TEXT", "Press " + key("melee") + " to swing the Plasma Saw."},
-                {"TUTORIAL_STOMP_TEXT", "Get close to the stomp box and press " + key("stomp") + " to smash it open."},
-                {"TUTORIAL_QUICK_TURN_TEXT", "Press " + key("quick_turn") + " to quickly turn 180 degrees."},
-                {"TUTORIAL_RELOAD_TEXT", "Press " + key("reload") + " to reload weapon."},
-                {"TUTORIAL_STASIS_TEXT", "While aiming, press " + key("stasis") + " to fire a stasis blast at the door."},
-                {"TUTORIAL_KINESIS_TEXT", "Press " + key("kinesis") + " to grab an object with kinesis. Press " + key("kinesis") + " again to drop it, or " + fire + " to launch it."},
-                {"TUTORIAL_LOCATOR_TEXT", "Press " + key("locator") + " to access your locator."},
-                {"TUTORIAL_WEAPON_SELECT_TEXT", std::string(pad ? "Use " + key("weapon_prev") + " / " + key("weapon_next") : "Press 1-4 or use the mouse wheel") + " to select a weapon. " + rig + " opens the RIG."},
-                {"TUTORIAL_ALT_FIRE_TEXT", "Outside Zero-G, aim and press " + alt + " to switch fire modes."},
-                {"TUTORIAL_ALT_FIRE_PC_TEXT", "Outside Zero-G, aim and press " + alt + " to switch fire modes."},
-                {"TUTORIAL_TILT_BUTTON", "Outside Zero-G, aim and press " + alt + " to switch fire modes."},
-                {"TUTORIAL_ZERO_G_JUMP_TEXT", "Aim at a walkable surface and press " + key("jump") + " to perform a Zero-G jump."},
-                {"TUTORIAL_BENCH_TEXT", "Approach the Bench and press " + use + " to access the upgrade menu. Upgrading your RIG and weapons with Power Nodes is vital!"},
-                {"TUTORIAL_STORE_TEXT", "Approach the Store and press " + use + " to go shopping. You can buy new suits, ammo and extra Power Nodes."},
-                {"TUTORIAL_CORER_TEXT", "Press " + fire + " to fire four sheets of supercharged plasma."},
-                {"TUTORIAL_CORER_BEAM_TEXT", look + " to direct the concentrated plasma beam."},
-                {"TUTORIAL_REMOTE_SAW_TEXT", look + " to steer the remote saw"},
-                {"TUTORIAL_SAW_SHOT_TEXT", "Press " + fire + " to fire a powerful high velocity saw blade."},
-                {"LOADING_TIP_02", "Outside Zero-G, aim and press " + alt + " to switch fire modes."},
-                {"LOADING_TIP_06", "Press " + use + " rapidly if a Swarm attaches to you to kill them."},
-                {"LOADING_TIP_07", "Press " + key("kinesis") + " to grab an object with kinesis. Press " + key("kinesis") + " again to drop it, or " + fire + " to launch it."},
-                {"LOADING_TIP_08", "Press " + key("locator") + " to access your locator."},
-                {"LOADING_TIP_09", "While steering the Ripper's Remote Saw you can press " + fire + " at any time to launch the saw straight ahead."},
-                {"LOADING_TIP_12", "Press " + key("quick_turn") + " to quickly turn 180 degrees."},
-                {"LOADING_TIP_13", "Press " + key("reload") + " to reload your weapon."},
-                {"LOADING_TIP_14", look + " to steer the Corer's secondary fire beam attack."},
-                {"LOADING_TIP_15", "When using the Ripper's secondary fire, press " + fire + " to fire a powerful high velocity saw blade."},
-                {"LOADING_TIP_16", "Press " + key("stasis") + " while aiming to fire a stasis blast. Stasis slows down enemies dramatically for a short period of time."},
-                {"LOADING_TIP_17", std::string(pad ? "Use " + key("weapon_prev") + " / " + key("weapon_next") : "Press 1-4 or use the mouse wheel") + " to select a weapon."},
-                {"LOADING_TIP_18", "In Zero-G, aim at a walkable surface and press " + key("jump") + " to jump."},
+        // English: the game's touch instructions reworded for keyboard/mouse and controllers
+        // across both Classic Port and Modern presets and all controller families.
+        if (std::string(lang.dir) == "en-us") {
+            const input::ControlPreset initial_preset = input::preset();
+            struct PromptVariant {
+                input::ControlPreset preset;
+                bool pad;
+                input::PadFamily family;
             };
-            int changed = 0;
-            if (pad) {
-                std::lock_guard lk(g_pad_text_lock);
-                for (auto& t : texts) {
-                    add(std::string(t.first) + "_PAD", t.second);
-                    g_pad_text_ids.insert(t.first);
-                    changed++;
+            const PromptVariant variants[] = {
+                {input::ControlPreset::classic, false, input::PadFamily::xbox},
+                {input::ControlPreset::modern, false, input::PadFamily::xbox},
+                {input::ControlPreset::classic, true, input::PadFamily::xbox},
+                {input::ControlPreset::modern, true, input::PadFamily::xbox},
+                {input::ControlPreset::classic, true, input::PadFamily::playstation},
+                {input::ControlPreset::modern, true, input::PadFamily::playstation},
+                {input::ControlPreset::classic, true, input::PadFamily::ps3},
+                {input::ControlPreset::modern, true, input::PadFamily::ps3},
+            };
+            int base_changed = 0;
+            int variants_added = 0;
+            for (const auto& v : variants) {
+                const bool pad = v.pad;
+                const bool modern = v.preset == input::ControlPreset::modern;
+                auto key = [&](const char* action) {
+                    return input::action_label_for(action, pad, v.family, v.preset);
+                };
+                const std::string fwd = key("move_forward"), back = key("move_back"), left = key("move_left"), right = key("move_right");
+                std::string move = fwd.size() == 1 && back.size() == 1 && left.size() == 1 && right.size() == 1
+                                       ? fwd + left + back + right
+                                       : fwd + ", " + left + ", " + back + ", " + right;
+                if (pad) move = "the Left Stick";
+                const std::string look = pad ? "Use the Right Stick" : "Move the mouse";
+                const std::string aim = key("aim"), fire = key("fire"), use = key("interact"), alt = key("alt_fire"),
+                                  rig = key("rig");
+                const std::string run_toggle = key("run_toggle");
+                const std::string confirm_btn = input::display_code_name(input::kPadCode + SDL_CONTROLLER_BUTTON_A, v.family);
+                const std::string struggle = (pad && modern) ? use : key("melee");
+                const std::string kin = modern ? key("kinesis") : use;
+                const std::string move_run =
+                    (run_toggle != "-" && run_toggle != "?")
+                        ? ("Hold " + key("run") + " or press " + run_toggle + " to run.")
+                        : ("Hold " + key("run") + " to run.");
+                const std::string weapon_sel =
+                    !pad ? "Press 1-4 or use the mouse wheel"
+                         : (modern ? ("Use " + key("weapon_prev") + " / " + key("weapon_next")) : "Use the D-pad");
+                const std::pair<const char*, std::string> texts[] = {
+                    {"TAP_TO_CONTINUE", pad ? ("Press " + confirm_btn + " to continue") : "Press any key to continue"},
+                    {"SWIPE", "Press " + struggle},
+                    {"TAP", "Tap " + struggle},
+                    {"SWIPE_HINT", pad ? "D-pad Left / Right for more hints" : "Left / Right arrow keys for more hints"},
+                    {"TUTORIAL_MOVE_TEXT", "Use " + move + " to walk and strafe. " + move_run},
+                    {"TUTORIAL_LOOK_TEXT", look + " to look around."},
+                    {"TUTORIAL_AIM_TEXT", "Hold " + aim + " to raise your weapon. " + look + " to aim at the power box. Press " + fire + " to fire."},
+                    {"TUTORIAL_FIRE_TEXT", "Press " + fire + " with your weapon raised to fire. Target enemy's limbs to kill them quickly."},
+                    {"TUTORIAL_MELEE_TEXT", "Get close to the Power Box, press " + use + " to open it and press " + key("melee") + " to swing your Plasma Saw."},
+                    {"TUTORIAL_PLASMA_SAW_TEXT", "Press " + key("melee") + " to swing the Plasma Saw."},
+                    {"TUTORIAL_STOMP_TEXT", "Get close to the stomp box and press " + key("stomp") + " to smash it open."},
+                    {"TUTORIAL_QUICK_TURN_TEXT", "Press " + key("quick_turn") + " to quickly turn 180 degrees."},
+                    {"TUTORIAL_RELOAD_TEXT", "Press " + key("reload") + " to reload weapon."},
+                    {"TUTORIAL_STASIS_TEXT", modern ? ("Press " + key("stasis") + " to fire a stasis blast at the door.")
+                                                    : ("While aiming, press " + key("stasis") + " to fire a stasis blast at the door.")},
+                    {"TUTORIAL_KINESIS_TEXT", "Press " + kin + " to grab an object with kinesis. Press " + kin + " again to drop it, or " + fire + " to launch it."},
+                    {"TUTORIAL_LOCATOR_TEXT", "Press " + key("locator") + " to access your locator."},
+                    {"TUTORIAL_WEAPON_SELECT_TEXT", weapon_sel + " to select a weapon. " + rig + " opens the RIG."},
+                    {"TUTORIAL_ALT_FIRE_TEXT", "Outside Zero-G, aim and press " + alt + " to switch fire modes."},
+                    {"TUTORIAL_ALT_FIRE_PC_TEXT", "Outside Zero-G, aim and press " + alt + " to switch fire modes."},
+                    {"TUTORIAL_TILT_BUTTON", "Outside Zero-G, aim and press " + alt + " to switch fire modes."},
+                    {"TUTORIAL_ZERO_G_JUMP_TEXT", modern ? ("Look at a walkable surface and press " + key("jump") + " to perform a Zero-G jump.")
+                                                         : ("Aim at a walkable surface and press " + key("jump") + " to perform a Zero-G jump.")},
+                    {"TUTORIAL_BENCH_TEXT", "Approach the Bench and press " + use + " to access the upgrade menu. Upgrading your RIG and weapons with Power Nodes is vital!"},
+                    {"TUTORIAL_STORE_TEXT", "Approach the Store and press " + use + " to go shopping. You can buy new suits, ammo and extra Power Nodes."},
+                    {"TUTORIAL_CORER_TEXT", "Press " + fire + " to fire four sheets of supercharged plasma."},
+                    {"TUTORIAL_CORER_BEAM_TEXT", look + " to direct the concentrated plasma beam."},
+                    {"TUTORIAL_REMOTE_SAW_TEXT", look + " to steer the remote saw"},
+                    {"TUTORIAL_SAW_SHOT_TEXT", "Press " + fire + " to fire a powerful high velocity saw blade."},
+                    {"LOADING_TIP_02", "Outside Zero-G, aim and press " + alt + " to switch fire modes."},
+                    {"LOADING_TIP_06", "Tap " + use + " rapidly if a Swarm attaches to you to kill them."},
+                    {"LOADING_TIP_07", "Press " + kin + " to grab an object with kinesis. Press " + kin + " again to drop it, or " + fire + " to launch it."},
+                    {"LOADING_TIP_08", "Press " + key("locator") + " to access your locator."},
+                    {"LOADING_TIP_09", "While steering the Ripper's Remote Saw you can press " + fire + " at any time to launch the saw straight ahead."},
+                    {"LOADING_TIP_12", "Press " + key("quick_turn") + " to quickly turn 180 degrees."},
+                    {"LOADING_TIP_13", "Press " + key("reload") + " to reload your weapon."},
+                    {"LOADING_TIP_14", look + " to steer the Corer's secondary fire beam attack."},
+                    {"LOADING_TIP_15", "When using the Ripper's secondary fire, press " + fire + " to fire a powerful high velocity saw blade."},
+                    {"LOADING_TIP_16", modern ? ("Press " + key("stasis") + " to fire a stasis blast. Stasis slows down enemies dramatically for a short period of time.")
+                                              : ("Press " + key("stasis") + " while aiming to fire a stasis blast. Stasis slows down enemies dramatically for a short period of time.")},
+                    {"LOADING_TIP_17", weapon_sel + " to select a weapon."},
+                    {"LOADING_TIP_18", modern ? ("In Zero-G, look at a walkable surface and press " + key("jump") + " to jump.")
+                                              : ("In Zero-G, aim at a walkable surface and press " + key("jump") + " to jump.")},
+                };
+                const std::string suf = prompt_suffix(v.preset, pad, v.family);
+                {
+                    std::lock_guard lk(g_pad_text_lock);
+                    for (auto& t : texts) {
+                        add(std::string(t.first) + suf, t.second);
+                        g_pad_text_ids.insert(t.first);
+                        variants_added++;
+                    }
+                }
+                if (!pad && v.preset == initial_preset) {
+                    for (u32 k = 0; k < n; k++) {
+                        u8* e = &d[size_t(k) * stride];
+                        std::string id = db.string(get<u16>(e + o_id));
+                        for (auto& t : texts)
+                            if (id == t.first) put<u16>(e + o_text, db.add_string(t.second)), base_changed++;
+                    }
                 }
             }
-            for (u32 k = 0; k < n && !pad; k++) {
-                u8* e = &d[size_t(k) * stride];
-                std::string id = db.string(get<u16>(e + o_id));
-                for (auto& t : texts)
-                    if (id == t.first) put<u16>(e + o_text, db.add_string(t.second)), changed++;
-            }
-            LOGI("strings: %d touch instructions reworded for %s", changed, pad ? "a controller" : "keyboard and mouse");
+            LOGI("strings: %d touch instructions reworded (%d preset/device prompt entries registered)",
+                 base_changed, variants_added);
         }
         add("OPTIONS_ANTI_ALIASING", lang.label);
         add("PORT_QUIT_GAME", "Quit");
@@ -523,7 +579,16 @@ bool patch_strings(sbin::Database& db, const Lang& lang) {
         add("AA_8X", "8x");
         // port rows (English only)
         for (auto& r : port_rows()) add("OPTIONS_PORT_" + r.key, r.label);
-        for (int code : input::bindable_codes()) add(key_text_id(code), input::code_name(code));
+        for (int code : input::bindable_codes()) {
+            if (code < input::kPadCode) {
+                add(key_text_id(code, input::PadFamily::xbox), input::code_name(code));
+            } else {
+                for (auto fam : {input::PadFamily::xbox, input::PadFamily::playstation, input::PadFamily::ps3})
+                    add(key_text_id(code, fam), input::display_code_name(code, fam));
+            }
+        }
+        add("PORT_CLASSIC", "Classic Port");
+        add("PORT_MODERN", "Modern");
         add("PORT_PRESS_KEY", "Press...");
         add("PORT_DASH", "-");
         add("PORT_RESET", "Reset");
@@ -545,32 +610,31 @@ bool patch_strings(sbin::Database& db, const Lang& lang) {
     return false;
 }
 
-// Text ids that have a controller wording (id + "_PAD" in the string table). While a controller is the
-// device in use, a lookup of one of them is answered with the controller wording.
+// Text ids with per-preset / per-device / per-controller-family wording in the string table.
 void on_get_string(cpu::Ctx& c) {
-    if (!input::using_pad()) return;
     u32 ws = c.reg(1);
     if (ws < 0x10000) return;
     u32 b = mem::r32(ws), e = mem::r32(ws + 4);
     if (b < 0x10000 || e <= b || e - b > 96) return;
     std::string id;
     for (u32 p = b; p < e; p += 2) id += char(mem::r16(p));
+    const std::string key = id + prompt_suffix(input::preset(), input::using_pad(), input::pad_family());
     u32 g = 0;
     {
         std::lock_guard lk(g_pad_text_lock);
         if (!g_pad_text_ids.count(id)) return;
-        g = g_pad_text_ws[id];
+        g = g_pad_text_ws[key];
     }
     if (!g) {
-        g = guest::wstring(id + "_PAD");
+        g = guest::wstring(key);
         std::lock_guard lk(g_pad_text_lock);
-        g_pad_text_ws[id] = g;
+        g_pad_text_ws[key] = g;
     }
     c.set_reg(1, g);
 }
 
 // The tutorial box keeps the text it was given when it opened. Its last title / text ids are remembered,
-// and when the device in use changes the box is given them again, so it shows the other wording at once.
+// and when the device, controller family or preset changes the box is given them again at once.
 u32 g_tut = 0, g_tut_vt = 0, fn_set_tut = 0;
 std::string g_tut_title, g_tut_text;
 std::string read_wstring(u32 ws) {
@@ -590,10 +654,11 @@ void on_set_tutorial_text(cpu::Ctx& c) {
 }
 void refresh_tutorial_text() {
     static int last = -1;
-    int pad = input::using_pad() ? 1 : 0;
-    if (pad == last) return;
+    int state = (input::using_pad() ? 1 : 0) | (int(input::pad_family()) << 1) |
+                ((input::preset() == input::ControlPreset::modern ? 1 : 0) << 3);
+    if (state == last) return;
     bool first = last < 0;
-    last = pad;
+    last = state;
     if (first || !g_tut || !fn_set_tut || g_tut_text.empty()) return;
     input::run_on_game_thread([t = g_tut, vt = g_tut_vt, title = g_tut_title, text = g_tut_text](unsigned) {
         if (mem::r32(t) != vt) return;  // the tutorial object is gone
@@ -614,6 +679,7 @@ int g_shown_index = -1;
 struct PortWidget {
     u32 w = 0;
     int shown = -1;  // last seen selector index / slider percent
+    int code = -1;   // last shown binding code (detects hotplug capability changes)
 };
 std::vector<PortWidget> g_port;
 bool g_was_capturing = false;
@@ -672,10 +738,26 @@ void select(u32 sel, int idx) { cpu::call(fn_set_index, {sel, u32(idx)}); }
 int selected(u32 sel) { return int(mem::r32(sel + 0x9c)); }
 
 void show_binding(PortWidget& pw, int bind) {
-    set_options(pw.w, {key_text_id(input::binding_code(bind)), "PORT_PRESS_KEY"});
+    const int code = input::binding_code(bind);
+    set_options(pw.w, {key_text_id(code, input::pad_family()), "PORT_PRESS_KEY"});
     select(pw.w, 0);
     pw.shown = 0;
+    pw.code = code;
 }
+
+void sync_preset_widgets() {
+    const int idx = input::preset() == input::ControlPreset::modern ? 1 : 0;
+    for (size_t i = 0; i < port_rows().size() && i < g_port.size(); i++) {
+        auto& r = port_rows()[i];
+        if ((r.key == "PRESET" || r.key == "PAD_PRESET") && g_port[i].w) {
+            select(g_port[i].w, idx);
+            g_port[i].shown = idx;
+        }
+    }
+}
+
+input::PadFamily g_panel_pad_family = input::PadFamily::xbox;
+input::ControlPreset g_panel_preset = input::ControlPreset::modern;
 
 int mouse_sens() { return std::clamp(settings::get_int("mouse_sensitivity", 100), kSensMin, kSensMax); }
 
@@ -701,6 +783,8 @@ void on_panel_init(cpu::Ctx& c) {
     g_panel_vtable = mem::r32(panel);
     g_selector = sel;
     g_shown_index = idx;
+    g_panel_pad_family = input::pad_family();
+    g_panel_preset = input::preset();
 
     // port rows
     g_port.assign(port_rows().size(), {});
@@ -709,7 +793,11 @@ void on_panel_init(cpu::Ctx& c) {
         auto& pw = g_port[i];
         pw.w = add_widget(panel, r.slider ? fn_add_slider : fn_add_toggle, "BTN_PORT_" + r.key);
         if (!pw.w) continue;
-        if (r.key == "PAD_SENS") {
+        if (r.key == "PRESET" || r.key == "PAD_PRESET") {
+            set_options(pw.w, {"PORT_CLASSIC", "PORT_MODERN"});
+            pw.shown = input::preset() == input::ControlPreset::modern ? 1 : 0;
+            select(pw.w, pw.shown);
+        } else if (r.key == "PAD_SENS") {
             pw.shown = std::clamp(settings::get_int("pad_sensitivity", 100), kSensMin, kSensMax);
             float v = float(pw.shown - kSensMin) / float(kSensMax - kSensMin);
             u32 bits;
@@ -790,10 +878,23 @@ void poll_port_rows() {
     bool capturing = input::capturing();
     if (g_was_capturing && !capturing) refresh_bindings();  // bound (others may have swapped) or cancelled
     g_was_capturing = capturing;
+    // Controller hotplug can change button labels (Xbox vs PlayStation/PS3) or effective RIG button.
+    const input::PadFamily cur_fam = input::pad_family();
+    const input::ControlPreset cur_preset = input::preset();
+    if (cur_fam != g_panel_pad_family || cur_preset != g_panel_preset) {
+        g_panel_pad_family = cur_fam;
+        g_panel_preset = cur_preset;
+        sync_preset_widgets();
+        if (!capturing) refresh_bindings();
+    }
     for (size_t i = 0; i < port_rows().size(); i++) {
         auto& r = port_rows()[i];
         auto& pw = g_port[i];
         if (!pw.w) continue;
+        if (!capturing && r.bind >= 0 && pw.code != input::binding_code(r.bind)) {
+            show_binding(pw, r.bind);
+            continue;
+        }
         if (r.slider) {
             float v;
             u32 bits = mem::r32(pw.w + 0x88);
@@ -808,7 +909,14 @@ void poll_port_rows() {
         int idx = selected(pw.w);
         if (idx == pw.shown) continue;
         pw.shown = idx;
-        if (r.key == "SMOOTHING") {
+        if (r.key == "PRESET" || r.key == "PAD_PRESET") {
+            const input::ControlPreset next = idx == 1 ? input::ControlPreset::modern : input::ControlPreset::classic;
+            input::set_preset(next);
+            g_panel_preset = next;
+            sync_preset_widgets();
+            refresh_bindings();
+            refresh_tutorial_text();
+        } else if (r.key == "SMOOTHING") {
             settings::set_int("mouse_smoothing", idx ? 1 : 0);
         } else if (r.key == "FREE_LOOK") {
             settings::set_int("free_look", idx ? 1 : 0);
