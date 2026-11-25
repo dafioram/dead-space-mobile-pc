@@ -265,6 +265,7 @@ void concurrency_and_protection(const fs::path& root) {
 }
 }
 namespace logging {
+bool g_verbose = false;
 void write(char level,const char* format,...) {
     char text[8192];va_list args;va_start(args,format);std::vsnprintf(text,sizeof text,format,args);va_end(args);
     std::lock_guard lock(logs_mutex);logs.push_back(std::string(1,level)+" "+text);

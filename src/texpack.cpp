@@ -12,6 +12,7 @@
 #include <unordered_map>
 
 #include "log.h"
+#include "log_path.h"
 
 namespace fs = std::filesystem;
 
@@ -210,7 +211,7 @@ void init(const std::string& base, bool packs_enabled, bool dump) {
                 if (ext == ".png" && stem.size() >= 8) g_files[stem] = host_file::utf8(e.path());
             }
     }
-    LOGI("texture packs: %s, %zu files in %s%s", g_enabled ? "on" : "off", g_files.size(), root.c_str(), g_dump ? " (dumping the game's textures to _dump)" : "");
+    LOGI("texture packs: %s, %zu files in %s%s", g_enabled ? "on" : "off", g_files.size(), logging::display_path(root).c_str(), g_dump ? " (dumping the game's textures to _dump)" : "");
 }
 
 bool packs_enabled() { return g_enabled; }

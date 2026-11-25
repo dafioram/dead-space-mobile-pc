@@ -38,6 +38,7 @@
 #include "hle/hle.h"
 #include "jni/jni.h"
 #include "log.h"
+#include "log_path.h"
 #include "host_diagnostics.h"
 #include "host_file.h"
 #include "memory.h"
@@ -319,6 +320,7 @@ int main(int argc, char** argv) {
     char* base_c = SDL_GetBasePath();
     std::string base = base_c ? base_c : "./";
     SDL_free(base_c);
+    logging::set_path_roots(base);
     if (logfile.empty()) logfile = base + "deadspace.log";
     logging::open_file(logfile.c_str());
     render::set_vertex_prep_optimized(optimized_native_prep);
@@ -338,7 +340,7 @@ int main(int argc, char** argv) {
             }
     }
     if (!apk_path.empty()) {
-        LOGI("importing game data from %s ...", apk_path.c_str());
+        LOGI("importing game data from %s ...", logging::display_path(apk_path).c_str());
         if (!apk::import(apk_path, gamedata)) {
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Dead Space",
                                      "Could not import the APK. Existing game data was not overwritten.\nUse a fresh --game-dir for another APK. Reanimated/HD import is deferred.\nSee deadspace.log.", nullptr);
@@ -367,9 +369,9 @@ int main(int argc, char** argv) {
     if (no_save) {
         try {
             temporary_profile.prepare(save_io::utf8_path(data));
-            LOGI("save protection: original userdata %s will not receive game/settings writes", data.c_str());
+            LOGI("save protection: original userdata %s will not receive game/settings writes", logging::display_path(data).c_str());
             data = save_io::path_utf8(temporary_profile.data_path());
-            LOGI("save protection: disposable session %s (relaunch to restore the original save)", data.c_str());
+            LOGI("save protection: disposable session %s (relaunch to restore the original save)", logging::display_path(data).c_str());
         } catch (const std::exception& error) {
             LOGE("cannot prepare --no-save profile: %s", error.what());
             return 1;  // never silently run against the writable original
@@ -377,6 +379,7 @@ int main(int argc, char** argv) {
     }
     hle::g_assets_dir = assets;
     hle::g_data_dir = data;
+    logging::set_path_roots(base, data);
     if (!profile_lock.acquire(save_io::utf8_path(data))) {
         LOGE("[save-io] refusing concurrent/unwritable profile startup; existing saves are untouched");
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Dead Space", "Cannot acquire exclusive access to userdata. Close another game instance or check directory permissions. See deadspace.log.", nullptr);
@@ -386,11 +389,11 @@ int main(int argc, char** argv) {
     settings::load(data + "/port_settings.ini");
     texpack::init(base, settings::get_int("texture_packs", 1) != 0, dump_png || settings::get_int("texture_dump", 0) != 0);
     if (msaa_arg >= 0) settings::set_int("msaa", msaa_arg);
-    LOGI("assets: %s", assets.c_str());
+    LOGI("assets: %s", logging::display_path(assets).c_str());
     if (!game_dir.empty())
-        LOGI("[apk-import] explicit game-dir=%s (no fallback to another installation); --data controls profile independently", game_dir.c_str());
-    LOGI("library: %s", lib.c_str());
-    LOGI("user data: %s", data.c_str());
+        LOGI("[apk-import] explicit game-dir=%s (no fallback to another installation); --data controls profile independently", logging::display_path(game_dir).c_str());
+    LOGI("library: %s", logging::display_path(lib).c_str());
+    LOGI("user data: %s", logging::display_path(data).c_str());
 #ifdef DEADSPACE_BUILD_REVISION
     LOGI("[save-load] build revision=%s reliability=1 profile=%s", DEADSPACE_BUILD_REVISION, no_save ? "disposable --no-save" : "persistent");
 #endif
@@ -713,7 +716,7 @@ int main(int argc, char** argv) {
         patches::frame();
         hle::present_end(win_w, win_h);
         SDL_GL_SwapWindow(win);
-        if (frames % 600 == 0) LOGI("frame %llu", (unsigned long long)frames);
+        if (frames % 600 == 0) LOGD("frame %llu", (unsigned long long)frames);
         if (exit_frame && frames >= exit_frame) g_quit = true;
 
         const int fps_limit = fps_arg >= 0 ? fps_arg : settings::get_int("fps_limit", 60);  // 0 = unlimited
@@ -743,7 +746,7 @@ int main(int argc, char** argv) {
     // manual removal, but can never redirect writes back to the original.
     if (no_save) profile_lock.release();  // allow removal of the private lock file on Windows
     if (auto error = temporary_profile.discard())
-        LOGW("temporary profile cleanup incomplete: %s (%s)", host_file::utf8(temporary_profile.data_path()).c_str(), error.message().c_str());
+        LOGW("temporary profile cleanup incomplete: %s (%s)", logging::display_path(temporary_profile.data_path()).c_str(), error.message().c_str());
     std::fflush(stdout);
     std::_Exit(0);  // guest threads are still running; skip static destructors
 }

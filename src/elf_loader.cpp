@@ -8,6 +8,7 @@
 
 #include "cpu.h"
 #include "log.h"
+#include "log_path.h"
 
 namespace elf {
 
@@ -170,7 +171,7 @@ bool load(const std::string& path, u32 base, Module& m, const Resolver& resolve)
         }
     }
     std::sort(m.symbols.begin(), m.symbols.end(), [](auto& a, auto& b) { return a.addr < b.addr; });
-    LOGI("loaded %s at %08x (span %x, %zu exports, %zu symbols, %d unresolved)", path.c_str(), base, span,
+    LOGI("loaded %s at %08x (span %x, %zu exports, %zu symbols, %d unresolved)", logging::display_path(path).c_str(), base, span,
          m.exports.size(), m.symbols.size(), unresolved);
     return true;
 }

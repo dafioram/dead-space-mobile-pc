@@ -24,6 +24,7 @@
 #endif
 
 #include "log.h"
+#include "log_path.h"
 #include "sha256.h"
 
 namespace apk {
@@ -233,7 +234,7 @@ struct Stage {
         if (root.empty()) return;
         std::error_code ec;
         fs::remove_all(root, ec);  // only this import's exclusively-created staging root
-        if (ec) LOGW("[apk-import] owned stage cleanup failed path=%s reason=%s", clean(text(root)).c_str(), ec.message().c_str());
+        if (ec) LOGW("[apk-import] owned stage cleanup failed path=%s reason=%s", logging::display_path(root).c_str(), ec.message().c_str());
     }
 };
 
@@ -455,15 +456,15 @@ bool import(const std::string& apk_path, const std::string& destination, ImportF
                         same_tree(stage.root / "assets", dest / "assets");
             require(same, "destination already exists with different or incomplete data; nothing overwritten. Choose a fresh --game-dir "
                           "(or launch existing data without --apk): " + clean(text(dest)));
-            LOGI("[apk-import] REUSED identical existing game data path=%s; files/metadata/userdata left unchanged", clean(text(dest)).c_str());
+            LOGI("[apk-import] REUSED identical existing game data path=%s; files/metadata/userdata left unchanged", logging::display_path(dest).c_str());
             return true;
         }
         require(!(faults && faults->publish_error), "synthetic publication failure; destination unchanged");
-        require(plain(dest), "unsafe/reparse game-data destination before publication: " + clean(text(dest)));
+        require(plain(dest), "unsafe/reparse game-data destination before publication: " + logging::display_path(dest));
         publish(stage.root, dest);
         stage.root.clear();
         LOGI("[apk-import] COMMITTED %zu assets (%llu bytes) path=%s; game not started by importer", assets.size(),
-             (unsigned long long)bytes, clean(text(dest)).c_str());
+             (unsigned long long)bytes, logging::display_path(dest).c_str());
         return true;
     } catch (const std::exception& error) {
         LOGE("[apk-import] FAILED: %s", error.what());

@@ -22,6 +22,7 @@
 
 #include "hle/hle.h"
 #include "hle/timing.h"
+#include "log_path.h"
 #include "save_io.h"
 
 namespace hle {
@@ -42,9 +43,9 @@ void filesystem_result(Ctx& c, const char* operation, const std::string& path, b
         int code = filesystem_errno(error, fallback);
         set_errno(host_errno_to_guest(code));
         if (code != ENOENT && code != EEXIST)
-            LOGE("[save-io] filesystem %s FAILED path=%s errno=%d reason=%s", operation, path.c_str(), code, error ? error.message().c_str() : std::strerror(code));
+            LOGE("[save-io] filesystem %s FAILED path=%s errno=%d reason=%s", operation, logging::display_path(path).c_str(), code, error ? error.message().c_str() : std::strerror(code));
     } else if (save_io::profile_file(save_io::utf8_path(path))) {
-        LOGI("[save-io] explicit native filesystem %s path=%s (not automatic recovery)", operation, path.c_str());
+        LOGI("[save-io] explicit native filesystem %s path=%s (not automatic recovery)", operation, logging::display_path(path).c_str());
     }
     c.ret(okay ? 0 : 0xffffffff);
 }
@@ -497,7 +498,7 @@ void register_libc() {
             d.entries.push_back({save_io::path_utf8(it->path().filename()), directory});
         }
         if (ec) {
-            LOGE("[save-io] directory enumeration FAILED path=%s reason=%s", p.c_str(), ec.message().c_str());
+            LOGE("[save-io] directory enumeration FAILED path=%s reason=%s", logging::display_path(p).c_str(), ec.message().c_str());
             set_errno(host_errno_to_guest(filesystem_errno(ec))); return c.ret(0);
         }
         d.dirent = mem::heap_alloc(288);

@@ -685,7 +685,7 @@ void on_world_constructed(cpu::Ctx& c) {
     g_teardown_world = 0;
     g_teardown_budget = 0;
     g_bad_header_budget = 0;
-    LOGI("[scene-cache] world constructed %08x generation=%llu", token.address, (unsigned long long)token.generation);
+    LOGD("[scene-cache] world constructed %08x generation=%llu", token.address, (unsigned long long)token.generation);
 }
 
 void on_world_destroyed(cpu::Ctx& c) {
@@ -693,7 +693,7 @@ void on_world_destroyed(cpu::Ctx& c) {
     Token token = g_lifetimes.worlds.current(c.reg(0));
     g_teardown_world = c.reg(0);
     g_teardown_budget = 0;
-    LOGI("[scene-cache] world retiring %08x generation=%llu cached-nodes=%zu fade-roots=%zu fade-states=%zu fixtures=%zu",
+    LOGD("[scene-cache] world retiring %08x generation=%llu cached-nodes=%zu fade-roots=%zu fade-states=%zu fixtures=%zu",
          token.address, (unsigned long long)token.generation, g_nodes.size(), g_fade_nodes.size(), g_fade_state.size(), g_fixtures.size());
     if (g_scene_world == token) clear_scene_locked();
     g_lifetimes.worlds.retire(c.reg(0));
@@ -729,16 +729,21 @@ void on_object_destroyed(cpu::Ctx& c) {
         LOGW("[scene-cache] INVALID Object3D header object=%08x tracks=%08x/%08x/%08x storage=%08x/%08x/%08x teardown-world=%08x; native cleanup continues",
              object, tracks, tracks_end, tracks_cap, data, end, cap, g_teardown_world);
     // Read-only header evidence, never a reason to skip native destruction/free.
-    if ((!sane || g_trace || g_teardown_world) && g_teardown_budget++ < 32)
-        LOGI("[scene-cache] %s object=%08x vtable=%08x tracks=%08x/%08x/%08x storage=%08x/%08x/%08x headers=%s teardown-world=%08x",
+    if (!sane && g_teardown_budget++ < 32) {
+        LOGW("[scene-cache] %s object=%08x vtable=%08x tracks=%08x/%08x/%08x storage=%08x/%08x/%08x headers=INVALID teardown-world=%08x",
              cpu::current_hle_name(c).c_str(), object, mem::r32(object), tracks, tracks_end, tracks_cap,
-             data, end, cap, sane ? "ordered" : "INVALID", g_teardown_world);
+             data, end, cap, g_teardown_world);
+    } else if ((g_trace || (g_teardown_world && logging::g_verbose)) && g_teardown_budget++ < 32) {
+        LOGD("[scene-cache] %s object=%08x vtable=%08x tracks=%08x/%08x/%08x storage=%08x/%08x/%08x headers=ordered teardown-world=%08x",
+             cpu::current_hle_name(c).c_str(), object, mem::r32(object), tracks, tracks_end, tracks_cap,
+             data, end, cap, g_teardown_world);
+    }
 }
 
 void on_model_unload(cpu::Ctx& c) {
     std::lock_guard lock(g_scene_mutex);
-    if ((g_trace || g_teardown_world) && g_teardown_budget++ < 32)
-        LOGI("[scene-cache] model unload=%08x teardown-world=%08x", c.reg(0), g_teardown_world);
+    if ((g_trace || (g_teardown_world && logging::g_verbose)) && g_teardown_budget++ < 32)
+        LOGD("[scene-cache] model unload=%08x teardown-world=%08x", c.reg(0), g_teardown_world);
 }
 
 bool install_scene_lifetimes() {
@@ -795,7 +800,7 @@ bool install_scene_lifetimes() {
     for (const auto& hook : hooks)
         if (!cpu::hook_entry(mem::ELF_BASE + hook.image_offset + hook.offset, hook.symbol, hook.handler)) return false;
     g_lifetime_ready = true;
-    LOGI("[scene-cache] native world/node generations and pre-destruction retirement installed");
+    LOGD("[scene-cache] native world/node generations and pre-destruction retirement installed");
     return true;
 }
 

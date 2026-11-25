@@ -6,6 +6,7 @@
 #include <sstream>
 
 #include "log.h"
+#include "log_path.h"
 #include "save_io.h"
 
 namespace settings {
@@ -26,8 +27,8 @@ void load(const std::string& path) {
     if (!f) {
         std::error_code error;
         bool exists = std::filesystem::exists(save_io::utf8_path(path), error);
-        if (!exists && !error) LOGI("[save-io] port settings absent; using defaults path=%s", path.c_str());
-        else LOGE("[save-io] port settings read open FAILED path=%s reason=%s", path.c_str(), error ? error.message().c_str() : "unreadable file");
+        if (!exists && !error) LOGD("[save-io] port settings absent; using defaults path=%s", logging::display_path(path).c_str());
+        else LOGE("[save-io] port settings read open FAILED path=%s reason=%s", logging::display_path(path).c_str(), error ? error.message().c_str() : "unreadable file");
         return;
     }
     g_loaded_from_file = true;
@@ -43,7 +44,7 @@ void load(const std::string& path) {
         };
         g_values[trim(line.substr(0, eq))] = trim(line.substr(eq + 1));
     }
-    if (f.bad()) LOGE("[save-io] port settings read FAILED path=%s; preferences may be incomplete", path.c_str());
+    if (f.bad()) LOGE("[save-io] port settings read FAILED path=%s; preferences may be incomplete", logging::display_path(path).c_str());
 }
 
 bool save() {

@@ -28,7 +28,7 @@ void enter(cpu::Ctx& c, Operation operation, const std::string& path = {}, bool 
 void on_save(cpu::Ctx& c) {
     save_io::begin_save();
     enter(c, Operation::save);
-    LOGI("[save-io] native filename serialization BEGIN (per-file publication deferred until result/close)");
+    LOGD("[save-io] native filename serialization BEGIN (per-file publication deferred until result/close)");
 }
 void on_load(cpu::Ctx& c) {
     u32 stream = c.reg(1);
@@ -43,7 +43,7 @@ void on_load(cpu::Ctx& c) {
         return;
     }
     enter(c, Operation::load, info.path);
-    LOGI("[save-load] native serialization parse BEGIN path=%s", info.path.c_str());
+    LOGD("[save-load] native serialization parse BEGIN path=%s", info.path.c_str());
 }
 void on_close(cpu::Ctx& c) {
     if (!mem::range_mapped(c.reg(0), 0x14)) return;
@@ -65,11 +65,16 @@ void on_return(cpu::Ctx& c) {
     bool result = (c.reg(0) & 0xff) != 0;
     if (frame.operation == Operation::save) {
         bool committed = save_io::finish_save(result);
-        LOGI("[save-io] native filename serialization END serialized=%s published=%s", result ? "ok" : "FAILED", committed ? "ok" : "FAILED");
+        if (!result || !committed)
+            LOGE("[save-io] native filename serialization END serialized=%s published=%s", result ? "ok" : "FAILED", committed ? "ok" : "FAILED");
+        else
+            LOGD("[save-io] native filename serialization END serialized=ok published=ok");
         if (!committed) c.ret(0);
     } else if (frame.operation == Operation::load) {
-        LOGI("[save-load] native serialization parse END path=%s result=%s; %s", frame.path.c_str(), result ? "ok" : "FAILED",
-             result ? "state restoration, assets and rendering are subsequent stages, not validated by this result" : "inspect selected-file validation and I/O diagnostics above; no automatic port fallback/repair performed");
+        if (!result)
+            LOGE("[save-load] native serialization parse END path=%s result=FAILED; inspect selected-file validation and I/O diagnostics above; no automatic port fallback/repair performed", frame.path.c_str());
+        else
+            LOGD("[save-load] native serialization parse END path=%s result=ok; state restoration, assets and rendering are subsequent stages, not validated by this result", frame.path.c_str());
     } else if (frame.already_failed || frame.failures != save_io::failure_epoch()) {
         c.ret(0);  // native FileStream close/flush otherwise discard imported errors
         LOGE("[save-io] native FileStream %s result corrected to failure after host I/O error", frame.operation == Operation::close ? "close" : "flush");
@@ -104,6 +109,6 @@ void install() {
             LOGE("[save-io] cannot install verified serialization boundary %s", hook.name);
             std::abort();  // a partial set of return/scope hooks is not safe to run
         }
-    LOGI("[save-io] native serialization/close/flush result tracking installed; atomic profile saves enabled");
+    LOGD("[save-io] native serialization/close/flush result tracking installed; atomic profile saves enabled");
 }
 }  // namespace save_lifecycle

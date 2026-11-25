@@ -362,14 +362,14 @@ void register_pthread() {
             g_threads[tid] = {stack_base, stack_size};
         }
         if (out) mem::w32(out, tid);
-        LOGI("pthread_create %u: start=%s stack=%08x+%x", tid, cpu::symbolize(start).c_str(), stack_base,
+        LOGD("pthread_create %u: start=%s stack=%08x+%x", tid, cpu::symbolize(start).c_str(), stack_base,
              stack_size);
         std::thread([=] {
             cpu::thread_attach(stack_base, stack_size);
             cpu::thread().tid = tid;
             mem::w32(cpu::thread().tls_area + 4, tid);
             cpu::call(start, {arg});
-            LOGI("thread %u finished", tid);
+            LOGD("thread %u finished", tid);
             cpu::thread_detach();
             if (own) mem::map_free(stack_base, stack_size);
             std::lock_guard lk(g_threads_lock);

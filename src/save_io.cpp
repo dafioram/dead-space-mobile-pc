@@ -2,6 +2,7 @@
 #include "host_file.h"
 #include "save_validation.h"
 #include "log.h"
+#include "log_path.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -33,9 +34,7 @@ std::string path_utf8(const Path& path) {
     return host_file::utf8(path);
 }
 std::string path_text(const Path& path) {
-    std::string text = path_utf8(path);
-    for (char& c : text) if (static_cast<unsigned char>(c) < 32 || c == 127) c = '?';
-    return text;
+    return logging::display_path(path_utf8(path));
 }
 bool profile_file(const Path& path) {
     auto extension = path.extension().native();
@@ -382,9 +381,15 @@ bool publish(Entry& entry) {
     if (!entry.text) {
         bool readable = false;
         auto result = inspect_file(entry.temporary, &size, &readable);
-        LOGI("[save-io] serialized path=%s bytes=%llu fnv64=%016llx status=%s reason=%s",
-             path_text(entry.path).c_str(), (unsigned long long)size, (unsigned long long)result.digest,
-             save_validation::name(result.status), result.reason.c_str());
+        if (result.status == save_validation::Status::invalid) {
+            LOGW("[save-io] serialized path=%s bytes=%llu fnv64=%016llx status=%s reason=%s",
+                 path_text(entry.path).c_str(), (unsigned long long)size, (unsigned long long)result.digest,
+                 save_validation::name(result.status), result.reason.c_str());
+        } else {
+            LOGD("[save-io] serialized path=%s bytes=%llu fnv64=%016llx status=%s reason=%s",
+                 path_text(entry.path).c_str(), (unsigned long long)size, (unsigned long long)result.digest,
+                 save_validation::name(result.status), result.reason.c_str());
+        }
         if (!readable) { failure(entry, "inspect staged save I/O", EIO); discard(entry); return false; }
         if (result.status == save_validation::Status::invalid) { failure(entry, "validate staged save", EIO); discard(entry); return false; }
     }
@@ -397,7 +402,7 @@ bool publish(Entry& entry) {
         failure(entry, "directory durability after publication (new final installed; durability uncertain)", errno);
         return false;
     }
-    LOGI("[save-io] COMMITTED path=%s written=%llu backup=previous-validated-file-if-available", path_text(entry.path).c_str(), (unsigned long long)entry.written);
+    LOGI("[save-io] COMMITTED path=%s written=%llu", path_text(entry.path).c_str(), (unsigned long long)entry.written);
     return true;
 }
 bool finish_closed(const std::shared_ptr<Entry>& entry) {
@@ -444,7 +449,7 @@ int open_impl(const Path& requested, int flags, int mode, bool text = false) {
     if (entry->fd < 0) {
         int error = errno;
         if (entry->tagged && error == ENOENT && !entry->transaction)
-            LOGI("[save-io] read open absent path=%s (may be first run/unused slot; no recovery or deletion)", path_text(entry->path).c_str());
+            LOGD("[save-io] read open absent path=%s (may be first run/unused slot; no recovery or deletion)", path_text(entry->path).c_str());
         else if (entry->tagged) failure(*entry, "open", error);
         errno = error;
         return -1;
@@ -454,7 +459,7 @@ int open_impl(const Path& requested, int flags, int mode, bool text = false) {
         entries[entry->fd] = entry;
     }
     if (entry->tagged) {
-        LOGI("[save-io] %s open path=%s fd=%d%s", entry->transaction ? "staged write" : "read/direct", path_text(entry->path).c_str(), entry->fd,
+        LOGD("[save-io] %s open path=%s fd=%d%s", entry->transaction ? "staged write" : "read/direct", path_text(entry->path).c_str(), entry->fd,
              entry->transaction ? " final-unchanged-until-commit" : "");
         if (!entry->transaction && (flags & O_ACCMODE) != O_RDONLY)
             LOGW("[save-io] non-truncating profile write retains normal POSIX semantics path=%s; not an atomic replacement", path_text(entry->path).c_str());
@@ -463,9 +468,15 @@ int open_impl(const Path& requested, int flags, int mode, bool text = false) {
             bool inspected = false;
             auto result = inspect_open_read(entry->fd, size, inspected);
             entry->load_invalid = inspected && result.status == save_validation::Status::invalid;
-            LOGI("[save-load] selected path=%s bytes=%llu fnv64=%016llx status=%s reason=%s; native loader remains authoritative",
-                 path_text(entry->path).c_str(), (unsigned long long)size, (unsigned long long)result.digest,
-                 save_validation::name(result.status), result.reason.c_str());
+            if (entry->load_invalid) {
+                LOGW("[save-load] selected path=%s bytes=%llu fnv64=%016llx status=%s reason=%s; native loader remains authoritative",
+                     path_text(entry->path).c_str(), (unsigned long long)size, (unsigned long long)result.digest,
+                     save_validation::name(result.status), result.reason.c_str());
+            } else {
+                LOGD("[save-load] selected path=%s bytes=%llu fnv64=%016llx status=%s reason=%s; native loader remains authoritative",
+                     path_text(entry->path).c_str(), (unsigned long long)size, (unsigned long long)result.digest,
+                     save_validation::name(result.status), result.reason.c_str());
+            }
             loads.emplace_back(entry->fd, path_text(entry->path));
         }
     }
@@ -484,6 +495,7 @@ void set_profile_root(const Path& root) {
     std::error_code ec;
     profile_root = root.empty() ? Path{} : fs::weakly_canonical(root, ec);
     if (ec) profile_root = fs::absolute(root).lexically_normal();
+    logging::set_profile_root(profile_root.empty() ? std::string{} : path_utf8(profile_root));
 }
 int open(const Path& path, int flags, int mode) { return open_impl(path, flags, mode); }
 int close(int fd) {
@@ -501,8 +513,12 @@ int close(int fd) {
     entry->closed = true;
     if (entry->transaction && okay && !entry->error) stage(Stage::stream_closed);
     if (!okay && !entry->error) entry->error = EIO;
-    if (entry->tagged && entry->reading && !entry->transaction)
-        LOGI("[save-load] file closed path=%s read=%llu status=%s (serialization/restoration reported separately)", path_text(entry->path).c_str(), (unsigned long long)entry->read, okay ? "ok" : "FAILED");
+    if (entry->tagged && entry->reading && !entry->transaction) {
+        if (!okay)
+            LOGE("[save-load] file closed path=%s read=%llu status=FAILED (serialization/restoration reported separately)", path_text(entry->path).c_str(), (unsigned long long)entry->read);
+        else
+            LOGD("[save-load] file closed path=%s read=%llu status=ok (serialization/restoration reported separately)", path_text(entry->path).c_str(), (unsigned long long)entry->read);
+    }
     okay = finish_closed(entry) && okay;
     if (!okay) { errno = entry->error ? entry->error : EIO; return -1; }
     return 0;
@@ -517,7 +533,7 @@ int64_t read(int fd, void* data, size_t size) {
     if (result < 0 && entry->tagged) failure(*entry, "read", errno, size);
     if (result >= 0) entry->read += uint64_t(result);
     if (result >= 0 && uint64_t(result) < size && entry->tagged)
-        LOGI("[save-load] short read/EOF path=%s requested=%llu got=%lld; EOF alone is not corruption", path_text(entry->path).c_str(), (unsigned long long)size, (long long)result);
+        LOGD("[save-load] short read/EOF path=%s requested=%llu got=%lld; EOF alone is not corruption", path_text(entry->path).c_str(), (unsigned long long)size, (long long)result);
     return result;
 }
 int64_t write(int fd, const void* data, size_t size) {
@@ -826,7 +842,7 @@ bool ProfileLock::acquire(const Path& root) {
     }
     handle_ = fd;
 #endif
-    LOGI("[save-io] exclusive profile writer acquired path=%s", path_text(root).c_str());
+    LOGD("[save-io] exclusive profile writer acquired path=%s", path_text(root).c_str());
     // Leave stale temporary files alone; never infer that an incomplete file is a save.
     unsigned shown = 0;
     fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end;
