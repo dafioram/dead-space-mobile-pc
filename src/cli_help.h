@@ -29,6 +29,9 @@ Game files and profiles:
   --no-save                  Play on a disposable copy of that userdata root.
                              Original saves/settings are not changed. Autosaves
                              work in the temporary session; relaunch to reset.
+  --unlock-hard              Unlock Hard difficulty in settings.sb via the game's
+                             own Settings::unlockHard() after settings load.
+                             No-op if already unlocked; respects --no-save.
 
 Display and graphics:
   --width W --height H       Game resolution (default: desktop resolution).

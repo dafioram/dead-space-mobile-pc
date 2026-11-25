@@ -112,6 +112,8 @@ Names are exactly as stored. Meanings are what the key name and the game's own f
 seen). From the game library (`Settings::unlockHard`, `Settings::unlockedHard`, `Settings::unlockedNewgamePlus`,
 checked by `LayerDifficulty::stateTransition`), three additional bool keys are written when unlocked (absent in a fresh
 file, not yet verified against a completed save): `hard_unlocked`, `notified_hard_unlocked`, and `plus_unlocked`.
+Launching the port with `--unlock-hard` invokes the game's own `Settings::unlockHard()` and
+`Settings::clearNotifiedUnlockedHard()` right after `Settings::load()` (no-op if already unlocked; respects `--no-save`).
 
 ## Still open
 
